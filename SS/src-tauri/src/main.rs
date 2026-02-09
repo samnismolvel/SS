@@ -56,22 +56,6 @@ fn process_video(app: tauri::AppHandle, video_path: String, output_path: String)
     let srt_escaped = srt_path.to_str().unwrap().replace("\\", "/").replace(":", "\\:");
     
     let burn_status = Command::new(&ffmpeg_path)
-            "-f", audio_path.to_str().unwrap(),
-            "-osrt", // Output SRT format
-            "-of", srt_path.to_str().unwrap().trim_end_matches(".srt")
-        ])
-        .status()
-        .map_err(|e| format!("Failed to run whisper.cpp: {}", e))?;
-
-    if !whisper_status.success() {
-        return Err("Whisper transcription failed".to_string());
-    }
-
-    // Step 3: Burn subtitles into video using FFmpeg
-    println!("Burning subtitles...");
-    let srt_escaped = srt_path.to_str().unwrap().replace("\\", "/").replace(":", "\\:");
-    
-    let burn_status = Command::new(&ffmpeg_path)
         .args([
             "-i", &video_path,
             "-vf", &format!("subtitles={}", srt_escaped),
@@ -95,6 +79,7 @@ fn process_video(app: tauri::AppHandle, video_path: String, output_path: String)
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![process_video])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
