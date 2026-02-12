@@ -1,11 +1,9 @@
-
-
 name: Build Tauri App
 
 on:
   push:
     branches: [ main ]
-  workflow_dispatch: # Allows manual triggering
+  workflow_dispatch:
 
 jobs:
   build-windows:
@@ -22,39 +20,43 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install frontend dependencies
-        run: npm install
         working-directory: ./SS
+        run: npm install
 
       - name: Download FFmpeg for Windows
+        working-directory: ./SS
+        shell: pwsh
         run: |
           curl -L "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" -o ffmpeg.zip
-          7z x ffmpeg.zip
-          mkdir -p SS/src-tauri/binaries
-          copy ffmpeg-*-essentials_build\bin\ffmpeg.exe SS\src-tauri\binaries\ffmpeg.exe
-        shell: cmd
+          Expand-Archive ffmpeg.zip -DestinationPath ffmpeg_extracted
+          New-Item -ItemType Directory -Force -Path "src-tauri/binaries"
+          $ffmpegExe = Get-ChildItem -Recurse -Filter "ffmpeg.exe" ffmpeg_extracted | Select-Object -First 1
+          Copy-Item $ffmpegExe.FullName "src-tauri/binaries/ffmpeg.exe"
 
-      - name: Build whisper.cpp
+      - name: Clone and build whisper.cpp
+        shell: pwsh
         run: |
           git clone https://github.com/ggerganov/whisper.cpp
           cd whisper.cpp
-          mkdir build
+          New-Item -ItemType Directory -Force -Path build
           cd build
           cmake .. -DBUILD_SHARED_LIBS=OFF
           cmake --build . --config Release
-        shell: cmd
 
       - name: Download whisper tiny model
+        shell: pwsh
         run: |
-          mkdir whisper.cpp\models
-          curl -L "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin" -o whisper.cpp\models\ggml-tiny.bin
-        shell: cmd
+          New-Item -ItemType Directory -Force -Path "whisper.cpp/models"
+          curl -L "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin" -o "whisper.cpp/models/ggml-tiny.bin"
 
       - name: Build Tauri app
-        run: npm run tauri build
         working-directory: ./SS
+        run: npm run tauri build
 
       - name: Upload Windows installer
         uses: actions/upload-artifact@v4
         with:
           name: windows-installer
           path: SS/src-tauri/target/release/bundle/msi/*.msi
+
+          
