@@ -19,24 +19,15 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Install frontend dependencies
-        working-directory: ./SS
-        run: npm install
-
-      - name: Download FFmpeg for Windows
-        working-directory: ./SS
+      - name: Clone whisper.cpp
         shell: pwsh
         run: |
-          curl -L "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" -o ffmpeg.zip
-          Expand-Archive ffmpeg.zip -DestinationPath ffmpeg_extracted
-          New-Item -ItemType Directory -Force -Path "src-tauri/binaries"
-          $ffmpegExe = Get-ChildItem -Recurse -Filter "ffmpeg.exe" ffmpeg_extracted | Select-Object -First 1
-          Copy-Item $ffmpegExe.FullName "src-tauri/binaries/ffmpeg.exe"
+          git clone --depth 1 https://github.com/ggerganov/whisper.cpp
+          echo "whisper.cpp cloned successfully"
 
-      - name: Clone and build whisper.cpp
+      - name: Build whisper.cpp
         shell: pwsh
         run: |
-          git clone https://github.com/ggerganov/whisper.cpp
           cd whisper.cpp
           New-Item -ItemType Directory -Force -Path build
           cd build
@@ -49,6 +40,34 @@ jobs:
           New-Item -ItemType Directory -Force -Path "whisper.cpp/models"
           curl -L "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin" -o "whisper.cpp/models/ggml-tiny.bin"
 
+      - name: Download FFmpeg for Windows
+        working-directory: ./SS
+        shell: pwsh
+        run: |
+          curl -L "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" -o ffmpeg.zip
+          Expand-Archive ffmpeg.zip -DestinationPath ffmpeg_extracted
+          New-Item -ItemType Directory -Force -Path "src-tauri/binaries"
+          $ffmpegExe = Get-ChildItem -Recurse -Filter "ffmpeg.exe" ffmpeg_extracted | Select-Object -First 1
+          Copy-Item $ffmpegExe.FullName "src-tauri/binaries/ffmpeg.exe"
+          echo "FFmpeg copied successfully"
+
+      - name: Update tauri.conf.json for Windows
+        working-directory: ./SS
+        shell: pwsh
+        run: |
+          $config = Get-Content "src-tauri/tauri.conf.json" -Raw | ConvertFrom-Json
+          $config.bundle.resources = @(
+            "binaries/ffmpeg.exe",
+            "../../whisper.cpp/build/bin/Release/whisper-cli.exe",
+            "../../whisper.cpp/models/ggml-tiny.bin"
+          )
+          $config | ConvertTo-Json -Depth 10 | Set-Content "src-tauri/tauri.conf.json"
+          echo "tauri.conf.json updated"
+
+      - name: Install frontend dependencies
+        working-directory: ./SS
+        run: npm install
+
       - name: Build Tauri app
         working-directory: ./SS
         run: npm run tauri build
@@ -58,5 +77,3 @@ jobs:
         with:
           name: windows-installer
           path: SS/src-tauri/target/release/bundle/msi/*.msi
-
-          
