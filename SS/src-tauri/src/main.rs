@@ -1,13 +1,20 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 use std::process::Command;
-use tauri::Manager;
+use tauri::{Manager, Emitter};
+
+fn emit_progress(app: &tauri::AppHandle, step: &str, message: &str) {
+    let _ = app.emit("progress", serde_json::json!({
+        "step": step,
+        "message": message
+    }));
+}
 
 #[tauri::command]
-fn process_video(app: tauri::AppHandle, video_path: String, output_path: String) -> Result<(), String> {
-    // Get paths to bundled resources
+async fn process_video(app: tauri::AppHandle, video_path: String, output_path: String) -> Result<(), String> {
     let resource_path = app.path().resource_dir()
-        .map_err(|e| format!("Failed to get resource directory: {}", e))?;
-    
-    // On Windows, executables have .exe extension
+        .map_err(|_| "Could not locate app resources".to_string())?;
+
     #[cfg(target_os = "windows")]
     let ffmpeg_path = resource_path.join("resources/binaries/ffmpeg.exe");
     #[cfg(not(target_os = "windows"))]
@@ -18,60 +25,59 @@ fn process_video(app: tauri::AppHandle, video_path: String, output_path: String)
     #[cfg(not(target_os = "windows"))]
     let whisper_path = resource_path.join("whisper-cli");
 
+    #[cfg(target_os = "windows")]
     let model_path = resource_path.join("resources/ggml-tiny.bin");
-    
-    // Create temp directory for intermediate files
+    #[cfg(not(target_os = "windows"))]
+    let model_path = resource_path.join("ggml-tiny.bin");
+
     let temp_dir = std::env::temp_dir();
     let audio_path = temp_dir.join("temp_audio.wav");
     let srt_path = temp_dir.join("temp_subtitles.srt");
 
-    // Step 1: Extract audio from video using FFmpeg
-    println!("Extracting audio...");
+    // Step 1: Extract audio
+    emit_progress(&app, "extracting", "Extracting audio from video...");
     let extract_status = Command::new(&ffmpeg_path)
         .args([
             "-i", &video_path,
-            "-vn", // No video
+            "-vn",
             "-acodec", "pcm_s16le",
-            "-ar", "16000", // 16kHz sample rate (whisper requirement)
-            "-ac", "1", // Mono
-            "-y", // Overwrite output
+            "-ar", "16000",
+            "-ac", "1",
+            "-y",
             audio_path.to_str().unwrap()
         ])
         .status()
-        .map_err(|e| format!("Failed to run FFmpeg: {}", e))?;
+        .map_err(|_| "FFmpeg not found. Please reinstall the app.".to_string())?;
 
     if !extract_status.success() {
-        return Err("FFmpeg audio extraction failed".to_string());
+        return Err("Could not extract audio. Is the video file valid?".to_string());
     }
 
-    // Step 2: Transcribe audio using whisper.cpp
-    println!("Transcribing audio...");
+    // Step 2: Transcribe
+    emit_progress(&app, "transcribing", "Transcribing audio (this may take a while)...");
     let whisper_status = Command::new(&whisper_path)
         .args([
             "-m", model_path.to_str().unwrap(),
             "-f", audio_path.to_str().unwrap(),
-            "-osrt", // Output SRT format
+            "-osrt",
             "-of", srt_path.to_str().unwrap().trim_end_matches(".srt")
         ])
         .status()
-        .map_err(|e| format!("Failed to run whisper.cpp: {}", e))?;
+        .map_err(|_| "Whisper not found. Please reinstall the app.".to_string())?;
 
     if !whisper_status.success() {
-        return Err("Whisper transcription failed".to_string());
+        return Err("Transcription failed. The audio may be too short or silent.".to_string());
     }
 
-    // Step 3: Burn subtitles into video using FFmpeg
-    println!("Burning subtitles...");
+    // Step 3: Burn subtitles
+    emit_progress(&app, "burning", "Burning subtitles into video...");
 
-    // On Windows, FFmpeg subtitles filter needs special path handling
     #[cfg(target_os = "windows")]
     let srt_escaped = srt_path.to_str().unwrap()
         .replace("\\", "/")
         .replace(":", "\\:");
     #[cfg(not(target_os = "windows"))]
     let srt_escaped = srt_path.to_str().unwrap().to_string();
-
-    println!("SRT path: {}", srt_escaped);
 
     let burn_status = Command::new(&ffmpeg_path)
         .args([
@@ -83,16 +89,17 @@ fn process_video(app: tauri::AppHandle, video_path: String, output_path: String)
             &output_path
         ])
         .status()
-        .map_err(|e| format!("Failed to burn subtitles: {}", e))?;
+        .map_err(|_| "FFmpeg not found. Please reinstall the app.".to_string())?;
 
     if !burn_status.success() {
-        return Err("Subtitle burning failed".to_string());
+        return Err("Could not burn subtitles. Check that the output path is writable.".to_string());
     }
 
-    // Cleanup temp files
+    // Cleanup
     let _ = std::fs::remove_file(audio_path);
     let _ = std::fs::remove_file(&srt_path);
 
+    emit_progress(&app, "done", "Done!");
     Ok(())
 }
 
