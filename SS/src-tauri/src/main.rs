@@ -62,13 +62,23 @@ fn process_video(app: tauri::AppHandle, video_path: String, output_path: String)
 
     // Step 3: Burn subtitles into video using FFmpeg
     println!("Burning subtitles...");
-    let srt_escaped = srt_path.to_str().unwrap().replace("\\", "/").replace(":", "\\:");
-    
+
+    // On Windows, FFmpeg subtitles filter needs special path handling
+    #[cfg(target_os = "windows")]
+    let srt_escaped = srt_path.to_str().unwrap()
+        .replace("\\", "/")
+        .replace(":", "\\:");
+    #[cfg(not(target_os = "windows"))]
+    let srt_escaped = srt_path.to_str().unwrap().to_string();
+
+    println!("SRT path: {}", srt_escaped);
+
     let burn_status = Command::new(&ffmpeg_path)
         .args([
             "-i", &video_path,
-            "-vf", &format!("subtitles={}", srt_escaped),
-            "-c:a", "copy", // Copy audio without re-encoding
+            "-vf", &format!("subtitles='{}'", srt_escaped),
+            "-c:v", "libx264",
+            "-c:a", "copy",
             "-y",
             &output_path
         ])
