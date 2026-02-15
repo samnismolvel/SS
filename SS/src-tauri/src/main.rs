@@ -7,9 +7,18 @@ fn process_video(app: tauri::AppHandle, video_path: String, output_path: String)
     let resource_path = app.path().resource_dir()
         .map_err(|e| format!("Failed to get resource directory: {}", e))?;
     
+    // On Windows, executables have .exe extension
+    #[cfg(target_os = "windows")]
+    let ffmpeg_path = resource_path.join("resources/binaries/ffmpeg.exe");
+    #[cfg(not(target_os = "windows"))]
     let ffmpeg_path = resource_path.join("binaries/ffmpeg");
+
+    #[cfg(target_os = "windows")]
+    let whisper_path = resource_path.join("resources/whisper-cli.exe");
+    #[cfg(not(target_os = "windows"))]
     let whisper_path = resource_path.join("whisper-cli");
-    let model_path = resource_path.join("ggml-tiny.bin");
+
+    let model_path = resource_path.join("resources/ggml-tiny.bin");
     
     // Create temp directory for intermediate files
     let temp_dir = std::env::temp_dir();

@@ -65,17 +65,17 @@
   
   <div class="container">
     <div class="file-section">
-      <label>Input Video:</label>
+      <label for="input-video">Input Video:</label>
       <div class="file-input">
-        <input type="text" readonly value={videoPath} placeholder="No file selected" />
+        <input id="input-video" type="text" readonly value={videoPath} placeholder="No file selected" />
         <button on:click={selectVideo}>Browse</button>
       </div>
     </div>
 
     <div class="file-section">
-      <label>Output Video:</label>
+      <label for="output-video">Output Video:</label>
       <div class="file-input">
-        <input type="text" bind:value={outputPath} placeholder="Output path" />
+        <input id="output-video" type="text" bind:value={outputPath} placeholder="Output path" />
         <button on:click={selectOutput}>Browse</button>
       </div>
     </div>

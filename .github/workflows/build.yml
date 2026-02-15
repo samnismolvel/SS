@@ -56,11 +56,11 @@ jobs:
         shell: pwsh
         run: |
           $config = Get-Content "src-tauri/tauri.conf.json" -Raw | ConvertFrom-Json
-          $config.bundle.resources = @(
-            "binaries/ffmpeg.exe",
-            "../../whisper.cpp/build/bin/Release/whisper-cli.exe",
-            "../../whisper.cpp/models/ggml-tiny.bin"
-          )
+          $config.bundle.resources = @{
+            "../../whisper.cpp/build/bin/Release/whisper-cli.exe" = "resources/whisper-cli.exe"
+            "../../whisper.cpp/models/ggml-tiny.bin" = "resources/ggml-tiny.bin"
+            "binaries/ffmpeg.exe" = "resources/binaries/ffmpeg.exe"
+          }
           $config | ConvertTo-Json -Depth 10 | Set-Content "src-tauri/tauri.conf.json"
           echo "tauri.conf.json updated"
 
