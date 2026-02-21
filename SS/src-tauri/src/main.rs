@@ -3,6 +3,10 @@
 use std::process::Command;
 use tauri::{Manager, Emitter};
 
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
 fn emit_progress(app: &tauri::AppHandle, step: &str, message: &str) {
     let _ = app.emit("progress", serde_json::json!({
         "step": step,
@@ -36,17 +40,20 @@ async fn process_video(app: tauri::AppHandle, video_path: String, output_path: S
 
     // Step 1: Extract audio
     emit_progress(&app, "extracting", "Extracting audio from video...");
-    let extract_status = Command::new(&ffmpeg_path)
-        .args([
-            "-i", &video_path,
-            "-vn",
-            "-acodec", "pcm_s16le",
-            "-ar", "16000",
-            "-ac", "1",
-            "-y",
-            audio_path.to_str().unwrap()
-        ])
-        .status()
+    #[cfg_attr(not(target_os = "windows"), allow(unused_mut))]
+    let mut extract_cmd = Command::new(&ffmpeg_path);
+    extract_cmd.args([
+        "-i", &video_path,
+        "-vn",
+        "-acodec", "pcm_s16le",
+        "-ar", "16000",
+        "-ac", "1",
+        "-y",
+        audio_path.to_str().unwrap()
+    ]);
+    #[cfg(target_os = "windows")]
+    extract_cmd.creation_flags(CREATE_NO_WINDOW);
+    let extract_status = extract_cmd.status()
         .map_err(|_| "FFmpeg not found. Please reinstall the app.".to_string())?;
 
     if !extract_status.success() {
@@ -55,14 +62,17 @@ async fn process_video(app: tauri::AppHandle, video_path: String, output_path: S
 
     // Step 2: Transcribe
     emit_progress(&app, "transcribing", "Transcribing audio (this may take a while)...");
-    let whisper_status = Command::new(&whisper_path)
-        .args([
-            "-m", model_path.to_str().unwrap(),
-            "-f", audio_path.to_str().unwrap(),
-            "-osrt",
-            "-of", srt_path.to_str().unwrap().trim_end_matches(".srt")
-        ])
-        .status()
+    #[cfg_attr(not(target_os = "windows"), allow(unused_mut))]
+    let mut whisper_cmd = Command::new(&whisper_path);
+    whisper_cmd.args([
+        "-m", model_path.to_str().unwrap(),
+        "-f", audio_path.to_str().unwrap(),
+        "-osrt",
+        "-of", srt_path.to_str().unwrap().trim_end_matches(".srt")
+    ]);
+    #[cfg(target_os = "windows")]
+    whisper_cmd.creation_flags(CREATE_NO_WINDOW);
+    let whisper_status = whisper_cmd.status()
         .map_err(|_| "Whisper not found. Please reinstall the app.".to_string())?;
 
     if !whisper_status.success() {
@@ -79,16 +89,19 @@ async fn process_video(app: tauri::AppHandle, video_path: String, output_path: S
     #[cfg(not(target_os = "windows"))]
     let srt_escaped = srt_path.to_str().unwrap().to_string();
 
-    let burn_status = Command::new(&ffmpeg_path)
-        .args([
-            "-i", &video_path,
-            "-vf", &format!("subtitles='{}'", srt_escaped),
-            "-c:v", "libx264",
-            "-c:a", "copy",
-            "-y",
-            &output_path
-        ])
-        .status()
+    #[cfg_attr(not(target_os = "windows"), allow(unused_mut))]
+    let mut burn_cmd = Command::new(&ffmpeg_path);
+    burn_cmd.args([
+        "-i", &video_path,
+        "-vf", &format!("subtitles='{}'", srt_escaped),
+        "-c:v", "libx264",
+        "-c:a", "copy",
+        "-y",
+        &output_path
+    ]);
+    #[cfg(target_os = "windows")]
+    burn_cmd.creation_flags(CREATE_NO_WINDOW);
+    let burn_status = burn_cmd.status()
         .map_err(|_| "FFmpeg not found. Please reinstall the app.".to_string())?;
 
     if !burn_status.success() {
