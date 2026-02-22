@@ -15,7 +15,7 @@ fn emit_progress(app: &tauri::AppHandle, step: &str, message: &str) {
 }
 
 #[tauri::command]
-async fn process_video(app: tauri::AppHandle, video_path: String, output_path: String) -> Result<(), String> {
+async fn process_video(app: tauri::AppHandle, video_path: String, output_path: String, skip_editor: bool) -> Result<String, String> {
     let resource_path = app.path().resource_dir()
         .map_err(|_| "Could not locate app resources".to_string())?;
 
@@ -79,6 +79,14 @@ async fn process_video(app: tauri::AppHandle, video_path: String, output_path: S
         return Err("Transcription failed. The audio may be too short or silent.".to_string());
     }
 
+    // If skip_editor is false, return the SRT content for editing
+    if !skip_editor {
+        let srt_content = std::fs::read_to_string(&srt_path)
+            .map_err(|_| "Could not read generated subtitles.".to_string())?;
+        emit_progress(&app, "editing", "Subtitles ready for editing");
+        return Ok(srt_content);
+    }
+
     // Step 3: Burn subtitles
     emit_progress(&app, "burning", "Burning subtitles into video...");
 
@@ -113,13 +121,64 @@ async fn process_video(app: tauri::AppHandle, video_path: String, output_path: S
     let _ = std::fs::remove_file(&srt_path);
 
     emit_progress(&app, "done", "Done!");
+    Ok(String::new())
+}
+
+#[tauri::command]
+async fn burn_subtitles(app: tauri::AppHandle, video_path: String, output_path: String, srt_content: String) -> Result<(), String> {
+    let resource_path = app.path().resource_dir()
+        .map_err(|_| "Could not locate app resources".to_string())?;
+
+    #[cfg(target_os = "windows")]
+    let ffmpeg_path = resource_path.join("resources/binaries/ffmpeg.exe");
+    #[cfg(not(target_os = "windows"))]
+    let ffmpeg_path = resource_path.join("binaries/ffmpeg");
+
+    let temp_dir = std::env::temp_dir();
+    let srt_path = temp_dir.join("edited_subtitles.srt");
+
+    // Write edited SRT to temp file
+    std::fs::write(&srt_path, srt_content)
+        .map_err(|_| "Could not save edited subtitles.".to_string())?;
+
+    emit_progress(&app, "burning", "Burning subtitles into video...");
+
+    #[cfg(target_os = "windows")]
+    let srt_escaped = srt_path.to_str().unwrap()
+        .replace("\\", "/")
+        .replace(":", "\\:");
+    #[cfg(not(target_os = "windows"))]
+    let srt_escaped = srt_path.to_str().unwrap().to_string();
+
+    #[cfg_attr(not(target_os = "windows"), allow(unused_mut))]
+    let mut burn_cmd = Command::new(&ffmpeg_path);
+    burn_cmd.args([
+        "-i", &video_path,
+        "-vf", &format!("subtitles='{}'", srt_escaped),
+        "-c:v", "libx264",
+        "-c:a", "copy",
+        "-y",
+        &output_path
+    ]);
+    #[cfg(target_os = "windows")]
+    burn_cmd.creation_flags(CREATE_NO_WINDOW);
+    let burn_status = burn_cmd.status()
+        .map_err(|_| "FFmpeg not found. Please reinstall the app.".to_string())?;
+
+    if !burn_status.success() {
+        return Err("Could not burn subtitles. Check that the output path is writable.".to_string());
+    }
+
+    let _ = std::fs::remove_file(&srt_path);
+
+    emit_progress(&app, "done", "Done!");
     Ok(())
 }
 
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![process_video])
+        .invoke_handler(tauri::generate_handler![process_video, burn_subtitles])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

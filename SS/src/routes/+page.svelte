@@ -3,12 +3,17 @@
   import { open } from '@tauri-apps/plugin-dialog';
   import { listen } from '@tauri-apps/api/event';
   import { onDestroy } from 'svelte';
+  import SubtitleEditor from './SubtitleEditor.svelte';
 
   let queue = [];
   let processing = false;
   let currentVideoIndex = -1;
   let currentStep = '';
   let currentMessage = '';
+  let editorOpen = false;
+  let currentSRT = '';
+  let currentVideoPath = '';
+  let currentOutputPath = '';
 
   const steps = ['extracting', 'transcribing', 'burning', 'done'];
 
@@ -76,10 +81,22 @@
       currentMessage = '';
 
       try {
-        await invoke('process_video', {
+        const result = await invoke('process_video', {
           videoPath: queue[i].inputPath,
-          outputPath: queue[i].outputPath
+          outputPath: queue[i].outputPath,
+          skipEditor: false
         });
+
+        // If we got SRT content back, open editor
+        if (result && typeof result === 'string' && result.length > 0) {
+          currentSRT = result;
+          currentVideoPath = queue[i].inputPath;
+          currentOutputPath = queue[i].outputPath;
+          editorOpen = true;
+          processing = false;
+          return; // Wait for user to finish editing
+        }
+
         queue[i].status = 'done';
       } catch (e) {
         queue[i].status = 'failed';
@@ -106,10 +123,91 @@
   function getFileName(path) {
     return path.split(/[\\/]/).pop();
   }
+
+  async function handleEditorSave(event) {
+    editorOpen = false;
+    processing = true;
+
+    try {
+      await invoke('burn_subtitles', {
+        videoPath: currentVideoPath,
+        outputPath: currentOutputPath,
+        srtContent: event.detail.srtContent
+      });
+      queue[currentVideoIndex].status = 'done';
+    } catch (e) {
+      queue[currentVideoIndex].status = 'failed';
+      queue[currentVideoIndex].error = e;
+    }
+    queue = queue;
+
+    // Continue with next video in queue
+    continueQueue();
+  }
+
+  function handleEditorCancel() {
+    editorOpen = false;
+    queue[currentVideoIndex].status = 'failed';
+    queue[currentVideoIndex].error = 'Editing cancelled';
+    queue = queue;
+    
+    // Continue with next video in queue
+    continueQueue();
+  }
+
+  async function continueQueue() {
+    for (let i = currentVideoIndex + 1; i < queue.length; i++) {
+      if (queue[i].status === 'done') continue;
+
+      currentVideoIndex = i;
+      queue[i].status = 'processing';
+      queue[i].error = null;
+      queue = queue;
+
+      currentStep = '';
+      currentMessage = '';
+
+      try {
+        const result = await invoke('process_video', {
+          videoPath: queue[i].inputPath,
+          outputPath: queue[i].outputPath,
+          skipEditor: false
+        });
+
+        if (result && typeof result === 'string' && result.length > 0) {
+          currentSRT = result;
+          currentVideoPath = queue[i].inputPath;
+          currentOutputPath = queue[i].outputPath;
+          editorOpen = true;
+          processing = false;
+          return;
+        }
+
+        queue[i].status = 'done';
+      } catch (e) {
+        queue[i].status = 'failed';
+        queue[i].error = e;
+      }
+      queue = queue;
+    }
+
+    processing = false;
+    currentVideoIndex = -1;
+    currentStep = '';
+    currentMessage = '';
+  }
 </script>
 
 <main>
-  <h1>Video Subtitle Burner</h1>
+  {#if editorOpen}
+    <SubtitleEditor 
+      srtContent={currentSRT} 
+      videoPath={currentVideoPath}
+      on:save={handleEditorSave}
+      on:cancel={handleEditorCancel}
+    />
+  {:else}
+    <h1>Video Subtitle Burner</h1>
 
   <div class="container">
     <div class="queue-header">
@@ -174,6 +272,7 @@
       </div>
     {/if}
   </div>
+  {/if}
 </main>
 
 <style>
