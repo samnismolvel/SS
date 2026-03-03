@@ -84,39 +84,11 @@ async fn process_video(app: tauri::AppHandle, video_path: String, output_path: S
         let srt_content = std::fs::read_to_string(&srt_path)
             .map_err(|_| "Could not read generated subtitles.".to_string())?;
         emit_progress(&app, "editing", "Subtitles ready for editing");
+        let _ = std::fs::remove_file(audio_path);
         return Ok(srt_content);
     }
 
-    // Step 3: Burn subtitles
-    emit_progress(&app, "burning", "Burning subtitles into video...");
-
-    #[cfg(target_os = "windows")]
-    let ass_escaped = ass_path.to_str().unwrap()
-        .replace("\\", "/")
-        .replace(":", "\\:");
-    #[cfg(not(target_os = "windows"))]
-    let ass_escaped = ass_path.to_str().unwrap().to_string();
-
-    #[cfg_attr(not(target_os = "windows"), allow(unused_mut))]
-    let mut burn_cmd = Command::new(&ffmpeg_path);
-    burn_cmd.args([
-        "-i", &video_path,
-        "-vf", &format!("ass='{}'", ass_escaped),
-        "-c:v", "libx264",
-        "-c:a", "copy",
-        "-y",
-        &output_path
-    ]);
-    #[cfg(target_os = "windows")]
-    burn_cmd.creation_flags(CREATE_NO_WINDOW);
-    let burn_status = burn_cmd.status()
-        .map_err(|_| "FFmpeg not found. Please reinstall the app.".to_string())?;
-
-    if !burn_status.success() {
-        return Err("Could not burn subtitles. Check that the output path is writable.".to_string());
-    }
-
-    // Cleanup
+    // Cleanup temp files
     let _ = std::fs::remove_file(audio_path);
     let _ = std::fs::remove_file(&srt_path);
 
@@ -157,17 +129,17 @@ async fn burn_subtitles(
     emit_progress(&app, "burning", "Burning subtitles into video...");
 
     #[cfg(target_os = "windows")]
-    let srt_escaped = srt_path.to_str().unwrap()
+    let ass_escaped = ass_path.to_str().unwrap()
         .replace("\\", "/")
         .replace(":", "\\:");
     #[cfg(not(target_os = "windows"))]
-    let srt_escaped = srt_path.to_str().unwrap().to_string();
+    let ass_escaped = ass_path.to_str().unwrap().to_string();
 
     #[cfg_attr(not(target_os = "windows"), allow(unused_mut))]
     let mut burn_cmd = Command::new(&ffmpeg_path);
     burn_cmd.args([
         "-i", &video_path,
-        "-vf", &format!("subtitles='{}'", srt_escaped),
+        "-vf", &format!("ass='{}'", ass_escaped),
         "-c:v", "libx264",
         "-c:a", "copy",
         "-y",
