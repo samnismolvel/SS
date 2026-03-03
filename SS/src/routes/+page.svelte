@@ -132,7 +132,12 @@
       await invoke('burn_subtitles', {
         videoPath: currentVideoPath,
         outputPath: currentOutputPath,
-        srtContent: event.detail.srtContent
+        srtContent: event.detail.srtContent,
+        fontName: event.detail.fontName,
+        fontSize: event.detail.fontSize,
+        primaryColor: event.detail.primaryColor,
+        outlineColor: event.detail.outlineColor,
+        alignment: event.detail.alignment
       });
       queue[currentVideoIndex].status = 'done';
     } catch (e) {

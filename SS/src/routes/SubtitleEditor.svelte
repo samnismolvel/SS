@@ -9,7 +9,14 @@
   let subtitles = [];
   let searchTerm = '';
   let replaceTerm = '';
-  let findMode = 'all'; // 'all' or 'single'
+  let findMode = 'all';
+
+  // Style settings
+  let fontName = 'Arial';
+  let fontSize = 24;
+  let primaryColor = '#FFFFFF';
+  let outlineColor = '#000000';
+  let alignment = 2; // 1=left-bottom, 2=center-bottom, 3=right-bottom, etc.
 
   $: parseSRT(srtContent);
 
@@ -63,7 +70,14 @@
 
   function saveAndBurn() {
     const finalSRT = serializeSRT();
-    dispatch('save', { srtContent: finalSRT });
+    dispatch('save', { 
+      srtContent: finalSRT,
+      fontName,
+      fontSize,
+      primaryColor,
+      outlineColor,
+      alignment
+    });
   }
 
   function cancel() {
@@ -88,6 +102,50 @@
       <option value="all">All matches</option>
     </select>
     <button on:click={findAndReplace}>Replace</button>
+  </div>
+
+  <div class="style-bar">
+    <div class="style-group">
+      <label>Font</label>
+      <select bind:value={fontName}>
+        <option value="Arial">Arial</option>
+        <option value="Times New Roman">Times New Roman</option>
+        <option value="Courier New">Courier New</option>
+        <option value="Comic Sans MS">Comic Sans MS</option>
+        <option value="Impact">Impact</option>
+        <option value="Verdana">Verdana</option>
+      </select>
+    </div>
+
+    <div class="style-group">
+      <label>Size</label>
+      <input type="number" bind:value={fontSize} min="12" max="72" />
+    </div>
+
+    <div class="style-group">
+      <label>Text Color</label>
+      <input type="color" bind:value={primaryColor} />
+    </div>
+
+    <div class="style-group">
+      <label>Outline</label>
+      <input type="color" bind:value={outlineColor} />
+    </div>
+
+    <div class="style-group">
+      <label>Position</label>
+      <select bind:value={alignment}>
+        <option value="1">Bottom Left</option>
+        <option value="2">Bottom Center</option>
+        <option value="3">Bottom Right</option>
+        <option value="4">Middle Left</option>
+        <option value="5">Middle Center</option>
+        <option value="6">Middle Right</option>
+        <option value="7">Top Left</option>
+        <option value="8">Top Center</option>
+        <option value="9">Top Right</option>
+      </select>
+    </div>
   </div>
 
   <div class="subtitles-list">
@@ -185,6 +243,46 @@
 
   .find-replace-bar button:hover {
     background: #0052a3;
+  }
+
+  .style-bar {
+    padding: 1rem;
+    display: flex;
+    gap: 1rem;
+    border-bottom: 1px solid #eee;
+    background: white;
+    flex-wrap: wrap;
+  }
+
+  .style-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .style-group label {
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: #666;
+  }
+
+  .style-group select,
+  .style-group input[type="number"] {
+    padding: 0.4rem;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 0.85rem;
+  }
+
+  .style-group input[type="color"] {
+    height: 32px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+
+  .style-group input[type="number"] {
+    width: 60px;
   }
 
   .subtitles-list {
