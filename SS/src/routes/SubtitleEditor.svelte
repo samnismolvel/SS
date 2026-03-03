@@ -16,7 +16,7 @@
   let fontSize = 24;
   let primaryColor = '#FFFFFF';
   let outlineColor = '#000000';
-  let alignment = 2; // 1=left-bottom, 2=center-bottom, 3=right-bottom, etc.
+  let alignment = 2; // Number, not string
 
   $: parseSRT(srtContent);
 
@@ -73,10 +73,10 @@
     dispatch('save', { 
       srtContent: finalSRT,
       fontName,
-      fontSize,
+      fontSize: Number(fontSize),
       primaryColor,
       outlineColor,
-      alignment
+      alignment: Number(alignment)
     });
   }
 
@@ -135,15 +135,15 @@
     <div class="style-group">
       <label>Position</label>
       <select bind:value={alignment}>
-        <option value="1">Bottom Left</option>
-        <option value="2">Bottom Center</option>
-        <option value="3">Bottom Right</option>
-        <option value="4">Middle Left</option>
-        <option value="5">Middle Center</option>
-        <option value="6">Middle Right</option>
-        <option value="7">Top Left</option>
-        <option value="8">Top Center</option>
-        <option value="9">Top Right</option>
+        <option value={1}>Bottom Left</option>
+        <option value={2}>Bottom Center</option>
+        <option value={3}>Bottom Right</option>
+        <option value={4}>Middle Left</option>
+        <option value={5}>Middle Center</option>
+        <option value={6}>Middle Right</option>
+        <option value={7}>Top Left</option>
+        <option value={8}>Top Center</option>
+        <option value={9}>Top Right</option>
       </select>
     </div>
   </div>
