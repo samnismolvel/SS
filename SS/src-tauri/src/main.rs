@@ -184,13 +184,20 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         let lines: Vec<&str> = block.lines().collect();
         if lines.len() < 3 { continue; }
 
+        // Line 0: index number
+        // Line 1: timing
+        // Line 2+: subtitle text
         let timing = lines[1];
-        let text = lines[2..].join("\\N");
+        let text = lines[2..].join("\\N"); // \\N is newline in ASS
 
         if let Some((start, end)) = timing.split_once(" --> ") {
             let start_ass = srt_time_to_ass(start.trim());
             let end_ass = srt_time_to_ass(end.trim());
-            ass.push_str(&format!("Dialogue: 0,{},{},Default,,0,0,0,,{}\n", start_ass, end_ass, text));
+            
+            // Escape any special characters in text
+            let text_escaped = text.replace("{", "\\{").replace("}", "\\}");
+            
+            ass.push_str(&format!("Dialogue: 0,{},{},Default,,0,0,0,,{}\n", start_ass, end_ass, text_escaped));
         }
     }
 
@@ -211,7 +218,31 @@ fn hex_to_ass_color(hex: &str) -> String {
 
 fn srt_time_to_ass(srt_time: &str) -> String {
     // Convert 00:00:10,500 to 0:00:10.50
-    srt_time.replace(',', ".")
+    // SRT format: HH:MM:SS,mmm
+    // ASS format: H:MM:SS.cc (centiseconds, not milliseconds)
+    
+    let time = srt_time.trim();
+    
+    // Split by comma to separate seconds from milliseconds
+    if let Some((time_part, ms_part)) = time.split_once(',') {
+        // Convert milliseconds to centiseconds (divide by 10)
+        let ms: u32 = ms_part.parse().unwrap_or(0);
+        let cs = ms / 10; // Convert to centiseconds
+        
+        // Parse HH:MM:SS
+        let parts: Vec<&str> = time_part.split(':').collect();
+        if parts.len() == 3 {
+            let hours: u32 = parts[0].parse().unwrap_or(0);
+            let minutes = parts[1];
+            let seconds = parts[2];
+            
+            // ASS format: H:MM:SS.cc (no leading zero on hours)
+            return format!("{}:{:0>2}:{:0>2}.{:0>2}", hours, minutes, seconds, cs);
+        }
+    }
+    
+    // Fallback
+    time.replace(',', ".")
 }
 
 fn main() {
