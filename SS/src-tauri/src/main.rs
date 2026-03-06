@@ -122,6 +122,16 @@ async fn burn_subtitles(
     // Convert SRT to ASS with styling
     let ass_content = srt_to_ass(&srt_content, &font_name, font_size, &primary_color, &outline_color, alignment);
 
+    // Debug: save a copy to desktop if possible for inspection
+    #[cfg(debug_assertions)]
+    {
+        if let Ok(home) = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")) {
+            let debug_path = std::path::Path::new(&home).join("Desktop").join("debug_subtitles.ass");
+            let _ = std::fs::write(&debug_path, &ass_content);
+            eprintln!("Debug ASS file saved to: {:?}", debug_path);
+        }
+    }
+
     // Write ASS to temp file
     std::fs::write(&ass_path, ass_content)
         .map_err(|_| "Could not save edited subtitles.".to_string())?;
@@ -168,21 +178,31 @@ fn srt_to_ass(srt: &str, font: &str, size: u32, primary: &str, outline: &str, al
 
     let mut ass = format!(
 r#"[Script Info]
-Title: Subtitle
+Title: Subtitles
 ScriptType: v4.00+
+Collisions: Normal
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,{},{},{},&H000000FF,{},&H80000000,0,0,0,0,100,100,0,0,1,2,0,{},10,10,10,1
+Style: Default,{},{},{},{},{},&H80000000,0,0,0,0,100,100,0,0,1,2,0,{},10,10,10,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
-"#, font, size, primary_ass, outline_ass, alignment);
+"#, font, size, primary_ass, primary_ass, outline_ass, alignment);
 
     // Parse SRT and convert to ASS
-    for block in srt.trim().split("\n\n") {
+    // Handle both Unix (\n) and Windows (\r\n) line endings
+    let normalized = srt.replace("\r\n", "\n");
+    
+    for block in normalized.trim().split("\n\n") {
+        let block = block.trim();
+        if block.is_empty() { continue; }
+        
         let lines: Vec<&str> = block.lines().collect();
-        if lines.len() < 3 { continue; }
+        if lines.len() < 3 { 
+            eprintln!("Skipping invalid block: {:?}", lines);
+            continue; 
+        }
 
         // Line 0: index number
         // Line 1: timing
@@ -198,6 +218,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             let text_escaped = text.replace("{", "\\{").replace("}", "\\}");
             
             ass.push_str(&format!("Dialogue: 0,{},{},Default,,0,0,0,,{}\n", start_ass, end_ass, text_escaped));
+        } else {
+            eprintln!("Invalid timing format: {}", timing);
         }
     }
 
