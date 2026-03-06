@@ -107,7 +107,8 @@ async fn burn_subtitles(
     primary_color: String,
     outline_color: String,
     alignment: u32,
-    word_by_word: bool
+    word_by_word: bool,
+    word_mode: String
 ) -> Result<(), String> {
     let resource_path = app.path().resource_dir()
         .map_err(|_| "Could not locate app resources".to_string())?;
@@ -121,7 +122,7 @@ async fn burn_subtitles(
     let ass_path = temp_dir.join("edited_subtitles.ass");
 
     // Convert SRT to ASS with styling
-    let ass_content = srt_to_ass(&srt_content, &font_name, font_size, &primary_color, &outline_color, alignment, word_by_word);
+    let ass_content = srt_to_ass(&srt_content, &font_name, font_size, &primary_color, &outline_color, alignment, word_by_word, &word_mode);
 
     // Debug: save a copy to desktop if possible for inspection
     #[cfg(debug_assertions)]
@@ -172,7 +173,7 @@ async fn burn_subtitles(
 }
 
 // Convert SRT to ASS with styling
-fn srt_to_ass(srt: &str, font: &str, size: u32, primary: &str, outline: &str, alignment: u32, word_by_word: bool) -> String {
+fn srt_to_ass(srt: &str, font: &str, size: u32, primary: &str, outline: &str, alignment: u32, word_by_word: bool, word_mode: &str) -> String {
     // Convert hex colors to ASS format (&HAABBGGRR)
     let primary_ass = hex_to_ass_color(primary);
     let outline_ass = hex_to_ass_color(outline);
@@ -227,27 +228,41 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                     let duration_ms = end_ms - start_ms;
                     let ms_per_word = duration_ms / words.len() as i64;
                     
-                    for (i, word) in words.iter().enumerate() {
-                        let word_start_ms = start_ms + (i as i64 * ms_per_word);
-                        let word_end_ms = word_start_ms + ms_per_word;
-                        
-                        let word_start = ms_to_ass_time(word_start_ms);
-                        let word_end = ms_to_ass_time(word_end_ms);
-                        
-                        // Build the line with current word highlighted
-                        let mut highlighted_text = String::new();
-                        for (j, w) in words.iter().enumerate() {
-                            if j == i {
-                                highlighted_text.push_str(&format!("{{\\c{}}}{}", &highlight_color, w));
-                            } else {
-                                highlighted_text.push_str(w);
-                            }
-                            if j < words.len() - 1 {
-                                highlighted_text.push(' ');
-                            }
+                    if word_mode == "solo" {
+                        // Solo mode: show only one word at a time
+                        for (i, word) in words.iter().enumerate() {
+                            let word_start_ms = start_ms + (i as i64 * ms_per_word);
+                            let word_end_ms = word_start_ms + ms_per_word;
+                            
+                            let word_start = ms_to_ass_time(word_start_ms);
+                            let word_end = ms_to_ass_time(word_end_ms);
+                            
+                            ass.push_str(&format!("Dialogue: 0,{},{},Default,,0,0,0,,{}\n", word_start, word_end, word));
                         }
-                        
-                        ass.push_str(&format!("Dialogue: 0,{},{},Default,,0,0,0,,{}\n", word_start, word_end, highlighted_text));
+                    } else {
+                        // Highlight mode: show all words with current highlighted
+                        for (i, word) in words.iter().enumerate() {
+                            let word_start_ms = start_ms + (i as i64 * ms_per_word);
+                            let word_end_ms = word_start_ms + ms_per_word;
+                            
+                            let word_start = ms_to_ass_time(word_start_ms);
+                            let word_end = ms_to_ass_time(word_end_ms);
+                            
+                            // Build the line with current word highlighted
+                            let mut highlighted_text = String::new();
+                            for (j, w) in words.iter().enumerate() {
+                                if j == i {
+                                    highlighted_text.push_str(&format!("{{\\c{}}}{}", &highlight_color, w));
+                                } else {
+                                    highlighted_text.push_str(w);
+                                }
+                                if j < words.len() - 1 {
+                                    highlighted_text.push(' ');
+                                }
+                            }
+                            
+                            ass.push_str(&format!("Dialogue: 0,{},{},Default,,0,0,0,,{}\n", word_start, word_end, highlighted_text));
+                        }
                     }
                     continue;
                 }

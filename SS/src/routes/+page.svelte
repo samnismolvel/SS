@@ -138,7 +138,8 @@
         primaryColor: event.detail.primaryColor,
         outlineColor: event.detail.outlineColor,
         alignment: event.detail.alignment,
-        wordByWord: event.detail.wordByWord
+        wordByWord: event.detail.wordByWord,
+        wordMode: event.detail.wordMode
       });
       queue[currentVideoIndex].status = 'done';
     } catch (e) {

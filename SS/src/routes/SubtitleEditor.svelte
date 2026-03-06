@@ -16,8 +16,9 @@
   let fontSize = 24;
   let primaryColor = '#FFFFFF';
   let outlineColor = '#000000';
-  let alignment = 2; // Number, not string
+  let alignment = 2;
   let wordByWord = false;
+  let wordMode = 'highlight'; // 'highlight' or 'solo'
 
   $: parseSRT(srtContent);
 
@@ -78,7 +79,8 @@
       primaryColor,
       outlineColor,
       alignment: Number(alignment),
-      wordByWord
+      wordByWord,
+      wordMode
     });
   }
 
@@ -110,9 +112,19 @@
     <div class="style-group">
       <label>
         <input type="checkbox" bind:checked={wordByWord} />
-        Word-by-Word (TikTok style)
+        Word-by-Word
       </label>
     </div>
+
+    {#if wordByWord}
+      <div class="style-group">
+        <label>Mode</label>
+        <select bind:value={wordMode}>
+          <option value="highlight">Highlight current word</option>
+          <option value="solo">Show only current word</option>
+        </select>
+      </div>
+    {/if}
 
     <div class="style-group">
       <label>Font</label>
@@ -142,8 +154,8 @@
     </div>
 
     <div class="style-group">
-      <label for="alignment-select">Position</label>
-      <select id="alignment-select" bind:value={alignment}>
+      <label>Position</label>
+      <select bind:value={alignment}>
         <option value={1}>Bottom Left</option>
         <option value={2}>Bottom Center</option>
         <option value={3}>Bottom Right</option>
