@@ -17,6 +17,7 @@
   let primaryColor = '#FFFFFF';
   let outlineColor = '#000000';
   let alignment = 2; // Number, not string
+  let wordByWord = false;
 
   $: parseSRT(srtContent);
 
@@ -76,7 +77,8 @@
       fontSize: Number(fontSize),
       primaryColor,
       outlineColor,
-      alignment: Number(alignment)
+      alignment: Number(alignment),
+      wordByWord
     });
   }
 
@@ -106,6 +108,13 @@
 
   <div class="style-bar">
     <div class="style-group">
+      <label>
+        <input type="checkbox" bind:checked={wordByWord} />
+        Word-by-Word (TikTok style)
+      </label>
+    </div>
+
+    <div class="style-group">
       <label>Font</label>
       <select bind:value={fontName}>
         <option value="Arial">Arial</option>
@@ -133,8 +142,8 @@
     </div>
 
     <div class="style-group">
-      <label>Position</label>
-      <select bind:value={alignment}>
+      <label for="alignment-select">Position</label>
+      <select id="alignment-select" bind:value={alignment}>
         <option value={1}>Bottom Left</option>
         <option value={2}>Bottom Center</option>
         <option value={3}>Bottom Right</option>
@@ -264,6 +273,13 @@
     font-size: 0.75rem;
     font-weight: 500;
     color: #666;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .style-group input[type="checkbox"] {
+    width: auto;
   }
 
   .style-group select,

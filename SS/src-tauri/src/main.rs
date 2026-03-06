@@ -106,7 +106,8 @@ async fn burn_subtitles(
     font_size: u32,
     primary_color: String,
     outline_color: String,
-    alignment: u32
+    alignment: u32,
+    word_by_word: bool
 ) -> Result<(), String> {
     let resource_path = app.path().resource_dir()
         .map_err(|_| "Could not locate app resources".to_string())?;
@@ -120,7 +121,7 @@ async fn burn_subtitles(
     let ass_path = temp_dir.join("edited_subtitles.ass");
 
     // Convert SRT to ASS with styling
-    let ass_content = srt_to_ass(&srt_content, &font_name, font_size, &primary_color, &outline_color, alignment);
+    let ass_content = srt_to_ass(&srt_content, &font_name, font_size, &primary_color, &outline_color, alignment, word_by_word);
 
     // Debug: save a copy to desktop if possible for inspection
     #[cfg(debug_assertions)]
@@ -171,10 +172,13 @@ async fn burn_subtitles(
 }
 
 // Convert SRT to ASS with styling
-fn srt_to_ass(srt: &str, font: &str, size: u32, primary: &str, outline: &str, alignment: u32) -> String {
+fn srt_to_ass(srt: &str, font: &str, size: u32, primary: &str, outline: &str, alignment: u32, word_by_word: bool) -> String {
     // Convert hex colors to ASS format (&HAABBGGRR)
     let primary_ass = hex_to_ass_color(primary);
     let outline_ass = hex_to_ass_color(outline);
+    
+    // For word-by-word, use yellow highlight color
+    let highlight_color = if word_by_word { "&H00FFFF" } else { primary_ass.clone() };
 
     let mut ass = format!(
 r#"[Script Info]
@@ -204,19 +208,52 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             continue; 
         }
 
-        // Line 0: index number
-        // Line 1: timing
-        // Line 2+: subtitle text
         let timing = lines[1];
-        let text = lines[2..].join("\\N"); // \\N is newline in ASS
+        let text = lines[2..].join("\\N");
 
         if let Some((start, end)) = timing.split_once(" --> ") {
             let start_ass = srt_time_to_ass(start.trim());
             let end_ass = srt_time_to_ass(end.trim());
             
-            // Escape any special characters in text
             let text_escaped = text.replace("{", "\\{").replace("}", "\\}");
             
+            // Word-by-word mode: split into words and highlight each one progressively
+            if word_by_word {
+                let words: Vec<&str> = text_escaped.split_whitespace().collect();
+                if words.len() > 1 {
+                    // Calculate time per word
+                    let start_ms = ass_time_to_ms(&start_ass);
+                    let end_ms = ass_time_to_ms(&end_ass);
+                    let duration_ms = end_ms - start_ms;
+                    let ms_per_word = duration_ms / words.len() as i64;
+                    
+                    for (i, word) in words.iter().enumerate() {
+                        let word_start_ms = start_ms + (i as i64 * ms_per_word);
+                        let word_end_ms = word_start_ms + ms_per_word;
+                        
+                        let word_start = ms_to_ass_time(word_start_ms);
+                        let word_end = ms_to_ass_time(word_end_ms);
+                        
+                        // Build the line with current word highlighted
+                        let mut highlighted_text = String::new();
+                        for (j, w) in words.iter().enumerate() {
+                            if j == i {
+                                highlighted_text.push_str(&format!("{{\\c{}}}{}", &highlight_color, w));
+                            } else {
+                                highlighted_text.push_str(w);
+                            }
+                            if j < words.len() - 1 {
+                                highlighted_text.push(' ');
+                            }
+                        }
+                        
+                        ass.push_str(&format!("Dialogue: 0,{},{},Default,,0,0,0,,{}\n", word_start, word_end, highlighted_text));
+                    }
+                    continue;
+                }
+            }
+            
+            // Normal mode or single word
             ass.push_str(&format!("Dialogue: 0,{},{},Default,,0,0,0,,{}\n", start_ass, end_ass, text_escaped));
         } else {
             eprintln!("Invalid timing format: {}", timing);
@@ -265,6 +302,34 @@ fn srt_time_to_ass(srt_time: &str) -> String {
     
     // Fallback
     time.replace(',', ".")
+}
+
+// Convert ASS time to milliseconds for calculation
+fn ass_time_to_ms(ass_time: &str) -> i64 {
+    // Format: H:MM:SS.cc
+    let parts: Vec<&str> = ass_time.split(':').collect();
+    if parts.len() != 3 { return 0; }
+    
+    let hours: i64 = parts[0].parse().unwrap_or(0);
+    let minutes: i64 = parts[1].parse().unwrap_or(0);
+    
+    let sec_parts: Vec<&str> = parts[2].split('.').collect();
+    let seconds: i64 = sec_parts[0].parse().unwrap_or(0);
+    let centis: i64 = if sec_parts.len() > 1 { sec_parts[1].parse().unwrap_or(0) } else { 0 };
+    
+    (hours * 3600000) + (minutes * 60000) + (seconds * 1000) + (centis * 10)
+}
+
+// Convert milliseconds back to ASS time
+fn ms_to_ass_time(ms: i64) -> String {
+    let hours = ms / 3600000;
+    let remainder = ms % 3600000;
+    let minutes = remainder / 60000;
+    let remainder = remainder % 60000;
+    let seconds = remainder / 1000;
+    let centis = (remainder % 1000) / 10;
+    
+    format!("{}:{:02}:{:02}.{:02}", hours, minutes, seconds, centis)
 }
 
 fn main() {

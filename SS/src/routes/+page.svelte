@@ -137,7 +137,8 @@
         fontSize: event.detail.fontSize,
         primaryColor: event.detail.primaryColor,
         outlineColor: event.detail.outlineColor,
-        alignment: event.detail.alignment
+        alignment: event.detail.alignment,
+        wordByWord: event.detail.wordByWord
       });
       queue[currentVideoIndex].status = 'done';
     } catch (e) {
