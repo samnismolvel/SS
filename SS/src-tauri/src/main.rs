@@ -67,6 +67,7 @@ async fn process_video(app: tauri::AppHandle, video_path: String, _output_path: 
     whisper_cmd.args([
         "-m", model_path.to_str().unwrap(),
         "-f", audio_path.to_str().unwrap(),
+        "-ml", "1", // Max line length = 1 word for word-level timestamps
         "-osrt",
         "-of", srt_path.to_str().unwrap().trim_end_matches(".srt")
     ]);
@@ -218,54 +219,20 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             
             let text_escaped = text.replace("{", "\\{").replace("}", "\\}");
             
-            // Word-by-word mode: split into words and highlight each one progressively
+            // Word-by-word mode
             if word_by_word {
-                let words: Vec<&str> = text_escaped.split_whitespace().collect();
-                if words.len() > 1 {
-                    // Calculate time per word
-                    let start_ms = ass_time_to_ms(&start_ass);
-                    let end_ms = ass_time_to_ms(&end_ass);
-                    let duration_ms = end_ms - start_ms;
-                    let ms_per_word = duration_ms / words.len() as i64;
-                    
-                    if word_mode == "solo" {
-                        // Solo mode: show only one word at a time
-                        for (i, word) in words.iter().enumerate() {
-                            let word_start_ms = start_ms + (i as i64 * ms_per_word);
-                            let word_end_ms = word_start_ms + ms_per_word;
-                            
-                            let word_start = ms_to_ass_time(word_start_ms);
-                            let word_end = ms_to_ass_time(word_end_ms);
-                            
-                            ass.push_str(&format!("Dialogue: 0,{},{},Default,,0,0,0,,{}\n", word_start, word_end, word));
-                        }
-                    } else {
-                        // Highlight mode: show all words with current highlighted
-                        for (i, word) in words.iter().enumerate() {
-                            let word_start_ms = start_ms + (i as i64 * ms_per_word);
-                            let word_end_ms = word_start_ms + ms_per_word;
-                            
-                            let word_start = ms_to_ass_time(word_start_ms);
-                            let word_end = ms_to_ass_time(word_end_ms);
-                            
-                            // Build the line with current word highlighted
-                            let mut highlighted_text = String::new();
-                            for (j, w) in words.iter().enumerate() {
-                                if j == i {
-                                    highlighted_text.push_str(&format!("{{\\c{}}}{}", &highlight_color, w));
-                                } else {
-                                    highlighted_text.push_str(w);
-                                }
-                                if j < words.len() - 1 {
-                                    highlighted_text.push(' ');
-                                }
-                            }
-                            
-                            ass.push_str(&format!("Dialogue: 0,{},{},Default,,0,0,0,,{}\n", word_start, word_end, highlighted_text));
-                        }
-                    }
-                    continue;
+                // With -ml 1, each subtitle block is already a single word with correct timing
+                // Just add a small advance for highlight mode
+                if word_mode == "highlight" {
+                    // Show highlight 100ms early for better sync
+                    let start_ms = ass_time_to_ms(&start_ass).saturating_sub(100);
+                    let adjusted_start = ms_to_ass_time(start_ms);
+                    ass.push_str(&format!("Dialogue: 0,{},{},Default,,0,0,0,,{{\\c{}}}{}\n", adjusted_start, end_ass, &highlight_color, text_escaped));
+                } else {
+                    // Solo mode: use exact timing
+                    ass.push_str(&format!("Dialogue: 0,{},{},Default,,0,0,0,,{}\n", start_ass, end_ass, text_escaped));
                 }
+                continue;
             }
             
             // Normal mode or single word
