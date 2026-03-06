@@ -15,7 +15,7 @@ fn emit_progress(app: &tauri::AppHandle, step: &str, message: &str) {
 }
 
 #[tauri::command]
-async fn process_video(app: tauri::AppHandle, video_path: String, output_path: String, skip_editor: bool) -> Result<String, String> {
+async fn process_video(app: tauri::AppHandle, video_path: String, _output_path: String, skip_editor: bool) -> Result<String, String> {
     let resource_path = app.path().resource_dir()
         .map_err(|_| "Could not locate app resources".to_string())?;
 
@@ -178,7 +178,7 @@ fn srt_to_ass(srt: &str, font: &str, size: u32, primary: &str, outline: &str, al
     let outline_ass = hex_to_ass_color(outline);
     
     // For word-by-word, use yellow highlight color
-    let highlight_color = if word_by_word { "&H00FFFF" } else { primary_ass.clone() };
+    let highlight_color = if word_by_word { "&H00FFFF".to_string() } else { primary_ass.clone() };
 
     let mut ass = format!(
 r#"[Script Info]
