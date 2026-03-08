@@ -37,6 +37,7 @@ async fn process_video(app: tauri::AppHandle, video_path: String, _output_path: 
     let temp_dir = std::env::temp_dir();
     let audio_path = temp_dir.join("temp_audio.wav");
     let srt_path = temp_dir.join("temp_subtitles.srt");
+    let json_path = temp_dir.join("temp_subtitles.json");
 
     // Step 1: Extract audio
     emit_progress(&app, "extracting", "Extracting audio from video...");
@@ -60,16 +61,15 @@ async fn process_video(app: tauri::AppHandle, video_path: String, _output_path: 
         return Err("Could not extract audio. Is the video file valid?".to_string());
     }
 
-    // Step 2: Transcribe
+    // Step 2: Transcribe with word-level timestamps
     emit_progress(&app, "transcribing", "Transcribing audio (this may take a while)...");
     #[cfg_attr(not(target_os = "windows"), allow(unused_mut))]
     let mut whisper_cmd = Command::new(&whisper_path);
     whisper_cmd.args([
         "-m", model_path.to_str().unwrap(),
         "-f", audio_path.to_str().unwrap(),
-        "-ml", "1",
-        "-osrt",
-        "-of", srt_path.to_str().unwrap().trim_end_matches(".srt")
+        "-oj", // Output JSON with word timestamps
+        "-of", json_path.to_str().unwrap().trim_end_matches(".json")
     ]);
     #[cfg(target_os = "windows")]
     whisper_cmd.creation_flags(CREATE_NO_WINDOW);
@@ -80,16 +80,22 @@ async fn process_video(app: tauri::AppHandle, video_path: String, _output_path: 
         return Err("Transcription failed. The audio may be too short or silent.".to_string());
     }
 
+    // Convert JSON with word timestamps to SRT
+    let json_content = std::fs::read_to_string(&json_path)
+        .map_err(|_| "Could not read transcription results.".to_string())?;
+    
+    let srt_content = json_to_srt(&json_content)
+        .map_err(|e| format!("Could not process transcription: {}", e))?;
+
     if !skip_editor {
-        let srt_content = std::fs::read_to_string(&srt_path)
-            .map_err(|_| "Could not read generated subtitles.".to_string())?;
         emit_progress(&app, "editing", "Subtitles ready for editing");
         let _ = std::fs::remove_file(audio_path);
+        let _ = std::fs::remove_file(&json_path);
         return Ok(srt_content);
     }
 
     let _ = std::fs::remove_file(audio_path);
-    let _ = std::fs::remove_file(&srt_path);
+    let _ = std::fs::remove_file(&json_path);
 
     emit_progress(&app, "done", "Done!");
     Ok(String::new())
@@ -189,101 +195,62 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     let normalized = srt.replace("\r\n", "\n");
     
     if word_by_word && word_mode == "highlight" {
-        let blocks: Vec<_> = normalized.trim().split("\n\n")
-            .filter(|b| !b.trim().is_empty())
-            .collect();
-        
-        // Merge syllables
-        let mut merged_blocks = vec![];
-        let mut i = 0;
-        
-        while i < blocks.len() {
-            let block = blocks[i].trim();
+        // Split sentences into words with timing
+        for block in normalized.trim().split("\n\n") {
+            let block = block.trim();
+            if block.is_empty() { continue; }
+            
             let lines: Vec<&str> = block.lines().collect();
-            if lines.len() < 3 { i += 1; continue; }
+            if lines.len() < 3 { continue; }
             
             let timing = lines[1];
-            let mut word = lines[2..].join(" ");
+            let text = lines[2..].join(" ");
             
             if let Some((start, end)) = timing.split_once(" --> ") {
-                let start_time = start.trim();
-                let mut end_time = end.trim();
+                let start_ass = srt_time_to_ass(start.trim());
+                let end_ass = srt_time_to_ass(end.trim());
                 
-                i += 1;
-                while i < blocks.len() {
-                    let next_block = blocks[i].trim();
-                    let next_lines: Vec<&str> = next_block.lines().collect();
-                    if next_lines.len() < 3 { break; }
-                    
-                    let next_word = next_lines[2..].join(" ");
-                    let next_timing = next_lines[1];
-                    
-                    if let Some((_, next_end)) = next_timing.split_once(" --> ") {
-                        let duration_ms = calculate_duration_ms(start_time, next_end.trim());
-                        
-                        if (duration_ms < 1000 && word.len() + next_word.len() < 12) || next_word.trim().len() <= 2 {
-                            word.push_str(&next_word);
-                            end_time = next_end.trim();
-                            i += 1;
-                        } else {
-                            break;
-                        }
-                    } else {
-                        break;
-                    }
-                }
-                
-                merged_blocks.push((word, start_time.to_string(), end_time.to_string()));
-            } else {
-                i += 1;
-            }
-        }
-        
-        // Group into sentences
-        let mut sentence_idx = 0;
-        
-        while sentence_idx < merged_blocks.len() {
-            let mut sentence_words = vec![];
-            
-            while sentence_idx < merged_blocks.len() && sentence_words.len() < 8 {
-                let (word, start, end) = &merged_blocks[sentence_idx];
-                
-                let clean_word = word.chars()
+                // Clean and split into words
+                let words: Vec<String> = text.chars()
                     .filter(|c| c.is_alphanumeric() || c.is_whitespace())
                     .collect::<String>()
-                    .trim()
-                    .to_string();
+                    .split_whitespace()
+                    .map(|s| s.to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect();
                 
-                if !clean_word.is_empty() {
-                    let start_ass = srt_time_to_ass(start);
-                    let end_ass = srt_time_to_ass(end);
-                    sentence_words.push((clean_word, start_ass, end_ass));
-                }
+                if words.is_empty() { continue; }
                 
-                sentence_idx += 1;
-            }
-            
-            if sentence_words.is_empty() { continue; }
-            
-            // Generate one subtitle per word with full sentence context
-            for (word_idx, (word, word_start, word_end)) in sentence_words.iter().enumerate() {
-                let start_ms = ass_time_to_ms(word_start).saturating_sub(100);
-                let adjusted_start = ms_to_ass_time(start_ms);
+                // Calculate timing per word
+                let start_ms = ass_time_to_ms(&start_ass);
+                let end_ms = ass_time_to_ms(&end_ass);
+                let duration_ms = end_ms - start_ms;
+                let ms_per_word = if words.len() > 1 { duration_ms / words.len() as i64 } else { duration_ms };
                 
-                let mut highlighted_text = String::new();
-                for (j, (w, _, _)) in sentence_words.iter().enumerate() {
-                    if j == word_idx {
-                        highlighted_text.push_str(&format!("{{\\c{}}}{}", &highlight_color, w));
-                        highlighted_text.push_str(&format!("{{\\c{}}}", &primary_ass));
-                    } else {
-                        highlighted_text.push_str(w);
+                // Generate subtitle for each word with full sentence context
+                for (i, _) in words.iter().enumerate() {
+                    let word_start_ms = start_ms + (i as i64 * ms_per_word) - 100; // 100ms advance
+                    let word_end_ms = start_ms + ((i + 1) as i64 * ms_per_word);
+                    
+                    let word_start = ms_to_ass_time(word_start_ms.max(0));
+                    let word_end = ms_to_ass_time(word_end_ms);
+                    
+                    // Build sentence with current word highlighted
+                    let mut highlighted = String::new();
+                    for (j, word) in words.iter().enumerate() {
+                        if j == i {
+                            highlighted.push_str(&format!("{{\\c{}}}{}", &highlight_color, word));
+                            highlighted.push_str(&format!("{{\\c{}}}", &primary_ass));
+                        } else {
+                            highlighted.push_str(word);
+                        }
+                        if j < words.len() - 1 {
+                            highlighted.push(' ');
+                        }
                     }
-                    if j < sentence_words.len() - 1 {
-                        highlighted_text.push(' ');
-                    }
+                    
+                    ass.push_str(&format!("Dialogue: 0,{},{},Default,,0,0,0,,{}\n", word_start, word_end, highlighted));
                 }
-                
-                ass.push_str(&format!("Dialogue: 0,{},{},Default,,0,0,0,,{}\n", adjusted_start, word_end, highlighted_text));
             }
         }
         
@@ -401,6 +368,59 @@ fn calculate_duration_ms(start: &str, end: &str) -> i64 {
     };
     
     parse_srt_to_ms(end) - parse_srt_to_ms(start)
+}
+
+// Convert whisper JSON output with word timestamps to SRT format
+fn json_to_srt(json: &str) -> Result<String, String> {
+    use serde_json::Value;
+    
+    let data: Value = serde_json::from_str(json)
+        .map_err(|e| format!("JSON parse error: {}", e))?;
+    
+    let mut srt = String::new();
+    let mut index = 1;
+    
+    // Extract word-level timestamps from transcription segments
+    if let Some(transcription) = data.get("transcription").and_then(|t| t.as_array()) {
+        for segment in transcription {
+            if let Some(timestamps) = segment.get("timestamps") {
+                if let Some(words) = timestamps.get("word").and_then(|w| w.as_array()) {
+                    for word_data in words {
+                        if let (Some(word), Some(from), Some(to)) = (
+                            word_data.get("word").and_then(|w| w.as_str()),
+                            word_data.get("from").and_then(|f| f.as_f64()),
+                            word_data.get("to").and_then(|t| t.as_f64())
+                        ) {
+                            let start = format_timestamp(from);
+                            let end = format_timestamp(to);
+                            
+                            srt.push_str(&format!("{}\n{} --> {}\n{}\n\n", index, start, end, word.trim()));
+                            index += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    if srt.is_empty() {
+        return Err("No word timestamps found in transcription".to_string());
+    }
+    
+    Ok(srt)
+}
+
+// Format seconds to SRT timestamp (HH:MM:SS,mmm)
+fn format_timestamp(seconds: f64) -> String {
+    let total_ms = (seconds * 1000.0) as i64;
+    let hours = total_ms / 3600000;
+    let remainder = total_ms % 3600000;
+    let minutes = remainder / 60000;
+    let remainder = remainder % 60000;
+    let secs = remainder / 1000;
+    let millis = remainder % 1000;
+    
+    format!("{:02}:{:02}:{:02},{:03}", hours, minutes, secs, millis)
 }
 
 fn main() {
