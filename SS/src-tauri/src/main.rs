@@ -82,13 +82,16 @@ async fn process_video(app: tauri::AppHandle, video_path: String, _output_path: 
 
     // Convert JSON with word timestamps to SRT
     let json_content = std::fs::read_to_string(&json_path)
-        .map_err(|e| format!("Could not read transcription JSON: {}. File may not exist.", e))?;
+        .map_err(|e| format!("Could not read JSON file at {:?}: {}", json_path, e))?;
     
-    eprintln!("JSON file size: {} bytes", json_content.len());
-    eprintln!("First 200 chars: {}", &json_content.chars().take(200).collect::<String>());
+    // ALWAYS save for debugging
+    let debug_path = temp_dir.join("debug_whisper.json");
+    let _ = std::fs::write(&debug_path, &json_content);
+    eprintln!("JSON saved to: {:?}", debug_path);
+    eprintln!("JSON size: {} bytes", json_content.len());
     
     let srt_content = json_to_srt(&json_content)
-        .map_err(|e| format!("Could not process transcription: {}", e))?;
+        .map_err(|e| format!("JSON parse error: {}. Check {:?}", e, debug_path))?;
 
     if !skip_editor {
         emit_progress(&app, "editing", "Subtitles ready for editing");
