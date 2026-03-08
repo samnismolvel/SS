@@ -82,7 +82,10 @@ async fn process_video(app: tauri::AppHandle, video_path: String, _output_path: 
 
     // Convert JSON with word timestamps to SRT
     let json_content = std::fs::read_to_string(&json_path)
-        .map_err(|_| "Could not read transcription results.".to_string())?;
+        .map_err(|e| format!("Could not read transcription JSON: {}. File may not exist.", e))?;
+    
+    eprintln!("JSON file size: {} bytes", json_content.len());
+    eprintln!("First 200 chars: {}", &json_content.chars().take(200).collect::<String>());
     
     let srt_content = json_to_srt(&json_content)
         .map_err(|e| format!("Could not process transcription: {}", e))?;
@@ -445,13 +448,10 @@ fn json_to_srt(json: &str) -> Result<String, String> {
     
     if srt.is_empty() {
         // Save JSON for debugging
-        #[cfg(debug_assertions)]
-        {
-            if let Ok(home) = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")) {
-                let debug_path = std::path::Path::new(&home).join("Desktop").join("debug_whisper.json");
-                let _ = std::fs::write(&debug_path, json);
-                eprintln!("Saved debug JSON to: {:?}", debug_path);
-            }
+        if let Ok(home) = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")) {
+            let debug_path = std::path::Path::new(&home).join("Desktop").join("debug_whisper.json");
+            let _ = std::fs::write(&debug_path, json);
+            eprintln!("Saved debug JSON to: {:?}", debug_path);
         }
         return Err("No word timestamps found in transcription. Check debug_whisper.json on Desktop.".to_string());
     }
