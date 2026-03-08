@@ -334,8 +334,6 @@ fn calculate_duration_ms(start: &str, end: &str) -> i64 {
     parse_srt_to_ms(end) - parse_srt_to_ms(start)
 }
 
-
-
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
