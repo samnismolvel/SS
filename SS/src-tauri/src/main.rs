@@ -67,8 +67,7 @@ async fn process_video(app: tauri::AppHandle, video_path: String, _output_path: 
     whisper_cmd.args([
         "-m", model_path.to_str().unwrap(),
         "-f", audio_path.to_str().unwrap(),
-        "-ml", "3", // Max line length = 3 chars helps get whole words, not syllables
-        "-owts", // Output word timestamps
+        "-ml", "1", // Word-level output
         "-osrt",
         "-of", srt_path.to_str().unwrap().trim_end_matches(".srt")
     ]);
@@ -313,6 +312,26 @@ fn ms_to_ass_time(ms: i64) -> String {
     let centis = (remainder % 1000) / 10;
     
     format!("{}:{:02}:{:02}.{:02}", hours, minutes, seconds, centis)
+}
+
+// Calculate duration between two SRT timestamps in milliseconds
+fn calculate_duration_ms(start: &str, end: &str) -> i64 {
+    // SRT format: HH:MM:SS,mmm
+    let parse_srt_to_ms = |time: &str| -> i64 {
+        let parts: Vec<&str> = time.split(':').collect();
+        if parts.len() != 3 { return 0; }
+        
+        let hours: i64 = parts[0].parse().unwrap_or(0);
+        let minutes: i64 = parts[1].parse().unwrap_or(0);
+        
+        let sec_parts: Vec<&str> = parts[2].split(',').collect();
+        let seconds: i64 = sec_parts[0].parse().unwrap_or(0);
+        let millis: i64 = if sec_parts.len() > 1 { sec_parts[1].parse().unwrap_or(0) } else { 0 };
+        
+        (hours * 3600000) + (minutes * 60000) + (seconds * 1000) + millis
+    };
+    
+    parse_srt_to_ms(end) - parse_srt_to_ms(start)
 }
 
 fn main() {
