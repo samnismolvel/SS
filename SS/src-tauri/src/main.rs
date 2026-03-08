@@ -60,14 +60,14 @@ async fn process_video(app: tauri::AppHandle, video_path: String, _output_path: 
         return Err("Could not extract audio. Is the video file valid?".to_string());
     }
 
-    // Step 2: Transcribe with full JSON output (includes word timestamps)
+    // Step 2: Transcribe with full JSON output
     emit_progress(&app, "transcribing", "Transcribing audio (this may take a while)...");
     #[cfg_attr(not(target_os = "windows"), allow(unused_mut))]
     let mut whisper_cmd = Command::new(&whisper_path);
     whisper_cmd.args([
         "-m", model_path.to_str().unwrap(),
         "-f", audio_path.to_str().unwrap(),
-        "-ojf", // Output full JSON with word timestamps
+        "-ojf",
         "-of", json_path.to_str().unwrap().trim_end_matches(".json")
     ]);
     #[cfg(target_os = "windows")]
@@ -79,17 +79,14 @@ async fn process_video(app: tauri::AppHandle, video_path: String, _output_path: 
         return Err("Transcription failed. The audio may be too short or silent.".to_string());
     }
 
-    // Read and parse JSON to SRT with word-level timestamps
     let json_content = std::fs::read_to_string(&json_path)
         .map_err(|e| format!("Could not read transcription: {}", e))?;
     
     let srt_content = json_to_srt(&json_content)
         .unwrap_or_else(|e| {
-            eprintln!("JSON parse error: {}", e);
-            // Save for debugging
             let debug_path = temp_dir.join("debug_whisper.json");
             let _ = std::fs::write(&debug_path, &json_content);
-            eprintln!("Debug JSON saved to: {:?}", debug_path);
+            eprintln!("JSON error: {}. Saved to {:?}", e, debug_path);
             format!("Error: {}", e)
         });
     
@@ -205,7 +202,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     let normalized = srt.replace("\r\n", "\n");
     
     if word_by_word && word_mode == "highlight" {
-        // Split sentences into words with timing
         for block in normalized.trim().split("\n\n") {
             let block = block.trim();
             if block.is_empty() { continue; }
@@ -220,7 +216,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 let start_ass = srt_time_to_ass(start.trim());
                 let end_ass = srt_time_to_ass(end.trim());
                 
-                // Clean and split into words
                 let words: Vec<String> = text.chars()
                     .filter(|c| c.is_alphanumeric() || c.is_whitespace())
                     .collect::<String>()
@@ -231,21 +226,18 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 
                 if words.is_empty() { continue; }
                 
-                // Calculate timing per word
                 let start_ms = ass_time_to_ms(&start_ass);
                 let end_ms = ass_time_to_ms(&end_ass);
                 let duration_ms = end_ms - start_ms;
                 let ms_per_word = if words.len() > 1 { duration_ms / words.len() as i64 } else { duration_ms };
                 
-                // Generate subtitle for each word with full sentence context
                 for (i, _) in words.iter().enumerate() {
-                    let word_start_ms = start_ms + (i as i64 * ms_per_word) - 100; // 100ms advance
+                    let word_start_ms = start_ms + (i as i64 * ms_per_word) - 100;
                     let word_end_ms = start_ms + ((i + 1) as i64 * ms_per_word);
                     
                     let word_start = ms_to_ass_time(word_start_ms.max(0));
                     let word_end = ms_to_ass_time(word_end_ms);
                     
-                    // Build sentence with current word highlighted
                     let mut highlighted = String::new();
                     for (j, word) in words.iter().enumerate() {
                         if j == i {
@@ -267,7 +259,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         return ass;
     }
     
-    // Solo mode or normal mode
     for block in normalized.trim().split("\n\n") {
         let block = block.trim();
         if block.is_empty() { continue; }
@@ -362,25 +353,6 @@ fn ms_to_ass_time(ms: i64) -> String {
     format!("{}:{:02}:{:02}.{:02}", hours, minutes, seconds, centis)
 }
 
-fn calculate_duration_ms(start: &str, end: &str) -> i64 {
-    let parse_srt_to_ms = |time: &str| -> i64 {
-        let parts: Vec<&str> = time.split(':').collect();
-        if parts.len() != 3 { return 0; }
-        
-        let hours: i64 = parts[0].parse().unwrap_or(0);
-        let minutes: i64 = parts[1].parse().unwrap_or(0);
-        
-        let sec_parts: Vec<&str> = parts[2].split(',').collect();
-        let seconds: i64 = sec_parts[0].parse().unwrap_or(0);
-        let millis: i64 = if sec_parts.len() > 1 { sec_parts[1].parse().unwrap_or(0) } else { 0 };
-        
-        (hours * 3600000) + (minutes * 60000) + (seconds * 1000) + millis
-    };
-    
-    parse_srt_to_ms(end) - parse_srt_to_ms(start)
-}
-
-// Parse whisper JSON and extract word-level timestamps
 fn json_to_srt(json: &str) -> Result<String, String> {
     use serde_json::Value;
     
@@ -390,7 +362,6 @@ fn json_to_srt(json: &str) -> Result<String, String> {
     let mut srt = String::new();
     let mut index = 1;
     
-    // whisper.cpp -ojf format has "transcription" array with word-level "offsets"
     if let Some(transcription) = data.get("transcription").and_then(|t| t.as_array()) {
         for segment in transcription {
             if let Some(offsets) = segment.get("offsets") {
@@ -419,109 +390,9 @@ fn json_to_srt(json: &str) -> Result<String, String> {
     Ok(srt)
 }
 
-// Format milliseconds to SRT timestamp (HH:MM:SS,mmm)
 fn format_timestamp_ms(ms: i64) -> String {
     let hours = ms / 3600000;
     let remainder = ms % 3600000;
-    let minutes = remainder / 60000;
-    let remainder = remainder % 60000;
-    let secs = remainder / 1000;
-    let millis = remainder % 1000;
-    
-    format!("{:02}:{:02}:{:02},{:03}", hours, minutes, secs, millis)
-}
-
-// Convert whisper JSON output with word timestamps to SRT format
-fn json_to_srt(json: &str) -> Result<String, String> {
-    use serde_json::Value;
-    
-    let data: Value = serde_json::from_str(json)
-        .map_err(|e| format!("JSON parse error: {}", e))?;
-    
-    // Debug: print JSON structure
-    eprintln!("JSON keys: {:?}", data.as_object().map(|o| o.keys().collect::<Vec<_>>()));
-    
-    let mut srt = String::new();
-    let mut index = 1;
-    
-    // Try different JSON structures whisper might use
-    
-    // Structure 1: Check for "transcription" array
-    if let Some(transcription) = data.get("transcription").and_then(|t| t.as_array()) {
-        for segment in transcription {
-            if let Some(timestamps) = segment.get("timestamps") {
-                if let Some(words) = timestamps.get("word").and_then(|w| w.as_array()) {
-                    for word_data in words {
-                        if let (Some(word), Some(from), Some(to)) = (
-                            word_data.get("word").and_then(|w| w.as_str()),
-                            word_data.get("from").and_then(|f| f.as_f64()),
-                            word_data.get("to").and_then(|t| t.as_f64())
-                        ) {
-                            let start = format_timestamp(from);
-                            let end = format_timestamp(to);
-                            
-                            srt.push_str(&format!("{}\n{} --> {}\n{}\n\n", index, start, end, word.trim()));
-                            index += 1;
-                        }
-                    }
-                }
-            }
-        }
-    }
-    
-    // Structure 2: Check for "segments" array (common whisper.cpp format)
-    if srt.is_empty() {
-        if let Some(segments) = data.get("segments").and_then(|s| s.as_array()) {
-            for segment in segments {
-                // Get segment text and timing for fallback
-                let segment_text = segment.get("text").and_then(|t| t.as_str()).unwrap_or("");
-                let segment_start = segment.get("start").and_then(|s| s.as_f64()).unwrap_or(0.0);
-                let segment_end = segment.get("end").and_then(|e| e.as_f64()).unwrap_or(0.0);
-                
-                // Try to get word-level data
-                if let Some(words) = segment.get("words").and_then(|w| w.as_array()) {
-                    for word_obj in words {
-                        if let (Some(word), Some(start), Some(end)) = (
-                            word_obj.get("word").or(word_obj.get("text")).and_then(|w| w.as_str()),
-                            word_obj.get("start").and_then(|s| s.as_f64()),
-                            word_obj.get("end").and_then(|e| e.as_f64())
-                        ) {
-                            let start_ts = format_timestamp(start);
-                            let end_ts = format_timestamp(end);
-                            
-                            srt.push_str(&format!("{}\n{} --> {}\n{}\n\n", index, start_ts, end_ts, word.trim()));
-                            index += 1;
-                        }
-                    }
-                } else {
-                    // Fallback: use segment-level timing
-                    let start_ts = format_timestamp(segment_start);
-                    let end_ts = format_timestamp(segment_end);
-                    srt.push_str(&format!("{}\n{} --> {}\n{}\n\n", index, start_ts, end_ts, segment_text.trim()));
-                    index += 1;
-                }
-            }
-        }
-    }
-    
-    if srt.is_empty() {
-        // Save JSON for debugging
-        if let Ok(home) = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")) {
-            let debug_path = std::path::Path::new(&home).join("Desktop").join("debug_whisper.json");
-            let _ = std::fs::write(&debug_path, json);
-            eprintln!("Saved debug JSON to: {:?}", debug_path);
-        }
-        return Err("No word timestamps found in transcription. Check debug_whisper.json on Desktop.".to_string());
-    }
-    
-    Ok(srt)
-}
-
-// Format seconds to SRT timestamp (HH:MM:SS,mmm)
-fn format_timestamp(seconds: f64) -> String {
-    let total_ms = (seconds * 1000.0) as i64;
-    let hours = total_ms / 3600000;
-    let remainder = total_ms % 3600000;
     let minutes = remainder / 60000;
     let remainder = remainder % 60000;
     let secs = remainder / 1000;
