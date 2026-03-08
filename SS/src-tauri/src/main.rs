@@ -362,19 +362,26 @@ fn json_to_srt(json: &str) -> Result<String, String> {
     let mut srt = String::new();
     let mut index = 1;
     
+    // Parse transcription array with tokens
     if let Some(transcription) = data.get("transcription").and_then(|t| t.as_array()) {
         for segment in transcription {
-            if let Some(offsets) = segment.get("offsets") {
-                if let Some(words) = offsets.get("word").and_then(|w| w.as_array()) {
-                    for word_obj in words {
-                        if let (Some(word), Some(from), Some(to)) = (
-                            word_obj.get("text").and_then(|t| t.as_str()),
-                            word_obj.get("from").and_then(|f| f.as_i64()),
-                            word_obj.get("to").and_then(|t| t.as_i64())
+            if let Some(tokens) = segment.get("tokens").and_then(|t| t.as_array()) {
+                for token in tokens {
+                    if let Some(text) = token.get("text").and_then(|t| t.as_str()) {
+                        // Skip special tokens like [_BEG_], [_TT_XXX], punctuation-only tokens
+                        if text.starts_with('[') || text.trim().is_empty() {
+                            continue;
+                        }
+                        
+                        // Get timestamps from offsets (in milliseconds)
+                        if let (Some(from_ms), Some(to_ms)) = (
+                            token.get("offsets").and_then(|o| o.get("from")).and_then(|f| f.as_i64()),
+                            token.get("offsets").and_then(|o| o.get("to")).and_then(|t| t.as_i64())
                         ) {
-                            let start = format_timestamp_ms(from);
-                            let end = format_timestamp_ms(to);
-                            srt.push_str(&format!("{}\n{} --> {}\n{}\n\n", index, start, end, word.trim()));
+                            let start = format_timestamp_ms(from_ms);
+                            let end = format_timestamp_ms(to_ms);
+                            
+                            srt.push_str(&format!("{}\n{} --> {}\n{}\n\n", index, start, end, text.trim()));
                             index += 1;
                         }
                     }
