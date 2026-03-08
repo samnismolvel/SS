@@ -36,7 +36,6 @@ async fn process_video(app: tauri::AppHandle, video_path: String, _output_path: 
 
     let temp_dir = std::env::temp_dir();
     let audio_path = temp_dir.join("temp_audio.wav");
-    let srt_path = temp_dir.join("temp_subtitles.srt");
     let json_path = temp_dir.join("temp_subtitles.json");
 
     // Step 1: Extract audio
@@ -61,14 +60,14 @@ async fn process_video(app: tauri::AppHandle, video_path: String, _output_path: 
         return Err("Could not extract audio. Is the video file valid?".to_string());
     }
 
-    // Step 2: Transcribe with word-level timestamps
+    // Step 2: Transcribe with full JSON output (includes word timestamps)
     emit_progress(&app, "transcribing", "Transcribing audio (this may take a while)...");
     #[cfg_attr(not(target_os = "windows"), allow(unused_mut))]
     let mut whisper_cmd = Command::new(&whisper_path);
     whisper_cmd.args([
         "-m", model_path.to_str().unwrap(),
         "-f", audio_path.to_str().unwrap(),
-        "-oj", // Output JSON with word timestamps
+        "-ojf", // Output full JSON with word timestamps
         "-of", json_path.to_str().unwrap().trim_end_matches(".json")
     ]);
     #[cfg(target_os = "windows")]
@@ -80,18 +79,23 @@ async fn process_video(app: tauri::AppHandle, video_path: String, _output_path: 
         return Err("Transcription failed. The audio may be too short or silent.".to_string());
     }
 
-    // Convert JSON with word timestamps to SRT
+    // Read and parse JSON to SRT with word-level timestamps
     let json_content = std::fs::read_to_string(&json_path)
-        .map_err(|e| format!("Could not read JSON file at {:?}: {}", json_path, e))?;
-    
-    // ALWAYS save for debugging
-    let debug_path = temp_dir.join("debug_whisper.json");
-    let _ = std::fs::write(&debug_path, &json_content);
-    eprintln!("JSON saved to: {:?}", debug_path);
-    eprintln!("JSON size: {} bytes", json_content.len());
+        .map_err(|e| format!("Could not read transcription: {}", e))?;
     
     let srt_content = json_to_srt(&json_content)
-        .map_err(|e| format!("JSON parse error: {}. Check {:?}", e, debug_path))?;
+        .unwrap_or_else(|e| {
+            eprintln!("JSON parse error: {}", e);
+            // Save for debugging
+            let debug_path = temp_dir.join("debug_whisper.json");
+            let _ = std::fs::write(&debug_path, &json_content);
+            eprintln!("Debug JSON saved to: {:?}", debug_path);
+            format!("Error: {}", e)
+        });
+    
+    if srt_content.starts_with("Error:") {
+        return Err(srt_content);
+    }
 
     if !skip_editor {
         emit_progress(&app, "editing", "Subtitles ready for editing");
@@ -374,6 +378,57 @@ fn calculate_duration_ms(start: &str, end: &str) -> i64 {
     };
     
     parse_srt_to_ms(end) - parse_srt_to_ms(start)
+}
+
+// Parse whisper JSON and extract word-level timestamps
+fn json_to_srt(json: &str) -> Result<String, String> {
+    use serde_json::Value;
+    
+    let data: Value = serde_json::from_str(json)
+        .map_err(|e| format!("Invalid JSON: {}", e))?;
+    
+    let mut srt = String::new();
+    let mut index = 1;
+    
+    // whisper.cpp -ojf format has "transcription" array with word-level "offsets"
+    if let Some(transcription) = data.get("transcription").and_then(|t| t.as_array()) {
+        for segment in transcription {
+            if let Some(offsets) = segment.get("offsets") {
+                if let Some(words) = offsets.get("word").and_then(|w| w.as_array()) {
+                    for word_obj in words {
+                        if let (Some(word), Some(from), Some(to)) = (
+                            word_obj.get("text").and_then(|t| t.as_str()),
+                            word_obj.get("from").and_then(|f| f.as_i64()),
+                            word_obj.get("to").and_then(|t| t.as_i64())
+                        ) {
+                            let start = format_timestamp_ms(from);
+                            let end = format_timestamp_ms(to);
+                            srt.push_str(&format!("{}\n{} --> {}\n{}\n\n", index, start, end, word.trim()));
+                            index += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    if srt.is_empty() {
+        return Err("No word timestamps found in JSON".to_string());
+    }
+    
+    Ok(srt)
+}
+
+// Format milliseconds to SRT timestamp (HH:MM:SS,mmm)
+fn format_timestamp_ms(ms: i64) -> String {
+    let hours = ms / 3600000;
+    let remainder = ms % 3600000;
+    let minutes = remainder / 60000;
+    let remainder = remainder % 60000;
+    let secs = remainder / 1000;
+    let millis = remainder % 1000;
+    
+    format!("{:02}:{:02}:{:02},{:03}", hours, minutes, secs, millis)
 }
 
 // Convert whisper JSON output with word timestamps to SRT format
