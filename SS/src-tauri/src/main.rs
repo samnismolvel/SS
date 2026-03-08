@@ -377,10 +377,15 @@ fn json_to_srt(json: &str) -> Result<String, String> {
     let data: Value = serde_json::from_str(json)
         .map_err(|e| format!("JSON parse error: {}", e))?;
     
+    // Debug: print JSON structure
+    eprintln!("JSON keys: {:?}", data.as_object().map(|o| o.keys().collect::<Vec<_>>()));
+    
     let mut srt = String::new();
     let mut index = 1;
     
-    // Extract word-level timestamps from transcription segments
+    // Try different JSON structures whisper might use
+    
+    // Structure 1: Check for "transcription" array
     if let Some(transcription) = data.get("transcription").and_then(|t| t.as_array()) {
         for segment in transcription {
             if let Some(timestamps) = segment.get("timestamps") {
@@ -403,8 +408,52 @@ fn json_to_srt(json: &str) -> Result<String, String> {
         }
     }
     
+    // Structure 2: Check for "segments" array (common whisper.cpp format)
     if srt.is_empty() {
-        return Err("No word timestamps found in transcription".to_string());
+        if let Some(segments) = data.get("segments").and_then(|s| s.as_array()) {
+            for segment in segments {
+                // Get segment text and timing for fallback
+                let segment_text = segment.get("text").and_then(|t| t.as_str()).unwrap_or("");
+                let segment_start = segment.get("start").and_then(|s| s.as_f64()).unwrap_or(0.0);
+                let segment_end = segment.get("end").and_then(|e| e.as_f64()).unwrap_or(0.0);
+                
+                // Try to get word-level data
+                if let Some(words) = segment.get("words").and_then(|w| w.as_array()) {
+                    for word_obj in words {
+                        if let (Some(word), Some(start), Some(end)) = (
+                            word_obj.get("word").or(word_obj.get("text")).and_then(|w| w.as_str()),
+                            word_obj.get("start").and_then(|s| s.as_f64()),
+                            word_obj.get("end").and_then(|e| e.as_f64())
+                        ) {
+                            let start_ts = format_timestamp(start);
+                            let end_ts = format_timestamp(end);
+                            
+                            srt.push_str(&format!("{}\n{} --> {}\n{}\n\n", index, start_ts, end_ts, word.trim()));
+                            index += 1;
+                        }
+                    }
+                } else {
+                    // Fallback: use segment-level timing
+                    let start_ts = format_timestamp(segment_start);
+                    let end_ts = format_timestamp(segment_end);
+                    srt.push_str(&format!("{}\n{} --> {}\n{}\n\n", index, start_ts, end_ts, segment_text.trim()));
+                    index += 1;
+                }
+            }
+        }
+    }
+    
+    if srt.is_empty() {
+        // Save JSON for debugging
+        #[cfg(debug_assertions)]
+        {
+            if let Ok(home) = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")) {
+                let debug_path = std::path::Path::new(&home).join("Desktop").join("debug_whisper.json");
+                let _ = std::fs::write(&debug_path, json);
+                eprintln!("Saved debug JSON to: {:?}", debug_path);
+            }
+        }
+        return Err("No word timestamps found in transcription. Check debug_whisper.json on Desktop.".to_string());
     }
     
     Ok(srt)
