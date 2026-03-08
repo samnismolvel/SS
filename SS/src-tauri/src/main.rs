@@ -67,7 +67,8 @@ async fn process_video(app: tauri::AppHandle, video_path: String, _output_path: 
     whisper_cmd.args([
         "-m", model_path.to_str().unwrap(),
         "-f", audio_path.to_str().unwrap(),
-        "-ml", "1", // Max line length = 1 word for word-level timestamps
+        "-ml", "3", // Max line length = 3 chars helps get whole words, not syllables
+        "-owts", // Output word timestamps
         "-osrt",
         "-of", srt_path.to_str().unwrap().trim_end_matches(".srt")
     ]);
