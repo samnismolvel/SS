@@ -67,7 +67,7 @@ async fn process_video(app: tauri::AppHandle, video_path: String, _output_path: 
     whisper_cmd.args([
         "-m", model_path.to_str().unwrap(),
         "-f", audio_path.to_str().unwrap(),
-        "-ml", "1", // Word-level output
+        "-ml", "1",
         "-osrt",
         "-of", srt_path.to_str().unwrap().trim_end_matches(".srt")
     ]);
@@ -80,7 +80,6 @@ async fn process_video(app: tauri::AppHandle, video_path: String, _output_path: 
         return Err("Transcription failed. The audio may be too short or silent.".to_string());
     }
 
-    // If skip_editor is false, return the SRT content for editing
     if !skip_editor {
         let srt_content = std::fs::read_to_string(&srt_path)
             .map_err(|_| "Could not read generated subtitles.".to_string())?;
@@ -89,7 +88,6 @@ async fn process_video(app: tauri::AppHandle, video_path: String, _output_path: 
         return Ok(srt_content);
     }
 
-    // Cleanup temp files
     let _ = std::fs::remove_file(audio_path);
     let _ = std::fs::remove_file(&srt_path);
 
@@ -122,20 +120,16 @@ async fn burn_subtitles(
     let temp_dir = std::env::temp_dir();
     let ass_path = temp_dir.join("edited_subtitles.ass");
 
-    // Convert SRT to ASS with styling
     let ass_content = srt_to_ass(&srt_content, &font_name, font_size, &primary_color, &outline_color, alignment, word_by_word, &word_mode);
 
-    // Debug: save a copy to desktop if possible for inspection
     #[cfg(debug_assertions)]
     {
         if let Ok(home) = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")) {
             let debug_path = std::path::Path::new(&home).join("Desktop").join("debug_subtitles.ass");
             let _ = std::fs::write(&debug_path, &ass_content);
-            eprintln!("Debug ASS file saved to: {:?}", debug_path);
         }
     }
 
-    // Write ASS to temp file
     std::fs::write(&ass_path, ass_content)
         .map_err(|_| "Could not save edited subtitles.".to_string())?;
 
@@ -173,13 +167,9 @@ async fn burn_subtitles(
     Ok(())
 }
 
-// Convert SRT to ASS with styling
 fn srt_to_ass(srt: &str, font: &str, size: u32, primary: &str, outline: &str, alignment: u32, word_by_word: bool, word_mode: &str) -> String {
-    // Convert hex colors to ASS format (&HAABBGGRR)
     let primary_ass = hex_to_ass_color(primary);
     let outline_ass = hex_to_ass_color(outline);
-    
-    // For word-by-word, use yellow highlight color
     let highlight_color = if word_by_word { "&H00FFFF".to_string() } else { primary_ass.clone() };
 
     let mut ass = format!(
@@ -196,49 +186,142 @@ Style: Default,{},{},{},{},{},&H80000000,0,0,0,0,100,100,0,0,1,2,0,{},10,10,10,1
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 "#, font, size, primary_ass, primary_ass, outline_ass, alignment);
 
-    // Parse SRT and convert to ASS
-    // Handle both Unix (\n) and Windows (\r\n) line endings
     let normalized = srt.replace("\r\n", "\n");
     
+    if word_by_word && word_mode == "highlight" {
+        let blocks: Vec<_> = normalized.trim().split("\n\n")
+            .filter(|b| !b.trim().is_empty())
+            .collect();
+        
+        // Merge syllables
+        let mut merged_blocks = vec![];
+        let mut i = 0;
+        
+        while i < blocks.len() {
+            let block = blocks[i].trim();
+            let lines: Vec<&str> = block.lines().collect();
+            if lines.len() < 3 { i += 1; continue; }
+            
+            let timing = lines[1];
+            let mut word = lines[2..].join(" ");
+            
+            if let Some((start, end)) = timing.split_once(" --> ") {
+                let start_time = start.trim();
+                let mut end_time = end.trim();
+                
+                i += 1;
+                while i < blocks.len() {
+                    let next_block = blocks[i].trim();
+                    let next_lines: Vec<&str> = next_block.lines().collect();
+                    if next_lines.len() < 3 { break; }
+                    
+                    let next_word = next_lines[2..].join(" ");
+                    let next_timing = next_lines[1];
+                    
+                    if let Some((_, next_end)) = next_timing.split_once(" --> ") {
+                        let duration_ms = calculate_duration_ms(start_time, next_end.trim());
+                        
+                        if (duration_ms < 1000 && word.len() + next_word.len() < 12) || next_word.trim().len() <= 2 {
+                            word.push_str(&next_word);
+                            end_time = next_end.trim();
+                            i += 1;
+                        } else {
+                            break;
+                        }
+                    } else {
+                        break;
+                    }
+                }
+                
+                merged_blocks.push((word, start_time.to_string(), end_time.to_string()));
+            } else {
+                i += 1;
+            }
+        }
+        
+        // Group into sentences
+        let mut sentence_idx = 0;
+        
+        while sentence_idx < merged_blocks.len() {
+            let mut sentence_words = vec![];
+            
+            while sentence_idx < merged_blocks.len() && sentence_words.len() < 8 {
+                let (word, start, end) = &merged_blocks[sentence_idx];
+                
+                let clean_word = word.chars()
+                    .filter(|c| c.is_alphanumeric() || c.is_whitespace())
+                    .collect::<String>()
+                    .trim()
+                    .to_string();
+                
+                if !clean_word.is_empty() {
+                    let start_ass = srt_time_to_ass(start);
+                    let end_ass = srt_time_to_ass(end);
+                    sentence_words.push((clean_word, start_ass, end_ass));
+                }
+                
+                sentence_idx += 1;
+            }
+            
+            if sentence_words.is_empty() { continue; }
+            
+            // Generate one subtitle per word with full sentence context
+            for (word_idx, (word, word_start, word_end)) in sentence_words.iter().enumerate() {
+                let start_ms = ass_time_to_ms(word_start).saturating_sub(100);
+                let adjusted_start = ms_to_ass_time(start_ms);
+                
+                let mut highlighted_text = String::new();
+                for (j, (w, _, _)) in sentence_words.iter().enumerate() {
+                    if j == word_idx {
+                        highlighted_text.push_str(&format!("{{\\c{}}}{}", &highlight_color, w));
+                        highlighted_text.push_str(&format!("{{\\c{}}}", &primary_ass));
+                    } else {
+                        highlighted_text.push_str(w);
+                    }
+                    if j < sentence_words.len() - 1 {
+                        highlighted_text.push(' ');
+                    }
+                }
+                
+                ass.push_str(&format!("Dialogue: 0,{},{},Default,,0,0,0,,{}\n", adjusted_start, word_end, highlighted_text));
+            }
+        }
+        
+        return ass;
+    }
+    
+    // Solo mode or normal mode
     for block in normalized.trim().split("\n\n") {
         let block = block.trim();
         if block.is_empty() { continue; }
         
         let lines: Vec<&str> = block.lines().collect();
-        if lines.len() < 3 { 
-            eprintln!("Skipping invalid block: {:?}", lines);
-            continue; 
-        }
+        if lines.len() < 3 { continue; }
 
         let timing = lines[1];
-        let text = lines[2..].join("\\N");
+        let mut text = lines[2..].join("\\N");
+        
+        if word_by_word {
+            text = text.chars()
+                .filter(|c| c.is_alphanumeric() || c.is_whitespace())
+                .collect::<String>()
+                .trim()
+                .to_string();
+            
+            if text.is_empty() { continue; }
+        }
+        
+        let text = text.replace("{", "\\{").replace("}", "\\}");
 
         if let Some((start, end)) = timing.split_once(" --> ") {
             let start_ass = srt_time_to_ass(start.trim());
             let end_ass = srt_time_to_ass(end.trim());
             
-            let text_escaped = text.replace("{", "\\{").replace("}", "\\}");
-            
-            // Word-by-word mode
-            if word_by_word {
-                // With -ml 1, each subtitle block is already a single word with correct timing
-                // Just add a small advance for highlight mode
-                if word_mode == "highlight" {
-                    // Show highlight 100ms early for better sync
-                    let start_ms = ass_time_to_ms(&start_ass).saturating_sub(100);
-                    let adjusted_start = ms_to_ass_time(start_ms);
-                    ass.push_str(&format!("Dialogue: 0,{},{},Default,,0,0,0,,{{\\c{}}}{}\n", adjusted_start, end_ass, &highlight_color, text_escaped));
-                } else {
-                    // Solo mode: use exact timing
-                    ass.push_str(&format!("Dialogue: 0,{},{},Default,,0,0,0,,{}\n", start_ass, end_ass, text_escaped));
-                }
-                continue;
+            if word_by_word && word_mode == "solo" {
+                ass.push_str(&format!("Dialogue: 0,{},{},Default,,0,0,0,,{{\\c{}}}{}\n", start_ass, end_ass, &highlight_color, text));
+            } else {
+                ass.push_str(&format!("Dialogue: 0,{},{},Default,,0,0,0,,{}\n", start_ass, end_ass, text));
             }
-            
-            // Normal mode or single word
-            ass.push_str(&format!("Dialogue: 0,{},{},Default,,0,0,0,,{}\n", start_ass, end_ass, text_escaped));
-        } else {
-            eprintln!("Invalid timing format: {}", timing);
         }
     }
 
@@ -251,44 +334,33 @@ fn hex_to_ass_color(hex: &str) -> String {
         let r = &hex[0..2];
         let g = &hex[2..4];
         let b = &hex[4..6];
-        format!("&H00{}{}{}", b, g, r) // ASS uses BGR
+        format!("&H00{}{}{}", b, g, r)
     } else {
-        "&H00FFFFFF".to_string() // Default white
+        "&H00FFFFFF".to_string()
     }
 }
 
 fn srt_time_to_ass(srt_time: &str) -> String {
-    // Convert 00:00:10,500 to 0:00:10.50
-    // SRT format: HH:MM:SS,mmm
-    // ASS format: H:MM:SS.cc (centiseconds, not milliseconds)
-    
     let time = srt_time.trim();
     
-    // Split by comma to separate seconds from milliseconds
     if let Some((time_part, ms_part)) = time.split_once(',') {
-        // Convert milliseconds to centiseconds (divide by 10)
         let ms: u32 = ms_part.parse().unwrap_or(0);
-        let cs = ms / 10; // Convert to centiseconds
+        let cs = ms / 10;
         
-        // Parse HH:MM:SS
         let parts: Vec<&str> = time_part.split(':').collect();
         if parts.len() == 3 {
             let hours: u32 = parts[0].parse().unwrap_or(0);
             let minutes = parts[1];
             let seconds = parts[2];
             
-            // ASS format: H:MM:SS.cc (no leading zero on hours)
             return format!("{}:{:0>2}:{:0>2}.{:0>2}", hours, minutes, seconds, cs);
         }
     }
     
-    // Fallback
     time.replace(',', ".")
 }
 
-// Convert ASS time to milliseconds for calculation
 fn ass_time_to_ms(ass_time: &str) -> i64 {
-    // Format: H:MM:SS.cc
     let parts: Vec<&str> = ass_time.split(':').collect();
     if parts.len() != 3 { return 0; }
     
@@ -302,7 +374,6 @@ fn ass_time_to_ms(ass_time: &str) -> i64 {
     (hours * 3600000) + (minutes * 60000) + (seconds * 1000) + (centis * 10)
 }
 
-// Convert milliseconds back to ASS time
 fn ms_to_ass_time(ms: i64) -> String {
     let hours = ms / 3600000;
     let remainder = ms % 3600000;
@@ -314,9 +385,7 @@ fn ms_to_ass_time(ms: i64) -> String {
     format!("{}:{:02}:{:02}.{:02}", hours, minutes, seconds, centis)
 }
 
-// Calculate duration between two SRT timestamps in milliseconds
 fn calculate_duration_ms(start: &str, end: &str) -> i64 {
-    // SRT format: HH:MM:SS,mmm
     let parse_srt_to_ms = |time: &str| -> i64 {
         let parts: Vec<&str> = time.split(':').collect();
         if parts.len() != 3 { return 0; }
