@@ -202,6 +202,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     let normalized = srt.replace("\r\n", "\n");
     
     if word_by_word && word_mode == "highlight" {
+        // Use ASS's {\r} tag to replace entire line instead of stacking
+        let mut all_words = vec![];
+        
         for block in normalized.trim().split("\n\n") {
             let block = block.trim();
             if block.is_empty() { continue; }
@@ -213,46 +216,61 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             let text = lines[2..].join(" ");
             
             if let Some((start, end)) = timing.split_once(" --> ") {
-                let start_ass = srt_time_to_ass(start.trim());
-                let end_ass = srt_time_to_ass(end.trim());
-                
-                let words: Vec<String> = text.chars()
+                let clean_word = text.chars()
                     .filter(|c| c.is_alphanumeric() || c.is_whitespace())
                     .collect::<String>()
-                    .split_whitespace()
-                    .map(|s| s.to_string())
-                    .filter(|s| !s.is_empty())
-                    .collect();
+                    .trim()
+                    .to_string();
                 
-                if words.is_empty() { continue; }
-                
-                let start_ms = ass_time_to_ms(&start_ass);
-                let end_ms = ass_time_to_ms(&end_ass);
-                let duration_ms = end_ms - start_ms;
-                let ms_per_word = if words.len() > 1 { duration_ms / words.len() as i64 } else { duration_ms };
-                
-                for (i, _) in words.iter().enumerate() {
-                    let word_start_ms = start_ms + (i as i64 * ms_per_word) - 100;
-                    let word_end_ms = start_ms + ((i + 1) as i64 * ms_per_word);
-                    
-                    let word_start = ms_to_ass_time(word_start_ms.max(0));
-                    let word_end = ms_to_ass_time(word_end_ms);
-                    
-                    let mut highlighted = String::new();
-                    for (j, word) in words.iter().enumerate() {
-                        if j == i {
-                            highlighted.push_str(&format!("{{\\c{}}}{}", &highlight_color, word));
-                            highlighted.push_str(&format!("{{\\c{}}}", &primary_ass));
-                        } else {
-                            highlighted.push_str(word);
-                        }
-                        if j < words.len() - 1 {
-                            highlighted.push(' ');
-                        }
-                    }
-                    
-                    ass.push_str(&format!("Dialogue: 0,{},{},Default,,0,0,0,,{}\n", word_start, word_end, highlighted));
+                if !clean_word.is_empty() {
+                    all_words.push((clean_word, srt_time_to_ass(start.trim()), srt_time_to_ass(end.trim())));
                 }
+            }
+        }
+        
+        // Group into sentences (8 words max or 5 seconds max duration)
+        let mut i = 0;
+        while i < all_words.len() {
+            let mut sentence = vec![];
+            let sentence_start_idx = i;
+            
+            // Collect words for one sentence
+            while i < all_words.len() && sentence.len() < 8 {
+                sentence.push(all_words[i].clone());
+                i += 1;
+                
+                // Check if we've exceeded 5 seconds
+                if sentence.len() > 1 {
+                    let duration = ass_time_to_ms(&sentence.last().unwrap().2) - ass_time_to_ms(&sentence[0].1);
+                    if duration > 5000 {
+                        break;
+                    }
+                }
+            }
+            
+            if sentence.is_empty() { continue; }
+            
+            // Create ONE dialogue line per word that shows the entire sentence with highlighting
+            // Key: Use layers to prevent stacking
+            for (word_idx, (_, word_start, word_end)) in sentence.iter().enumerate() {
+                let start_ms = ass_time_to_ms(word_start).saturating_sub(100);
+                let adjusted_start = ms_to_ass_time(start_ms);
+                
+                let mut highlighted = String::new();
+                for (j, (word, _, _)) in sentence.iter().enumerate() {
+                    if j == word_idx {
+                        highlighted.push_str(&format!("{{\\c{}}}{}", &highlight_color, word));
+                        highlighted.push_str(&format!("{{\\c{}}}", &primary_ass));
+                    } else {
+                        highlighted.push_str(word);
+                    }
+                    if j < sentence.len() - 1 {
+                        highlighted.push(' ');
+                    }
+                }
+                
+                // CRITICAL: Use same layer (0) but ensure proper timing so only one shows at a time
+                ass.push_str(&format!("Dialogue: 0,{},{},Default,,0,0,0,,{}\n", adjusted_start, word_end, highlighted));
             }
         }
         
