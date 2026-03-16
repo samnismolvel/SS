@@ -15,41 +15,84 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: SS/package-lock.json
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Cache Rust dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            SS/src-tauri/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('SS/src-tauri/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Cache whisper.cpp build
+        uses: actions/cache@v4
+        with:
+          path: whisper.cpp/build
+          key: ${{ runner.os }}-whisper-${{ hashFiles('whisper.cpp/CMakeLists.txt') }}
+
+      - name: Cache whisper model
+        uses: actions/cache@v4
+        with:
+          path: whisper.cpp/models/ggml-tiny.bin
+          key: whisper-model-tiny
+
       - name: Clone whisper.cpp
         shell: pwsh
         run: |
-          git clone --depth 1 https://github.com/ggerganov/whisper.cpp
-          echo "whisper.cpp cloned successfully"
+          if (!(Test-Path "whisper.cpp")) {
+            git clone --depth 1 https://github.com/ggerganov/whisper.cpp
+            echo "whisper.cpp cloned successfully"
+          } else {
+            echo "whisper.cpp already present, skipping clone"
+          }
 
       - name: Build whisper.cpp
         shell: pwsh
         run: |
-          cd whisper.cpp
-          New-Item -ItemType Directory -Force -Path build
-          cd build
-          cmake .. -DBUILD_SHARED_LIBS=OFF
-          cmake --build . --config Release
+          if (!(Test-Path "whisper.cpp/build/bin/Release/whisper-cli.exe")) {
+            cd whisper.cpp
+            New-Item -ItemType Directory -Force -Path build
+            cd build
+            cmake .. -DBUILD_SHARED_LIBS=OFF
+            cmake --build . --config Release
+            echo "whisper-cli built successfully"
+          } else {
+            echo "whisper-cli.exe already exists, skipping build"
+          }
 
       - name: Download whisper tiny model
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path "whisper.cpp/models"
-          curl -L "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin" -o "whisper.cpp/models/ggml-tiny.bin"
+          if (!(Test-Path "whisper.cpp/models/ggml-tiny.bin")) {
+            New-Item -ItemType Directory -Force -Path "whisper.cpp/models"
+            curl -L "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin" -o "whisper.cpp/models/ggml-tiny.bin"
+            echo "Model downloaded successfully"
+          } else {
+            echo "Model already exists, skipping download"
+          }
 
       - name: Download FFmpeg for Windows
         working-directory: ./SS
         shell: pwsh
         run: |
-          curl -L "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" -o ffmpeg.zip
-          Expand-Archive ffmpeg.zip -DestinationPath ffmpeg_extracted
-          New-Item -ItemType Directory -Force -Path "src-tauri/binaries"
-          $ffmpegExe = Get-ChildItem -Recurse -Filter "ffmpeg.exe" ffmpeg_extracted | Select-Object -First 1
-          Copy-Item $ffmpegExe.FullName "src-tauri/binaries/ffmpeg.exe"
-          echo "FFmpeg copied successfully"
+          if (!(Test-Path "src-tauri/binaries/ffmpeg.exe")) {
+            curl -L "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" -o ffmpeg.zip
+            Expand-Archive ffmpeg.zip -DestinationPath ffmpeg_extracted
+            New-Item -ItemType Directory -Force -Path "src-tauri/binaries"
+            $ffmpegExe = Get-ChildItem -Recurse -Filter "ffmpeg.exe" ffmpeg_extracted | Select-Object -First 1
+            Copy-Item $ffmpegExe.FullName "src-tauri/binaries/ffmpeg.exe"
+            echo "FFmpeg copied successfully"
+          } else {
+            echo "FFmpeg already exists, skipping download"
+          }
 
       - name: Update tauri.conf.json for Windows
         working-directory: ./SS
@@ -77,3 +120,4 @@ jobs:
         with:
           name: windows-installer
           path: SS/src-tauri/target/release/bundle/msi/*.msi
+          retention-days: 5

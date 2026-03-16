@@ -1,518 +1,167 @@
-<script>
-  import { invoke } from '@tauri-apps/api/core';
-  import { open } from '@tauri-apps/plugin-dialog';
-  import { listen } from '@tauri-apps/api/event';
-  import { onDestroy } from 'svelte';
-  import SubtitleEditor from './SubtitleEditor.svelte';
+<script lang="ts">
+  import { invoke } from '@tauri-apps/api/core'
+  import { session, closeSession } from '$lib/stores/editor'
+  import { queue, processing, currentVideoIndex, updateQueueItem, resetProgress } from '$lib/stores/queue'
+  import Queue from '$lib/components/Queue.svelte'
+  import Editor from '$lib/components/Editor.svelte'
 
-  let queue = [];
-  let processing = false;
-  let currentVideoIndex = -1;
-  let currentStep = '';
-  let currentMessage = '';
-  let editorOpen = false;
-  let currentSRT = '';
-  let currentVideoPath = '';
-  let currentOutputPath = '';
+  // Dark mode
+  let dark = true  // default to dark
 
-  const steps = ['extracting', 'transcribing', 'burning', 'done'];
-
-  // Listen for progress events
-  const unlisten = listen('progress', (event) => {
-    currentStep = event.payload.step;
-    currentMessage = event.payload.message;
-  });
-
-  onDestroy(() => unlisten.then(f => f()));
-
-  async function addVideos() {
-    const selected = await open({
-      multiple: true,
-      filters: [{ name: 'Video', extensions: ['mp4', 'mov', 'avi', 'mkv', 'webm'] }]
-    });
-    
-    if (selected && Array.isArray(selected)) {
-      const newItems = selected.map(path => ({
-        id: crypto.randomUUID(),
-        inputPath: path,
-        outputPath: path.replace(/\.[^/.]+$/, '_subtitled.mp4'),
-        status: 'pending', // pending, processing, done, failed
-        error: null
-      }));
-      queue = [...queue, ...newItems];
-    }
+  function toggleDark() {
+    dark = !dark
   }
 
-  function removeFromQueue(id) {
-    if (processing) return;
-    queue = queue.filter(item => item.id !== id);
-  }
+  // Handle burn from editor
+  async function handleBurn(e: CustomEvent<{ videoPath: string; outputPath: string; assContent: string }>) {
+    const { videoPath, outputPath, assContent } = e.detail
+    const idx = $currentVideoIndex
 
-  function moveUp(index) {
-    if (processing || index === 0) return;
-    const temp = queue[index];
-    queue[index] = queue[index - 1];
-    queue[index - 1] = temp;
-    queue = queue;
-  }
-
-  function moveDown(index) {
-    if (processing || index === queue.length - 1) return;
-    const temp = queue[index];
-    queue[index] = queue[index + 1];
-    queue[index + 1] = temp;
-    queue = queue;
-  }
-
-  async function processQueue() {
-    if (queue.length === 0 || processing) return;
-
-    processing = true;
-
-    for (let i = 0; i < queue.length; i++) {
-      if (queue[i].status === 'done') continue;
-
-      currentVideoIndex = i;
-      queue[i].status = 'processing';
-      queue[i].error = null;
-      queue = queue;
-
-      currentStep = '';
-      currentMessage = '';
-
-      try {
-        const result = await invoke('process_video', {
-          videoPath: queue[i].inputPath,
-          outputPath: queue[i].outputPath,
-          skipEditor: false
-        });
-
-        // If we got SRT content back, open editor
-        if (result && typeof result === 'string' && result.length > 0) {
-          currentSRT = result;
-          currentVideoPath = queue[i].inputPath;
-          currentOutputPath = queue[i].outputPath;
-          editorOpen = true;
-          processing = false;
-          return; // Wait for user to finish editing
-        }
-
-        queue[i].status = 'done';
-      } catch (e) {
-        queue[i].status = 'failed';
-        queue[i].error = e;
-      }
-      queue = queue;
-    }
-
-    processing = false;
-    currentVideoIndex = -1;
-    currentStep = '';
-    currentMessage = '';
-  }
-
-  function clearCompleted() {
-    if (processing) return;
-    queue = queue.filter(item => item.status !== 'done');
-  }
-
-  function stepIndex(step) {
-    return steps.indexOf(step);
-  }
-
-  function getFileName(path) {
-    return path.split(/[\\/]/).pop();
-  }
-
-  async function handleEditorSave(event) {
-    editorOpen = false;
-    processing = true;
+    closeSession()
+    processing.set(true)
 
     try {
-      await invoke('burn_subtitles', {
-        videoPath: currentVideoPath,
-        outputPath: currentOutputPath,
-        srtContent: event.detail.srtContent,
-        fontName: event.detail.fontName,
-        fontSize: event.detail.fontSize,
-        primaryColor: event.detail.primaryColor,
-        outlineColor: event.detail.outlineColor,
-        alignment: event.detail.alignment,
-        wordByWord: event.detail.wordByWord,
-        wordMode: event.detail.wordMode
-      });
-      queue[currentVideoIndex].status = 'done';
-    } catch (e) {
-      queue[currentVideoIndex].status = 'failed';
-      queue[currentVideoIndex].error = e;
+      await invoke('burn_subtitles', { videoPath, outputPath, assContent })
+      updateQueueItem($queue[idx].id, { status: 'done' })
+    } catch (err) {
+      updateQueueItem($queue[idx].id, { status: 'failed', error: String(err) })
     }
-    queue = queue;
 
-    // Continue with next video in queue
-    continueQueue();
+    // Continue the queue from the next item
+    await continueQueue(idx)
   }
 
-  function handleEditorCancel() {
-    editorOpen = false;
-    queue[currentVideoIndex].status = 'failed';
-    queue[currentVideoIndex].error = 'Editing cancelled';
-    queue = queue;
-    
-    // Continue with next video in queue
-    continueQueue();
+  function handleCancel() {
+    const idx = $currentVideoIndex
+    updateQueueItem($queue[idx].id, { status: 'failed', error: 'Editing cancelled' })
+    closeSession()
+    continueQueue(idx)
   }
 
-  async function continueQueue() {
-    for (let i = currentVideoIndex + 1; i < queue.length; i++) {
-      if (queue[i].status === 'done') continue;
-
-      currentVideoIndex = i;
-      queue[i].status = 'processing';
-      queue[i].error = null;
-      queue = queue;
-
-      currentStep = '';
-      currentMessage = '';
+  async function continueQueue(fromIndex: number) {
+    processing.set(true)
+    for (let i = fromIndex + 1; i < $queue.length; i++) {
+      if ($queue[i].status === 'done') continue
+      currentVideoIndex.set(i)
+      updateQueueItem($queue[i].id, { status: 'processing', error: null })
 
       try {
-        const result = await invoke('process_video', {
-          videoPath: queue[i].inputPath,
-          outputPath: queue[i].outputPath,
+        const result = await invoke<string>('process_video', {
+          videoPath: $queue[i].inputPath,
+          outputPath: $queue[i].outputPath,
           skipEditor: false
-        });
+        })
 
-        if (result && typeof result === 'string' && result.length > 0) {
-          currentSRT = result;
-          currentVideoPath = queue[i].inputPath;
-          currentOutputPath = queue[i].outputPath;
-          editorOpen = true;
-          processing = false;
-          return;
+        if (result && result.length > 0) {
+          const { openSession } = await import('$lib/stores/editor')
+          openSession($queue[i].id, $queue[i].inputPath, $queue[i].outputPath, result)
+          processing.set(false)
+          return
         }
 
-        queue[i].status = 'done';
+        updateQueueItem($queue[i].id, { status: 'done' })
       } catch (e) {
-        queue[i].status = 'failed';
-        queue[i].error = e;
+        updateQueueItem($queue[i].id, { status: 'failed', error: String(e) })
       }
-      queue = queue;
     }
-
-    processing = false;
-    currentVideoIndex = -1;
-    currentStep = '';
-    currentMessage = '';
+    resetProgress()
   }
 </script>
 
-<main>
-  {#if editorOpen}
-    <SubtitleEditor 
-      srtContent={currentSRT} 
-      videoPath={currentVideoPath}
-      on:save={handleEditorSave}
-      on:cancel={handleEditorCancel}
-    />
-  {:else}
-    <h1>Video Subtitle Burner</h1>
+<div class="app" class:dark>
+  <div class="theme-toggle">
+    <button on:click={toggleDark} title="Toggle dark mode" aria-label="Toggle theme">
+      {dark ? '☀' : '☾'}
+    </button>
+  </div>
 
-  <div class="container">
-    <div class="queue-header">
-      <button on:click={addVideos} disabled={processing} class="add-btn">
-        + Add Videos
-      </button>
-      <button on:click={clearCompleted} disabled={processing || queue.every(q => q.status !== 'done')} class="clear-btn">
-        Clear Completed
-      </button>
-      <button on:click={processQueue} disabled={processing || queue.length === 0} class="process-btn">
-        {processing ? 'Processing...' : `Process Queue (${queue.length})`}
-      </button>
-    </div>
-
-    {#if queue.length === 0}
-      <div class="empty-state">
-        <p>No videos in queue</p>
-        <p class="hint">Click "Add Videos" to get started</p>
-      </div>
-    {/if}
-
-    {#if queue.length > 0}
-      <div class="queue-list">
-        {#each queue as item, index (item.id)}
-          <div class="queue-item" class:active={index === currentVideoIndex}>
-            <div class="item-main">
-              <div class="status-indicator" class:pending={item.status === 'pending'} 
-                   class:processing={item.status === 'processing'} 
-                   class:done={item.status === 'done'} 
-                   class:failed={item.status === 'failed'}>
-              </div>
-              <div class="item-info">
-                <div class="item-name">{getFileName(item.inputPath)}</div>
-                <div class="item-path">{item.inputPath}</div>
-                {#if item.status === 'failed'}
-                  <div class="item-error">Error: {item.error}</div>
-                {/if}
-              </div>
-              <div class="item-actions">
-                <button on:click={() => moveUp(index)} disabled={processing || index === 0} title="Move up">↑</button>
-                <button on:click={() => moveDown(index)} disabled={processing || index === queue.length - 1} title="Move down">↓</button>
-                <button on:click={() => removeFromQueue(item.id)} disabled={processing} class="remove-btn" title="Remove">×</button>
-              </div>
-            </div>
-
-            {#if index === currentVideoIndex && processing}
-              <div class="progress-section">
-                <div class="steps">
-                  {#each [['extracting', 'Extract'], ['transcribing', 'Transcribe'], ['burning', 'Burn'], ['done', 'Done']] as [step, label]}
-                    <div class="step" class:active={currentStep === step} 
-                         class:completed={stepIndex(currentStep) > stepIndex(step) || currentStep === 'done' && step !== 'done'}>
-                      <div class="step-dot"></div>
-                      <span>{label}</span>
-                    </div>
-                  {/each}
-                </div>
-                <p class="step-message">{currentMessage}</p>
-              </div>
-            {/if}
-          </div>
-        {/each}
-      </div>
+  <div class="app-content">
+    {#if $session}
+      <Editor on:burn={handleBurn} on:cancel={handleCancel} />
+    {:else}
+      <Queue />
     {/if}
   </div>
-  {/if}
-</main>
+</div>
 
 <style>
-  main {
-    padding: 2rem;
-    max-width: 800px;
-    margin: 0 auto;
+  /* ── CSS variables — light mode ── */
+  .app {
+    --color-bg:            #f5f5f4;
+    --color-surface:       #ffffff;
+    --color-surface-hover: #f0f0ef;
+    --color-border:        #e2e2e0;
+    --color-border-hover:  #c8c8c5;
+    --color-text:          #1a1a18;
+    --color-text-muted:    #6b6b68;
+    --color-accent:        #5b4fcf;
+    --color-accent-subtle: #eeecfb;
+    --color-success:       #16a34a;
+    --color-danger:        #dc2626;
+    --color-danger-subtle: #fef2f2;
+    --color-warning:       #d97706;
+    --color-warning-subtle:#fffbeb;
+
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    background: var(--color-bg);
+    color: var(--color-text);
     font-family: system-ui, -apple-system, sans-serif;
+    position: relative;
+    transition: background 0.2s, color 0.2s;
   }
 
-  h1 {
-    color: #333;
-    margin-bottom: 2rem;
+  /* ── CSS variables — dark mode ── */
+  .app.dark {
+    --color-bg:            #0f0f0e;
+    --color-surface:       #1a1a19;
+    --color-surface-hover: #252523;
+    --color-border:        #2e2e2c;
+    --color-border-hover:  #424240;
+    --color-text:          #f0f0ee;
+    --color-text-muted:    #888885;
+    --color-accent:        #7c6fef;
+    --color-accent-subtle: #1e1a3a;
+    --color-success:       #22c55e;
+    --color-danger:        #ef4444;
+    --color-danger-subtle: #2d1515;
+    --color-warning:       #f59e0b;
+    --color-warning-subtle:#2d2000;
   }
 
-  .container {
-    display: flex;
-    flex-direction: column;
-    gap: 1.5rem;
+  .theme-toggle {
+    position: fixed;
+    top: 0.75rem;
+    right: 1rem;
+    z-index: 100;
   }
 
-  .queue-header {
-    display: flex;
-    gap: 0.75rem;
-  }
-
-  button {
-    padding: 0.6rem 1.2rem;
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-    font-weight: 500;
-    font-size: 0.9rem;
-  }
-
-  .add-btn {
-    background: #0066cc;
-    color: white;
-  }
-
-  .add-btn:hover:not(:disabled) { background: #0052a3; }
-
-  .clear-btn {
-    background: #666;
-    color: white;
-  }
-
-  .clear-btn:hover:not(:disabled) { background: #555; }
-
-  .process-btn {
-    background: #22c55e;
-    color: white;
-    margin-left: auto;
-  }
-
-  .process-btn:hover:not(:disabled) { background: #16a34a; }
-
-  button:disabled {
-    background: #ccc;
-    cursor: not-allowed;
-  }
-
-  .empty-state {
-    text-align: center;
-    padding: 4rem 2rem;
-    color: #999;
-  }
-
-  .empty-state .hint {
-    font-size: 0.9rem;
-    margin-top: 0.5rem;
-  }
-
-  .queue-list {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-  }
-
-  .queue-item {
-    background: white;
-    border: 1px solid #ddd;
-    border-radius: 8px;
-    padding: 1rem;
-    transition: all 0.2s;
-  }
-
-  .queue-item.active {
-    border-color: #0066cc;
-    box-shadow: 0 2px 8px rgba(0, 102, 204, 0.1);
-  }
-
-  .item-main {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-  }
-
-  .status-indicator {
-    width: 12px;
-    height: 12px;
-    border-radius: 50%;
-    flex-shrink: 0;
-  }
-
-  .status-indicator.pending { background: #ccc; }
-  .status-indicator.processing { background: #0066cc; animation: pulse 1.5s infinite; }
-  .status-indicator.done { background: #22c55e; }
-  .status-indicator.failed { background: #ef4444; }
-
-  @keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.5; }
-  }
-
-  .item-info {
-    flex: 1;
-    min-width: 0;
-  }
-
-  .item-name {
-    font-weight: 600;
-    color: #333;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .item-path {
-    font-size: 0.8rem;
-    color: #666;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .item-error {
-    font-size: 0.8rem;
-    color: #ef4444;
-    margin-top: 0.25rem;
-  }
-
-  .item-actions {
-    display: flex;
-    gap: 0.25rem;
-  }
-
-  .item-actions button {
+  .theme-toggle button {
     width: 32px;
     height: 32px;
-    padding: 0;
-    background: #f5f5f5;
-    color: #666;
+    border-radius: 50%;
+    border: 1px solid var(--color-border);
+    background: var(--color-surface);
+    color: var(--color-text);
     font-size: 1rem;
-  }
-
-  .item-actions button:hover:not(:disabled) {
-    background: #e5e5e5;
-  }
-
-  .item-actions .remove-btn {
-    color: #ef4444;
-    font-size: 1.5rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s;
     line-height: 1;
   }
 
-  .item-actions .remove-btn:hover:not(:disabled) {
-    background: #fee;
+  .theme-toggle button:hover {
+    background: var(--color-surface-hover);
   }
 
-  .progress-section {
-    margin-top: 1rem;
-    padding-top: 1rem;
-    border-top: 1px solid #eee;
-  }
-
-  .steps {
-    display: flex;
-    justify-content: space-between;
-    margin-bottom: 0.75rem;
-    position: relative;
-  }
-
-  .steps::before {
-    content: '';
-    position: absolute;
-    top: 8px;
-    left: 8px;
-    right: 8px;
-    height: 2px;
-    background: #ddd;
-    z-index: 0;
-  }
-
-  .step {
+  .app-content {
+    flex: 1;
+    overflow: hidden;
     display: flex;
     flex-direction: column;
-    align-items: center;
-    gap: 0.3rem;
-    font-size: 0.7rem;
-    color: #999;
-    z-index: 1;
-  }
-
-  .step-dot {
-    width: 16px;
-    height: 16px;
-    border-radius: 50%;
-    background: white;
-    border: 2px solid #ddd;
-  }
-
-  .step.active .step-dot {
-    background: #0066cc;
-    border-color: #0066cc;
-  }
-
-  .step.active {
-    color: #0066cc;
-    font-weight: 600;
-  }
-
-  .step.completed .step-dot {
-    background: #22c55e;
-    border-color: #22c55e;
-  }
-
-  .step.completed { color: #22c55e; }
-
-  .step-message {
-    font-size: 0.85rem;
-    color: #555;
-    text-align: center;
-    margin: 0;
+    padding: 1rem;
   }
 </style>
