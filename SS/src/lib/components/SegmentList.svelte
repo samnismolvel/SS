@@ -48,7 +48,6 @@
       <textarea
         value={sub.text}
         on:input={(e) => handleTextInput(index, e)}
-        rows={sub.text.split('\n').length}
         class="seg-text"
         class:focused={$selectedIndex === index}
       ></textarea>
@@ -167,21 +166,22 @@
   .reset-btn:hover { color: var(--color-text); }
 
   .seg-text {
-    width: 100%;
-    padding: 0.4rem 0.6rem;
-    border: none;
-    border-top: 1px solid var(--color-border);
-    background: var(--color-bg);
-    color: var(--color-text) !important;
-    -webkit-text-fill-color: var(--color-text);
-    font-size: 0.82rem;
-    font-family: inherit;
-    resize: none;
-    min-height: 2rem;
-    transition: background 0.15s;
-    box-sizing: border-box;
-  }
-
+  width: 100%;
+  padding: 0.4rem 0.6rem;
+  border: none;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-bg);
+  color: var(--color-text) !important;
+  -webkit-text-fill-color: var(--color-text) !important;
+  font-size: 0.82rem;
+  font-family: inherit;
+  resize: none;
+  height: 2.5rem;
+  min-height: 2.5rem;
+  display: block;
+  box-sizing: border-box;
+  overflow: hidden;
+}
   .seg-text:focus {
     outline: none;
     background: var(--color-surface);
