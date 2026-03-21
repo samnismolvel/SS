@@ -114,4 +114,18 @@
   .app-content {
     flex: 1; overflow: hidden; display: flex; flex-direction: column; padding: 1rem;
   }
+
+  .app :global(textarea),
+  .app :global(input[type="text"]),
+  .app :global(input[type="number"]),
+  .app :global(select) {
+    -webkit-text-fill-color: var(--color-text);
+    color: var(--color-text);
+  }
+
+  .app :global(input[type="text"]::placeholder),
+  .app :global(textarea::placeholder) {
+    -webkit-text-fill-color: var(--color-text-muted);
+    color: var(--color-text-muted);
+  }
 </style>
