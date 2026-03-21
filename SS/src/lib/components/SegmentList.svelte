@@ -172,17 +172,20 @@
     border: none;
     border-top: 1px solid var(--color-border);
     background: var(--color-bg);
-    color: var(--color-text);
+    color: var(--color-text) !important;
+    -webkit-text-fill-color: var(--color-text);
     font-size: 0.82rem;
     font-family: inherit;
     resize: none;
     min-height: 2rem;
     transition: background 0.15s;
+    box-sizing: border-box;
   }
 
   .seg-text:focus {
     outline: none;
     background: var(--color-surface);
+    -webkit-text-fill-color: var(--color-text);
   }
 
   .seg-text.focused {

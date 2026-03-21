@@ -59,14 +59,17 @@ export interface Subtitle {
 
 // ─── Queue ───────────────────────────────────────────────────────────────────
 
+export type QueueItemMode = 'template' | 'manual'
+
 export interface QueueItem {
   id: string
   inputPath: string
   outputPath: string
   status: SubtitleStatus
   error: string | null
-  // Set after transcription, before burn
-  srtContent?: string
+  mode: QueueItemMode       // template = auto-burn, manual = open editor
+  templateId?: string       // which template to use if mode === 'template'
+  srtContent?: string       // stored after transcription, before burn/edit
 }
 
 // ─── Editor Session ──────────────────────────────────────────────────────────
