@@ -10,6 +10,7 @@
   } from '$lib/stores/queue'
   import { openSession } from '$lib/stores/editor'
   import { allTemplates } from '$lib/stores/templates'
+  import { parseSRT, buildAss } from '$lib/utils/ass'
   import type { ProgressEvent, QueueItemMode } from '$lib/types'
 
   const STEPS = ['extracting', 'transcribing', 'burning', 'done'] as const
@@ -46,22 +47,24 @@
       if ($queue[i].status === 'done' || $queue[i].srtContent) continue
       currentVideoIndex.set(i)
       updateQueueItem($queue[i].id, { status: 'processing', error: null })
+      currentStep.set('')
+      currentMessage.set('')
 
       try {
         const srt = await invoke<string>('process_video', {
           videoPath: $queue[i].inputPath,
           outputPath: $queue[i].outputPath,
-          skipEditor: true   // always skip editor during transcription phase
+          skipEditor: true
         })
+        if (!srt || srt.length === 0) throw new Error('No transcription returned')
         updateQueueItem($queue[i].id, { srtContent: srt, status: 'pending' })
       } catch (e) {
         updateQueueItem($queue[i].id, { status: 'failed', error: String(e) })
       }
     }
 
-    // ── Phase 2: Burn template items first ──────────────────────────────
+    // ── Phase 2: Burn template items ─────────────────────────────────────
     processingPhase.set('burning')
-    const { PRESETS } = await import('$lib/stores/templates')
 
     for (let i = 0; i < $queue.length; i++) {
       const item = $queue[i]
@@ -70,13 +73,10 @@
 
       currentVideoIndex.set(i)
       updateQueueItem(item.id, { status: 'processing' })
+      currentStep.set('burning')
+      currentMessage.set('Burning subtitles...')
 
-      // Find template
-      const template = $allTemplates.find(t => t.id === item.templateId)
-        ?? $allTemplates[0]
-
-      const { buildAss } = await import('$lib/utils/ass')
-      const { parseSRT } = await import('$lib/utils/ass')
+      const template = $allTemplates.find(t => t.id === item.templateId) ?? $allTemplates[0]
       const subtitles = parseSRT(item.srtContent)
       const assContent = buildAss(subtitles, template)
 
@@ -103,7 +103,7 @@
 
       currentVideoIndex.set(i)
       openSession(item.id, item.inputPath, item.outputPath, item.srtContent)
-      return  // pause here — editor will call continueManual when done
+      return
     }
 
     resetProgress()

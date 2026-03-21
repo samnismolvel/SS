@@ -114,11 +114,11 @@ async fn process_video(
 
     if !skip_editor {
         emit_progress(&app, "editing", "Subtitles ready for editing");
-        return Ok(srt_content);
+    } else {
+        emit_progress(&app, "done", "Transcription complete");
     }
 
-    emit_progress(&app, "done", "Done!");
-    Ok(String::new())
+    Ok(srt_content)
 }
 
 // ─── burn_subtitles ───────────────────────────────────────────────────────────
