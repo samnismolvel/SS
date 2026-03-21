@@ -16,6 +16,8 @@
 </div>
 
 <div class="segment-list">
+
+  <p style="color: red; padding: 0.5rem;">DEBUG: {$subtitles.length} subtitles, first: {$subtitles[0]?.text ?? 'none'}</p>
   {#each $subtitles as sub, index (sub.index)}
     <div
       class="segment"
