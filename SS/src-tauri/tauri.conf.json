@@ -12,6 +12,9 @@
   "app": {
     "windows": [
       {
+        "devTools": true
+      },
+      {
         "title": "ss",
         "width": 800,
         "height": 600
