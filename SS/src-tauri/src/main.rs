@@ -234,6 +234,14 @@ fn format_timestamp_ms(ms: i64) -> String {
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .setup(|app| {
+            #[cfg(debug_assertions)]
+            {
+                let window = app.get_webview_window("main").unwrap();
+                window.open_devtools();
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![process_video, burn_subtitles])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
