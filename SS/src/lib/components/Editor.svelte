@@ -13,9 +13,9 @@
   }
   let { onburn, oncancel }: Props = $props()
 
-  let sessionVal = $state<EditorSession | null>(null)
+  let sessionVal = $state(null as EditorSession | null)
   let isDirtyVal = $state(false)
-  let templateVal = $state<Template | null>(null)
+  let templateVal = $state(null as Template | null)
 
   $effect(() => {
     const u1 = session.subscribe(v => { sessionVal = v })
@@ -26,7 +26,8 @@
 
   let searchTerm = $state('')
   let replaceTerm = $state('')
-  let findMode = $state<'all' | 'single'>('all')
+  let findMode = $state('all' as 'all' | 'single')
+
   let replaceMessage = $state('')
 
   let selectedSub = $derived(
