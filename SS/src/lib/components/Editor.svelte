@@ -1,30 +1,30 @@
 <script lang="ts">
-  import { invoke } from '@tauri-apps/api/core'
-  import type { Subtitle } from '$lib/types'
-  import { createEventDispatcher } from 'svelte'
-  import {
-    session, subtitles, selectedIndex, selectedSubtitle,
-    isDirty, closeSession, selectSegment,
-    updateSubtitleText, resetSubtitleText,
-    updateSubtitleOverrides, clearSubtitleOverrides,
-    findAndReplace
-  } from '$lib/stores/editor'
-  import { activeTemplate, updateActiveTemplate, allTemplates, setActiveTemplate, saveActiveAsTemplate } from '$lib/stores/templates'
-  import { buildAss, serializeSRT } from '$lib/utils/ass'
+  import { session, isDirty, findAndReplace } from '$lib/stores/editor'
+  import { activeTemplate } from '$lib/stores/templates'
+  import { buildAss } from '$lib/utils/ass'
   import SegmentList from './SegmentList.svelte'
   import SegmentInspector from './SegmentInspector.svelte'
   import TemplatePanel from './TemplatePanel.svelte'
 
-  const dispatch = createEventDispatcher<{
-    burn: { videoPath: string; outputPath: string; assContent: string }
-    cancel: void
-  }>()
+  interface Props {
+    onburn: (detail: { videoPath: string; outputPath: string; assContent: string }) => void
+    oncancel: () => void
+  }
 
-  // Find & replace state
-  let searchTerm = ''
-  let replaceTerm = ''
-  let findMode: 'all' | 'single' = 'all'
-  let replaceMessage = ''
+  let { onburn, oncancel }: Props = $props()
+
+  let searchTerm = $state('')
+  let replaceTerm = $state('')
+  let findMode = $state<'all' | 'single'>('all')
+  let replaceMessage = $state('')
+
+  let sessionVal = $derived($session)
+  let isDirtyVal = $derived($isDirty)
+  let selectedSub = $derived($session?.selectedIndex !== null && $session?.selectedIndex !== undefined
+    ? $session.subtitles[$session.selectedIndex]
+    : null)
+  let selectedIdx = $derived($session?.selectedIndex ?? null)
+  let templateVal = $derived($activeTemplate)
 
   function handleFindReplace() {
     if (!searchTerm) return
@@ -34,18 +34,9 @@
   }
 
   function handleBurn() {
-    if (!$session) return
-    const assContent = buildAss($subtitles, $activeTemplate)
-    dispatch('burn', {
-      videoPath: $session.videoPath,
-      outputPath: $session.outputPath,
-      assContent
-    })
-  }
-
-  function handleCancel() {
-    closeSession()
-    dispatch('cancel')
+    if (!sessionVal) return
+    const assContent = buildAss(sessionVal.subtitles, templateVal)
+    onburn({ videoPath: sessionVal.videoPath, outputPath: sessionVal.outputPath, assContent })
   }
 
   function getFileName(path: string) {
@@ -54,69 +45,47 @@
 </script>
 
 <div class="editor">
-  <!-- Top bar -->
   <div class="editor-topbar">
     <div class="topbar-left">
-      <button class="back-btn" on:click={handleCancel} title="Back to queue">← Queue</button>
+      <button class="back-btn" onclick={oncancel}>← Queue</button>
       <div class="file-info">
-        <span class="file-name">{getFileName($session?.videoPath ?? '')}</span>
-        <span class="sub-count">{$subtitles.length} segments</span>
-        {#if $isDirty}
+        <span class="file-name">{getFileName(sessionVal?.videoPath ?? '')}</span>
+        <span class="sub-count">{sessionVal?.subtitles.length ?? 0} segments</span>
+        {#if isDirtyVal}
           <span class="dirty-badge">unsaved</span>
         {/if}
       </div>
     </div>
     <div class="topbar-right">
       <div class="find-replace">
-        <input
-          type="text"
-          bind:value={searchTerm}
-          placeholder="Find..."
-          class="fr-input"
-        />
-        <input
-          type="text"
-          bind:value={replaceTerm}
-          placeholder="Replace..."
-          class="fr-input"
-        />
+        <input type="text" bind:value={searchTerm} placeholder="Find..." class="fr-input" />
+        <input type="text" bind:value={replaceTerm} placeholder="Replace..." class="fr-input" />
         <select bind:value={findMode} class="fr-select">
           <option value="all">All</option>
           <option value="single">First</option>
         </select>
-        <button class="btn-sm" on:click={handleFindReplace}>Replace</button>
+        <button class="btn-sm" onclick={handleFindReplace}>Replace</button>
         {#if replaceMessage}
           <span class="replace-msg">{replaceMessage}</span>
         {/if}
       </div>
-      <button class="btn-sm btn-burn" on:click={handleBurn}>
-        Burn Subtitles →
-      </button>
+      <button class="btn-sm btn-burn" onclick={handleBurn}>Burn Subtitles →</button>
     </div>
   </div>
 
-  <!-- Three-panel body -->
   <div class="editor-body">
-    <!-- Left: Segment list -->
     <div class="panel panel-left">
       <SegmentList />
     </div>
-
-    <!-- Center: Template panel -->
     <div class="panel panel-center">
       <TemplatePanel />
     </div>
-
-    <!-- Right: Segment inspector -->
     <div class="panel panel-right">
-      {#if $selectedSubtitle !== null && $selectedIndex !== null}
-        {@const sub = $selectedSubtitle}
-        {@const idx = $selectedIndex}
-        {@const tpl = $activeTemplate}
+      {#if selectedSub !== null && selectedIdx !== null}
         <SegmentInspector
-          subtitle={sub}
-          index={idx}
-          template={tpl}
+          subtitle={selectedSub}
+          index={selectedIdx}
+          template={templateVal}
         />
       {:else}
         <div class="inspector-empty">
@@ -135,7 +104,6 @@
     overflow: hidden;
   }
 
-  /* ── Top bar ── */
   .editor-topbar {
     display: flex;
     align-items: center;
@@ -148,11 +116,7 @@
     flex-wrap: wrap;
   }
 
-  .topbar-left {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-  }
+  .topbar-left { display: flex; align-items: center; gap: 0.75rem; }
 
   .back-btn {
     padding: 0.35rem 0.75rem;
@@ -162,30 +126,15 @@
     color: var(--color-text-muted);
     font-size: 0.8rem;
     cursor: pointer;
-    transition: background 0.15s, color 0.15s;
+    transition: background 0.15s;
   }
+  .back-btn:hover { background: var(--color-surface-hover); color: var(--color-text); }
 
-  .back-btn:hover {
-    background: var(--color-surface-hover);
-    color: var(--color-text);
-  }
+  .file-info { display: flex; align-items: center; gap: 0.5rem; }
 
-  .file-info {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-  }
+  .file-name { font-weight: 600; font-size: 0.9rem; }
 
-  .file-name {
-    font-weight: 600;
-    font-size: 0.9rem;
-    color: var(--color-text);
-  }
-
-  .sub-count {
-    font-size: 0.8rem;
-    color: var(--color-text-muted);
-  }
+  .sub-count { font-size: 0.8rem; color: var(--color-text-muted); }
 
   .dirty-badge {
     font-size: 0.7rem;
@@ -195,18 +144,9 @@
     color: var(--color-warning);
   }
 
-  .topbar-right {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    flex-wrap: wrap;
-  }
+  .topbar-right { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
 
-  .find-replace {
-    display: flex;
-    align-items: center;
-    gap: 0.35rem;
-  }
+  .find-replace { display: flex; align-items: center; gap: 0.35rem; }
 
   .fr-input {
     padding: 0.35rem 0.6rem;
@@ -217,11 +157,7 @@
     font-size: 0.8rem;
     width: 120px;
   }
-
-  .fr-input:focus {
-    outline: none;
-    border-color: var(--color-accent);
-  }
+  .fr-input:focus { outline: none; border-color: var(--color-accent); }
 
   .fr-select {
     padding: 0.35rem 0.5rem;
@@ -244,7 +180,6 @@
     white-space: nowrap;
     transition: background 0.15s;
   }
-
   .btn-sm:hover { background: var(--color-surface-hover); }
 
   .btn-burn {
@@ -252,16 +187,10 @@
     color: white;
     border-color: var(--color-accent);
   }
-
   .btn-burn:hover { filter: brightness(1.1); }
 
-  .replace-msg {
-    font-size: 0.75rem;
-    color: var(--color-success);
-    white-space: nowrap;
-  }
+  .replace-msg { font-size: 0.75rem; color: var(--color-success); white-space: nowrap; }
 
-  /* ── Three-panel body ── */
   .editor-body {
     display: grid;
     grid-template-columns: 280px 1fr 260px;
@@ -275,12 +204,10 @@
     overflow: hidden;
     border-right: 1px solid var(--color-border);
   }
-
   .panel:last-child { border-right: none; }
-
-  .panel-left   { background: var(--color-bg); }
+  .panel-left { background: var(--color-bg); }
   .panel-center { background: var(--color-surface); }
-  .panel-right  { background: var(--color-bg); }
+  .panel-right { background: var(--color-bg); }
 
   .inspector-empty {
     flex: 1;
@@ -294,17 +221,11 @@
     padding: 2rem;
   }
 
-  /* ── Mobile future-proofing ── */
   @media (max-width: 768px) {
     .editor-body {
       grid-template-columns: 1fr;
       grid-template-rows: auto auto auto;
     }
-
-    .panel {
-      border-right: none;
-      border-bottom: 1px solid var(--color-border);
-      max-height: 40vh;
-    }
+    .panel { border-right: none; border-bottom: 1px solid var(--color-border); max-height: 40vh; }
   }
 </style>

@@ -1,35 +1,32 @@
 <script lang="ts">
-  import { session , selectedIndex, selectSegment, updateSubtitleText, resetSubtitleText } from '$lib/stores/editor'
+  import { session, selectSegment, updateSubtitleText, resetSubtitleText } from '$lib/stores/editor'
+
+  let subtitleList = $derived($session?.subtitles ?? [])
+  let selIdx = $derived($session?.selectedIndex ?? null)
 
   function handleClick(index: number) {
-    selectSegment($selectedIndex === index ? null : index)
-  }
-
-  function handleTextInput(index: number, e: Event) {
-    updateSubtitleText(index, (e.target as HTMLTextAreaElement).value)
+    selectSegment(selIdx === index ? null : index)
   }
 </script>
 
 <div class="segment-list-header">
   <span class="panel-label">Segments</span>
-  <span class="count">{$session?.subtitles.length}</span>
+  <span class="count">{subtitleList.length}</span>
 </div>
 
 <div class="segment-list">
-
-  {#each ($session?.subtitles ?? []) as sub, index}
-    
+  {#each subtitleList as sub, index}
     <div
       class="segment"
-      class:selected={$selectedIndex === index}
+      class:selected={selIdx === index}
       class:modified={sub.text !== sub.originalText}
       class:has-overrides={!!sub.overrides && Object.keys(sub.overrides).length > 0}
     >
-      <div style="background: red; height: 20px; width: 100%;">
-      {sub.index}: {sub.text.slice(0, 20)}
-      </div>
-      <div class="segment-header" on:click={() => handleClick(index)} role="button" tabindex="0"
-        on:keydown={(e) => e.key === 'Enter' && handleClick(index)}
+      <div class="segment-header"
+        role="button"
+        tabindex="0"
+        onclick={() => handleClick(index)}
+        onkeydown={(e) => e.key === 'Enter' && handleClick(index)}
       >
         <span class="seg-index">#{sub.index}</span>
         <span class="seg-timing">{sub.start} → {sub.end}</span>
@@ -44,7 +41,7 @@
         {#if sub.text !== sub.originalText}
           <button
             class="reset-btn"
-            on:click|stopPropagation={() => resetSubtitleText(index)}
+            onclick={(e) => { e.stopPropagation(); resetSubtitleText(index) }}
             title="Reset text"
           >↺</button>
         {/if}
@@ -52,14 +49,13 @@
 
       <div
         class="seg-text"
-        class:focused={$selectedIndex === index}
+        class:focused={selIdx === index}
         contenteditable="true"
-        on:input={(e) => updateSubtitleText(index, e.currentTarget.textContent ?? '')}
-        on:focus={() => selectSegment(index)}
-      >
-        {sub.text}
-      </div>
-      
+        role="textbox"
+        tabindex="0"
+        oninput={(e) => updateSubtitleText(index, (e.currentTarget as HTMLElement).textContent ?? '')}
+        onfocus={() => selectSegment(index)}
+      >{sub.text}</div>
     </div>
   {/each}
 </div>
@@ -106,7 +102,6 @@
     overflow: hidden;
     transition: border-color 0.15s;
   }
-  
 
   .segment:hover { border-color: var(--color-border-hover); }
   .segment.selected { border-color: var(--color-accent); }
@@ -140,10 +135,7 @@
     flex: 1;
   }
 
-  .seg-badges {
-    display: flex;
-    gap: 3px;
-  }
+  .seg-badges { display: flex; gap: 3px; }
 
   .badge {
     font-size: 0.6rem;
@@ -181,24 +173,21 @@
     border: none;
     border-top: 1px solid var(--color-border);
     background: var(--color-bg);
-    color: var(--color-text) !important;
-    -webkit-text-fill-color: var(--color-text) !important;
+    color: var(--color-text);
     font-size: 0.82rem;
     font-family: inherit;
-    min-height: 2.5rem;
+    min-height: 2rem;
     box-sizing: border-box;
-    line-height: 1.4;
+    line-height: 1.5;
     white-space: pre-wrap;
     word-break: break-word;
     outline: none;
     cursor: text;
   }
 
-  .seg-text:focus {
-    background: var(--color-surface);
-  }
-
+  .seg-text:focus,
   .seg-text.focused {
     background: var(--color-surface);
+    outline: none;
   }
 </style>

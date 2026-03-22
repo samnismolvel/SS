@@ -2,19 +2,21 @@
   import { invoke } from '@tauri-apps/api/core'
   import { session, closeSession } from '$lib/stores/editor'
   import { queue, processing, currentVideoIndex, updateQueueItem, resetProgress } from '$lib/stores/queue'
-  import { activeTemplate } from '$lib/stores/templates'
-  import { buildAss } from '$lib/utils/ass'
   import Queue from '$lib/components/Queue.svelte'
   import Editor from '$lib/components/Editor.svelte'
 
-  let dark = true
+  let dark = $state(true)
   let queueRef: Queue
+
+  let sessionVal = $derived($session)
+  let queueVal = $derived($queue)
+  let currentIdxVal = $derived($currentVideoIndex)
 
   function toggleDark() { dark = !dark }
 
-  async function handleBurn(e: CustomEvent<{ videoPath: string; outputPath: string; assContent: string }>) {
-    const { videoPath, outputPath, assContent } = e.detail
-    const item = $queue[$currentVideoIndex]
+  async function handleBurn(detail: { videoPath: string; outputPath: string; assContent: string }) {
+    const { videoPath, outputPath, assContent } = detail
+    const item = queueVal[currentIdxVal]
     closeSession()
     processing.set(true)
 
@@ -25,12 +27,11 @@
       updateQueueItem(item.id, { status: 'failed', error: String(err) })
     }
 
-    // Continue with next manual item
     await queueRef.continueManual(item.id)
   }
 
   function handleCancel() {
-    const item = $queue[$currentVideoIndex]
+    const item = queueVal[currentIdxVal]
     updateQueueItem(item.id, { status: 'failed', error: 'Editing cancelled' })
     closeSession()
     queueRef.continueManual(item.id)
@@ -39,14 +40,14 @@
 
 <div class="app" class:dark>
   <div class="theme-toggle">
-    <button on:click={toggleDark} title="Toggle dark mode" aria-label="Toggle theme">
+    <button onclick={toggleDark} title="Toggle dark mode" aria-label="Toggle theme">
       {dark ? '☀' : '☾'}
     </button>
   </div>
 
   <div class="app-content">
-    {#if $session}
-      <Editor on:burn={handleBurn} on:cancel={handleCancel} />
+    {#if sessionVal}
+      <Editor onburn={handleBurn} oncancel={handleCancel} />
     {:else}
       <Queue bind:this={queueRef} />
     {/if}
@@ -75,7 +76,6 @@
     flex-direction: column;
     background: var(--color-bg);
     color: var(--color-text);
-    -webkit-text-fill-color: var(--color-text);
     font-family: system-ui, -apple-system, sans-serif;
     position: relative;
     transition: background 0.2s, color 0.2s;
@@ -105,27 +105,13 @@
   .theme-toggle button {
     width: 32px; height: 32px; border-radius: 50%;
     border: 1px solid var(--color-border); background: var(--color-surface);
-    color: var(--color-text); -webkit-text-fill-color: var(--color-text);
-    font-size: 1rem; cursor: pointer; display: flex; align-items: center;
-    justify-content: center; transition: background 0.15s; line-height: 1;
+    color: var(--color-text); font-size: 1rem; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: background 0.15s; line-height: 1;
   }
   .theme-toggle button:hover { background: var(--color-surface-hover); }
 
   .app-content {
     flex: 1; overflow: hidden; display: flex; flex-direction: column; padding: 1rem;
-  }
-
-  .app :global(textarea),
-  .app :global(input[type="text"]),
-  .app :global(input[type="number"]),
-  .app :global(select) {
-    -webkit-text-fill-color: var(--color-text);
-    color: var(--color-text);
-  }
-
-  .app :global(input[type="text"]::placeholder),
-  .app :global(textarea::placeholder) {
-    -webkit-text-fill-color: var(--color-text-muted);
-    color: var(--color-text-muted);
   }
 </style>
