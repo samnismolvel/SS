@@ -19,12 +19,16 @@
 
   <p style="color: red; padding: 0.5rem;">DEBUG: {$subtitles.length} subtitles, first: {$subtitles[0]?.text ?? 'none'}</p>
   {#each $subtitles as sub, index (sub.index)}
+    
     <div
       class="segment"
       class:selected={$selectedIndex === index}
       class:modified={sub.text !== sub.originalText}
       class:has-overrides={!!sub.overrides && Object.keys(sub.overrides).length > 0}
     >
+      <div style="background: red; height: 20px; width: 100%;">
+      {sub.index}: {sub.text.slice(0, 20)}
+      </div>
       <div class="segment-header" on:click={() => handleClick(index)} role="button" tabindex="0"
         on:keydown={(e) => e.key === 'Enter' && handleClick(index)}
       >
@@ -103,6 +107,7 @@
     overflow: hidden;
     transition: border-color 0.15s;
   }
+  
 
   .segment:hover { border-color: var(--color-border-hover); }
   .segment.selected { border-color: var(--color-accent); }
