@@ -1,7 +1,16 @@
 <script lang="ts">
   import { session } from '$lib/stores/editor'
+  import { get } from 'svelte/store'
 
-  let items = $derived($session?.subtitles ?? [])
+  // Use $state + $effect instead of $derived with store
+  let items = $state<any[]>([])
+
+  $effect(() => {
+    const unsub = session.subscribe(val => {
+      items = val?.subtitles ?? []
+    })
+    return unsub
+  })
 </script>
 
 <div style="color: white; padding: 1rem;">
