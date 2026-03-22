@@ -5,7 +5,7 @@
   let items = $state<Subtitle[]>([])
   let selIdx = $state<number | null>(null)
 
-  $effect(() => {
+    $effect.pre(() => {
     const unsub = session.subscribe(val => {
       items = val?.subtitles ?? []
       selIdx = val?.selectedIndex ?? null
