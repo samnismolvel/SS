@@ -48,10 +48,11 @@
       </div>
 
       <textarea
-        value={sub.text}
+        bind:value={sub.text}
         on:input={(e) => handleTextInput(index, e)}
         class="seg-text"
         class:focused={$selectedIndex === index}
+        style="height: auto; min-height: 2.5rem;"
       ></textarea>
     </div>
   {/each}
@@ -177,12 +178,14 @@
   -webkit-text-fill-color: var(--color-text) !important;
   font-size: 0.82rem;
   font-family: inherit;
-  resize: none;
-  height: 2.5rem;
+  resize: vertical;
   min-height: 2.5rem;
+  height: 2.5rem;
   display: block;
   box-sizing: border-box;
-  overflow: hidden;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
   .seg-text:focus {
     outline: none;
