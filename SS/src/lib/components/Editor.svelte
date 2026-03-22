@@ -2,7 +2,7 @@
   import { session, isDirty, findAndReplace } from '$lib/stores/editor'
   import { activeTemplate } from '$lib/stores/templates'
   import { buildAss } from '$lib/utils/ass'
-  import SegmentList from './SegmentList.svelte'
+  import TestSegments from './TestSegments.svelte'
   import SegmentInspector from './SegmentInspector.svelte'
   import TemplatePanel from './TemplatePanel.svelte'
 
@@ -75,7 +75,7 @@
 
   <div class="editor-body">
     <div class="panel panel-left">
-      <SegmentList />
+      <TestSegments />
     </div>
     <div class="panel panel-center">
       <TemplatePanel />
