@@ -27,7 +27,6 @@
   let searchTerm = $state('')
   let replaceTerm = $state('')
   let findMode = $state('all' as 'all' | 'single')
-
   let replaceMessage = $state('')
 
   let selectedSub = $derived(

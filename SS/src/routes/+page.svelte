@@ -7,18 +7,19 @@
   import Editor from '$lib/components/Editor.svelte'
 
   let dark = $state(true)
-  let queueRef: Queue
 
-  let sessionVal = $state<EditorSession | null>(null)
-  let queueVal = $state<QueueItem[]>([])
-  let currentIdxVal = $state(-1)
+let queueRef = $state(null as any)
 
-  $effect(() => {
-    const u1 = session.subscribe(v => { sessionVal = v })
-    const u2 = queue.subscribe(v => { queueVal = v })
-    const u3 = currentVideoIndex.subscribe(v => { currentIdxVal = v })
-    return () => { u1(); u2(); u3() }
-  })
+let sessionVal = $state(null as EditorSession | null)
+let queueVal = $state([] as QueueItem[])
+let currentIdxVal = $state(-1)
+
+$effect(() => {
+  const u1 = session.subscribe(v => { sessionVal = v })
+  const u2 = queue.subscribe(v => { queueVal = v })
+  const u3 = currentVideoIndex.subscribe(v => { currentIdxVal = v })
+  return () => { u1(); u2(); u3() }
+})
 
   function toggleDark() { dark = !dark }
 
