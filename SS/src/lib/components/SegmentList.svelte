@@ -1,11 +1,17 @@
 <script lang="ts">
   import { session, selectSegment, updateSubtitleText, resetSubtitleText } from '$lib/stores/editor'
-  import type { Subtitle } from '$lib/types'
+  import { get } from 'svelte/store'
 
-  let items = $state<Subtitle[]>([])
-  let selIdx = $state<number | null>(null)
+  let items = $state([] as any[])
+  let selIdx = $state(null as number | null)
 
-    $effect.pre(() => {
+  const initial = get(session)
+  if (initial) {
+    items = initial.subtitles
+    selIdx = initial.selectedIndex
+  }
+
+  $effect(() => {
     const unsub = session.subscribe(val => {
       items = val?.subtitles ?? []
       selIdx = val?.selectedIndex ?? null
