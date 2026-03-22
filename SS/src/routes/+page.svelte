@@ -2,15 +2,23 @@
   import { invoke } from '@tauri-apps/api/core'
   import { session, closeSession } from '$lib/stores/editor'
   import { queue, processing, currentVideoIndex, updateQueueItem, resetProgress } from '$lib/stores/queue'
+  import type { EditorSession, QueueItem } from '$lib/types'
   import Queue from '$lib/components/Queue.svelte'
   import Editor from '$lib/components/Editor.svelte'
 
   let dark = $state(true)
   let queueRef: Queue
 
-  let sessionVal = $derived($session)
-  let queueVal = $derived($queue)
-  let currentIdxVal = $derived($currentVideoIndex)
+  let sessionVal = $state<EditorSession | null>(null)
+  let queueVal = $state<QueueItem[]>([])
+  let currentIdxVal = $state(-1)
+
+  $effect(() => {
+    const u1 = session.subscribe(v => { sessionVal = v })
+    const u2 = queue.subscribe(v => { queueVal = v })
+    const u3 = currentVideoIndex.subscribe(v => { currentIdxVal = v })
+    return () => { u1(); u2(); u3() }
+  })
 
   function toggleDark() { dark = !dark }
 
@@ -71,14 +79,10 @@
     --color-warning:        #d97706;
     --color-warning-subtle: #fffbeb;
 
-    height: 100vh;
-    display: flex;
-    flex-direction: column;
-    background: var(--color-bg);
-    color: var(--color-text);
+    height: 100vh; display: flex; flex-direction: column;
+    background: var(--color-bg); color: var(--color-text);
     font-family: system-ui, -apple-system, sans-serif;
-    position: relative;
-    transition: background 0.2s, color 0.2s;
+    position: relative; transition: background 0.2s, color 0.2s;
   }
 
   .app.dark {
@@ -98,20 +102,15 @@
     --color-warning-subtle: #2d2000;
   }
 
-  .theme-toggle {
-    position: fixed; top: 0.75rem; right: 1rem; z-index: 100;
-  }
+  .theme-toggle { position: fixed; top: 0.75rem; right: 1rem; z-index: 100; }
 
   .theme-toggle button {
     width: 32px; height: 32px; border-radius: 50%;
     border: 1px solid var(--color-border); background: var(--color-surface);
     color: var(--color-text); font-size: 1rem; cursor: pointer;
-    display: flex; align-items: center; justify-content: center;
-    transition: background 0.15s; line-height: 1;
+    display: flex; align-items: center; justify-content: center; line-height: 1;
   }
   .theme-toggle button:hover { background: var(--color-surface-hover); }
 
-  .app-content {
-    flex: 1; overflow: hidden; display: flex; flex-direction: column; padding: 1rem;
-  }
+  .app-content { flex: 1; overflow: hidden; display: flex; flex-direction: column; padding: 1rem; }
 </style>

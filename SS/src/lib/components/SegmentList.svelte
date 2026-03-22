@@ -1,8 +1,17 @@
 <script lang="ts">
   import { session, selectSegment, updateSubtitleText, resetSubtitleText } from '$lib/stores/editor'
+  import type { Subtitle } from '$lib/types'
 
-  let subtitleList = $derived($session?.subtitles ?? [])
-  let selIdx = $derived($session?.selectedIndex ?? null)
+  let items = $state<Subtitle[]>([])
+  let selIdx = $state<number | null>(null)
+
+  $effect(() => {
+    const unsub = session.subscribe(val => {
+      items = val?.subtitles ?? []
+      selIdx = val?.selectedIndex ?? null
+    })
+    return unsub
+  })
 
   function handleClick(index: number) {
     selectSegment(selIdx === index ? null : index)
@@ -11,11 +20,11 @@
 
 <div class="segment-list-header">
   <span class="panel-label">Segments</span>
-  <span class="count">{subtitleList.length}</span>
+  <span class="count">{items.length}</span>
 </div>
 
 <div class="segment-list">
-  {#each subtitleList as sub, index}
+  {#each items as sub, index}
     <div
       class="segment"
       class:selected={selIdx === index}
@@ -164,7 +173,6 @@
     line-height: 1;
     transition: color 0.15s;
   }
-
   .reset-btn:hover { color: var(--color-text); }
 
   .seg-text {

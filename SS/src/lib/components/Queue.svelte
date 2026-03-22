@@ -11,7 +11,7 @@
   import { openSession } from '$lib/stores/editor'
   import { allTemplates } from '$lib/stores/templates'
   import { parseSRT, buildAss } from '$lib/utils/ass'
-  import type { ProgressEvent, QueueItemMode } from '$lib/types'
+  import type { ProgressEvent, QueueItem, Template } from '$lib/types'
 
   const STEPS = ['extracting', 'transcribing', 'burning', 'done'] as const
 
@@ -23,13 +23,24 @@
     return path.split(/[\\/]/).pop() ?? path
   }
 
-  let queueVal = $derived($queue)
-  let processingVal = $derived($processing)
-  let currentIdxVal = $derived($currentVideoIndex)
-  let currentStepVal = $derived($currentStep)
-  let currentMsgVal = $derived($currentMessage)
-  let phaseVal = $derived($processingPhase)
-  let templatesVal = $derived($allTemplates)
+  let queueVal = $state<QueueItem[]>([])
+  let processingVal = $state(false)
+  let currentIdxVal = $state(-1)
+  let currentStepVal = $state('')
+  let currentMsgVal = $state('')
+  let phaseVal = $state('')
+  let templatesVal = $state<Template[]>([])
+
+  $effect(() => {
+    const u1 = queue.subscribe(v => { queueVal = v })
+    const u2 = processing.subscribe(v => { processingVal = v })
+    const u3 = currentVideoIndex.subscribe(v => { currentIdxVal = v })
+    const u4 = currentStep.subscribe(v => { currentStepVal = v })
+    const u5 = currentMessage.subscribe(v => { currentMsgVal = v })
+    const u6 = processingPhase.subscribe(v => { phaseVal = v })
+    const u7 = allTemplates.subscribe(v => { templatesVal = v })
+    return () => { u1(); u2(); u3(); u4(); u5(); u6(); u7() }
+  })
 
   const unlisten = listen<ProgressEvent>('progress', (event) => {
     currentStep.set(event.payload.step)
@@ -110,7 +121,7 @@
   }
 
   export async function continueManual(fromId: string) {
-    const items = $queue
+    const items = queueVal
     const fromIndex = items.findIndex(i => i.id === fromId)
 
     for (let i = fromIndex + 1; i < items.length; i++) {
@@ -171,11 +182,9 @@
             <div class="item-mode">
               <div class="mode-tabs">
                 <button class="mode-tab" class:active={item.mode === 'manual'}
-                  onclick={() => setItemMode(item.id, 'manual')}
-                  disabled={processingVal}>Manual</button>
+                  onclick={() => setItemMode(item.id, 'manual')} disabled={processingVal}>Manual</button>
                 <button class="mode-tab" class:active={item.mode === 'template'}
-                  onclick={() => setItemMode(item.id, 'template')}
-                  disabled={processingVal}>Template</button>
+                  onclick={() => setItemMode(item.id, 'template')} disabled={processingVal}>Template</button>
               </div>
               {#if item.mode === 'template'}
                 <select class="template-select"
@@ -191,11 +200,11 @@
 
             <div class="item-actions">
               <button class="icon-btn" onclick={() => moveItem(index, 'up')}
-                disabled={processingVal || index === 0} title="Move up">↑</button>
+                disabled={processingVal || index === 0}>↑</button>
               <button class="icon-btn" onclick={() => moveItem(index, 'down')}
-                disabled={processingVal || index === queueVal.length - 1} title="Move down">↓</button>
+                disabled={processingVal || index === queueVal.length - 1}>↓</button>
               <button class="icon-btn danger" onclick={() => removeFromQueue(item.id)}
-                disabled={processingVal} title="Remove">×</button>
+                disabled={processingVal}>×</button>
             </div>
           </div>
 
@@ -224,11 +233,7 @@
   .queue-view { display: flex; flex-direction: column; gap: 1.5rem; height: 100%; }
   .queue-header { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
 
-  .app-title {
-    font-size: 1.4rem; font-weight: 700; letter-spacing: -0.5px;
-    color: var(--color-accent); margin: 0; flex: 1;
-  }
-
+  .app-title { font-size: 1.4rem; font-weight: 700; letter-spacing: -0.5px; color: var(--color-accent); margin: 0; flex: 1; }
   .header-actions { display: flex; gap: 0.5rem; }
 
   .btn {
@@ -276,7 +281,7 @@
   .mode-tabs { display: flex; border-radius: 5px; overflow: hidden; border: 1px solid var(--color-border); }
   .mode-tab {
     padding: 0.25rem 0.6rem; font-size: 0.72rem; font-weight: 500;
-    border: none; background: var(--color-bg); color: var(--color-text-muted); cursor: pointer; transition: all 0.15s;
+    border: none; background: var(--color-bg); color: var(--color-text-muted); cursor: pointer;
   }
   .mode-tab:first-child { border-right: 1px solid var(--color-border); }
   .mode-tab.active { background: var(--color-accent-subtle); color: var(--color-accent); }
@@ -289,12 +294,11 @@
   }
 
   .item-actions { display: flex; gap: 0.25rem; flex-shrink: 0; }
-
   .icon-btn {
     width: 28px; height: 28px; padding: 0; border-radius: 4px;
     border: 1px solid var(--color-border); background: transparent;
     color: var(--color-text-muted); font-size: 0.9rem; cursor: pointer;
-    display: flex; align-items: center; justify-content: center; transition: background 0.15s;
+    display: flex; align-items: center; justify-content: center;
   }
   .icon-btn:hover:not(:disabled) { background: var(--color-surface-hover); }
   .icon-btn:disabled { opacity: 0.3; cursor: not-allowed; }
@@ -307,7 +311,6 @@
     content: ''; position: absolute; top: 7px; left: 8px; right: 8px;
     height: 1px; background: var(--color-border);
   }
-
   .step {
     display: flex; flex-direction: column; align-items: center; gap: 4px;
     font-size: 0.7rem; color: var(--color-text-muted); text-transform: capitalize; z-index: 1;
@@ -317,6 +320,5 @@
   .step.active { color: var(--color-accent); font-weight: 600; }
   .step.completed .step-dot { background: var(--color-success); border-color: var(--color-success); }
   .step.completed { color: var(--color-success); }
-
   .step-message { font-size: 0.8rem; color: var(--color-text-muted); text-align: center; margin: 0; }
 </style>

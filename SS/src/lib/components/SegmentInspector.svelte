@@ -7,7 +7,6 @@
     index: number
     template: Template
   }
-
   let { subtitle, index, template }: Props = $props()
 
   let overrides = $derived(subtitle.overrides ?? {})
@@ -18,9 +17,7 @@
     updateSubtitleOverrides(index, { [key]: value })
   }
 
-  function clearAll() {
-    clearSubtitleOverrides(index)
-  }
+  function clearAll() { clearSubtitleOverrides(index) }
 
   function handleTimingInput(field: 'start' | 'end', value: string) {
     updateSubtitleTiming(
@@ -45,15 +42,13 @@
       <div class="section-label">Timing</div>
       <div class="field-row">
         <label>Start</label>
-        <input type="text" value={subtitle.start}
-          onchange={(e) => handleTimingInput('start', e.currentTarget.value)}
-          class="mono-input" placeholder="00:00:00,000" />
+        <input type="text" value={subtitle.start} class="mono-input"
+          onchange={(e) => handleTimingInput('start', e.currentTarget.value)} />
       </div>
       <div class="field-row">
         <label>End</label>
-        <input type="text" value={subtitle.end}
-          onchange={(e) => handleTimingInput('end', e.currentTarget.value)}
-          class="mono-input" placeholder="00:00:00,000" />
+        <input type="text" value={subtitle.end} class="mono-input"
+          onchange={(e) => handleTimingInput('end', e.currentTarget.value)} />
       </div>
     </section>
 
@@ -64,23 +59,21 @@
       <div class="field-row">
         <label>Family</label>
         <input type="text" value={effective.fontName}
-          onchange={(e) => set('fontName', e.currentTarget.value)}
-          class:overridden={'fontName' in overrides} />
+          class:overridden={'fontName' in overrides}
+          onchange={(e) => set('fontName', e.currentTarget.value)} />
       </div>
       <div class="field-row">
         <label>Size</label>
         <input type="number" min="8" max="120" value={effective.fontSize}
-          onchange={(e) => set('fontSize', Number(e.currentTarget.value))}
-          class="short-input" class:overridden={'fontSize' in overrides} />
+          class="short-input" class:overridden={'fontSize' in overrides}
+          onchange={(e) => set('fontSize', Number(e.currentTarget.value))} />
       </div>
       <div class="field-row">
         <label>Style</label>
         <div class="toggle-row">
-          <button class="toggle-btn" class:active={effective.bold}
-            class:overridden={'bold' in overrides}
+          <button class="toggle-btn" class:active={effective.bold} class:overridden={'bold' in overrides}
             onclick={() => set('bold', !effective.bold)}><b>B</b></button>
-          <button class="toggle-btn" class:active={effective.italic}
-            class:overridden={'italic' in overrides}
+          <button class="toggle-btn" class:active={effective.italic} class:overridden={'italic' in overrides}
             onclick={() => set('italic', !effective.italic)}><i>I</i></button>
         </div>
       </div>
@@ -166,7 +159,7 @@
   .clear-btn {
     font-size: 0.7rem; padding: 2px 6px; border-radius: 4px;
     border: 1px solid var(--color-danger); background: transparent;
-    color: var(--color-danger); cursor: pointer; transition: background 0.15s;
+    color: var(--color-danger); cursor: pointer;
   }
   .clear-btn:hover { background: var(--color-danger-subtle); }
 
@@ -179,15 +172,12 @@
 
   .section-label {
     font-size: 0.7rem; font-weight: 600; text-transform: uppercase;
-    letter-spacing: 0.5px; color: var(--color-text-muted); margin-bottom: 0.1rem;
+    letter-spacing: 0.5px; color: var(--color-text-muted);
   }
 
   .divider { height: 1px; background: var(--color-border); }
   .field-row { display: flex; align-items: center; gap: 0.5rem; }
-
-  .field-row label {
-    font-size: 0.75rem; color: var(--color-text-muted); min-width: 50px;
-  }
+  .field-row label { font-size: 0.75rem; color: var(--color-text-muted); min-width: 50px; }
 
   input[type="text"], input[type="number"], select {
     flex: 1; padding: 0.3rem 0.5rem; border-radius: 5px;
@@ -207,12 +197,10 @@
   .toggle-row { display: flex; gap: 0.25rem; }
 
   .toggle-btn {
-    width: 28px; height: 28px; border-radius: 5px;
-    border: 1px solid var(--color-border); background: var(--color-bg);
-    color: var(--color-text-muted); cursor: pointer; font-size: 0.85rem; transition: all 0.15s;
+    width: 28px; height: 28px; border-radius: 5px; border: 1px solid var(--color-border);
+    background: var(--color-bg); color: var(--color-text-muted); cursor: pointer; font-size: 0.85rem;
   }
   .toggle-btn.active { background: var(--color-accent); border-color: var(--color-accent); color: white; }
-  .toggle-btn.overridden { border-color: var(--color-accent); }
 
   .color-row { display: flex; align-items: center; gap: 0.4rem; flex: 1; }
 
@@ -224,6 +212,5 @@
   .color-hex { font-size: 0.75rem; font-family: monospace; color: var(--color-text-muted); }
 
   input[type="range"] { flex: 1; accent-color: var(--color-accent); }
-
   .range-val { font-size: 0.75rem; color: var(--color-text-muted); min-width: 20px; text-align: right; }
 </style>

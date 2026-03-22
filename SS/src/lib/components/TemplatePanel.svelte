@@ -1,6 +1,6 @@
 <script lang="ts">
   import { activeTemplate, updateActiveTemplate, allTemplates, setActiveTemplate, saveActiveAsTemplate } from '$lib/stores/templates'
-  import type { WordMode, Alignment } from '$lib/types'
+  import type { Template, WordMode, Alignment } from '$lib/types'
 
   const SYSTEM_FONTS = [
     'Arial', 'Arial Black', 'Comic Sans MS', 'Courier New', 'Georgia',
@@ -13,14 +13,16 @@
   let customFont = $state(false)
   let saveTemplateName = $state('')
   let showSaveDialog = $state(false)
-
-  let templateVal = $derived($activeTemplate)
-  let templatesVal = $derived($allTemplates)
+  let templateVal = $state<Template | null>(null)
+  let templatesVal = $state<Template[]>([])
 
   $effect(() => {
-    if (templateVal.fontName && !SYSTEM_FONTS.includes(templateVal.fontName)) {
-      customFont = true
-    }
+    const u1 = activeTemplate.subscribe(v => {
+      templateVal = v
+      customFont = !!v && !SYSTEM_FONTS.includes(v.fontName)
+    })
+    const u2 = allTemplates.subscribe(v => { templatesVal = v })
+    return () => { u1(); u2() }
   })
 
   function handleFontSelect(e: Event) {
@@ -43,6 +45,7 @@
   }
 </script>
 
+{#if templateVal}
 <div class="template-panel">
   <div class="panel-header">
     <span class="panel-label">Style</span>
@@ -114,15 +117,14 @@
       {/if}
       <div class="field-row">
         <label>Size</label>
-        <input type="number" min="8" max="120" value={templateVal.fontSize}
-          onchange={(e) => updateActiveTemplate({ fontSize: Number(e.currentTarget.value) })}
-          class="short-input" />
+        <input type="number" min="8" max="120" value={templateVal.fontSize} class="short-input"
+          onchange={(e) => updateActiveTemplate({ fontSize: Number(e.currentTarget.value) })} />
         {#if advanced}
           <div class="toggle-row">
             <button class="toggle-btn" class:active={templateVal.bold}
-              onclick={() => updateActiveTemplate({ bold: !templateVal.bold })}><b>B</b></button>
+              onclick={() => updateActiveTemplate({ bold: !templateVal!.bold })}><b>B</b></button>
             <button class="toggle-btn" class:active={templateVal.italic}
-              onclick={() => updateActiveTemplate({ italic: !templateVal.italic })}><i>I</i></button>
+              onclick={() => updateActiveTemplate({ italic: !templateVal!.italic })}><i>I</i></button>
           </div>
         {/if}
       </div>
@@ -222,14 +224,14 @@
     </section>
   </div>
 </div>
+{/if}
 
 <style>
   .template-panel { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
 
   .panel-header {
-    display: flex; align-items: center; gap: 0.5rem;
-    padding: 0.75rem 1rem; border-bottom: 1px solid var(--color-border);
-    flex-shrink: 0; flex-wrap: wrap;
+    display: flex; align-items: center; gap: 0.5rem; padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--color-border); flex-shrink: 0; flex-wrap: wrap;
   }
 
   .panel-label {
@@ -246,7 +248,7 @@
   .icon-text-btn {
     padding: 0.3rem 0.6rem; border-radius: 5px; border: 1px solid var(--color-border);
     background: transparent; color: var(--color-text-muted); font-size: 0.75rem;
-    cursor: pointer; white-space: nowrap; transition: background 0.15s;
+    cursor: pointer; white-space: nowrap;
   }
   .icon-text-btn:hover { background: var(--color-surface-hover); color: var(--color-text); }
 
@@ -283,7 +285,6 @@
 
   .divider { height: 1px; background: var(--color-border); }
   .field-row { display: flex; align-items: center; gap: 0.5rem; }
-
   .field-row label { font-size: 0.75rem; color: var(--color-text-muted); min-width: 55px; }
 
   .checkbox-label {
@@ -303,8 +304,7 @@
 
   .toggle-btn {
     width: 28px; height: 28px; border-radius: 5px; border: 1px solid var(--color-border);
-    background: var(--color-bg); color: var(--color-text-muted); cursor: pointer;
-    font-size: 0.85rem; transition: all 0.15s;
+    background: var(--color-bg); color: var(--color-text-muted); cursor: pointer; font-size: 0.85rem;
   }
   .toggle-btn.active { background: var(--color-accent); border-color: var(--color-accent); color: white; }
 
@@ -316,14 +316,13 @@
   .color-hex { font-size: 0.75rem; font-family: monospace; color: var(--color-text-muted); }
 
   input[type="range"] { flex: 1; accent-color: var(--color-accent); }
-
   .range-val { font-size: 0.75rem; color: var(--color-text-muted); min-width: 30px; text-align: right; }
 
   .alignment-grid { display: grid; grid-template-columns: repeat(3, 28px); gap: 3px; }
 
   .align-btn {
     width: 28px; height: 28px; border-radius: 4px; border: 1px solid var(--color-border);
-    background: var(--color-bg); cursor: pointer; transition: all 0.15s; position: relative;
+    background: var(--color-bg); cursor: pointer; position: relative;
   }
   .align-btn::after {
     content: ''; position: absolute; width: 6px; height: 6px; border-radius: 50%;
