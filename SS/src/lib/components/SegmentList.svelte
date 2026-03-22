@@ -18,6 +18,8 @@
 <div class="segment-list">
 
   <p style="color: red; padding: 0.5rem;">DEBUG: {$subtitles.length} subtitles, first: {$subtitles[0]?.text ?? 'none'}</p>
+  <p style="color: lime;">type: {typeof $subtitles} | isArray: {Array.isArray($subtitles)} | JSON: {JSON.stringify($subtitles[0])}</p>
+
   {#each $subtitles as sub, index}
     
     <div
