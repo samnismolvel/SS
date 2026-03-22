@@ -47,13 +47,16 @@
         {/if}
       </div>
 
-      <textarea
-        bind:value={sub.text}
-        on:input={(e) => handleTextInput(index, e)}
+      <div
         class="seg-text"
         class:focused={$selectedIndex === index}
-        style="height: auto; min-height: 2.5rem;"
-      ></textarea>
+        contenteditable="true"
+        on:input={(e) => updateSubtitleText(index, e.currentTarget.textContent ?? '')}
+        on:focus={() => selectSegment(index)}
+      >
+        {sub.text}
+      </div>
+      
     </div>
   {/each}
 </div>
@@ -169,28 +172,26 @@
   .reset-btn:hover { color: var(--color-text); }
 
   .seg-text {
-  width: 100%;
-  padding: 0.4rem 0.6rem;
-  border: none;
-  border-top: 1px solid var(--color-border);
-  background: var(--color-bg);
-  color: var(--color-text) !important;
-  -webkit-text-fill-color: var(--color-text) !important;
-  font-size: 0.82rem;
-  font-family: inherit;
-  resize: vertical;
-  min-height: 2.5rem;
-  height: 2.5rem;
-  display: block;
-  box-sizing: border-box;
-  line-height: 1.4;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-  .seg-text:focus {
+    width: 100%;
+    padding: 0.4rem 0.6rem;
+    border: none;
+    border-top: 1px solid var(--color-border);
+    background: var(--color-bg);
+    color: var(--color-text) !important;
+    -webkit-text-fill-color: var(--color-text) !important;
+    font-size: 0.82rem;
+    font-family: inherit;
+    min-height: 2.5rem;
+    box-sizing: border-box;
+    line-height: 1.4;
+    white-space: pre-wrap;
+    word-break: break-word;
     outline: none;
+    cursor: text;
+  }
+
+  .seg-text:focus {
     background: var(--color-surface);
-    -webkit-text-fill-color: var(--color-text);
   }
 
   .seg-text.focused {
