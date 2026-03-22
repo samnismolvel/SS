@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { subtitles, selectedIndex, selectSegment, updateSubtitleText, resetSubtitleText } from '$lib/stores/editor'
+  import { session , selectedIndex, selectSegment, updateSubtitleText, resetSubtitleText } from '$lib/stores/editor'
 
   function handleClick(index: number) {
     selectSegment($selectedIndex === index ? null : index)
@@ -12,15 +12,12 @@
 
 <div class="segment-list-header">
   <span class="panel-label">Segments</span>
-  <span class="count">{$subtitles.length}</span>
+  <span class="count">{$session?.subtitles.length}</span>
 </div>
 
 <div class="segment-list">
 
-  <p style="color: red; padding: 0.5rem;">DEBUG: {$subtitles.length} subtitles, first: {$subtitles[0]?.text ?? 'none'}</p>
-  <p style="color: lime;">type: {typeof $subtitles} | isArray: {Array.isArray($subtitles)} | JSON: {JSON.stringify($subtitles[0])}</p>
-
-  {#each $subtitles as sub, index}
+  {#each ($session?.subtitles ?? []) as sub, index}
     
     <div
       class="segment"
