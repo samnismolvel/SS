@@ -130,7 +130,7 @@
             </div>
             <textarea
               class="seg-text"
-              style="color: white; display: block;"
+              
               use:initTextarea={sub.text}
               oninput={(e) => updateSubtitleText(index, (e.currentTarget as HTMLTextAreaElement).value)}
               onfocus={() => selectSegment(index)}
@@ -253,13 +253,23 @@
     color: var(--color-text-muted); font-size: 0.85rem; padding: 0 2px; line-height: 1;
   }
   .reset-btn:hover { color: var(--color-text); }
-    .seg-text {
-      height: 40px;
-      min-height: 40px;
-      display: block;
-      visibility: visible;
-      opacity: 1;
-    }
+  .seg-text {
+    width: 100%;
+    padding: 0.4rem 0.6rem;
+    border: none;
+    border-top: 1px solid var(--color-border);
+    background: var(--color-bg);
+    color: var(--color-text);
+    font-size: 0.82rem;
+    font-family: inherit;
+    box-sizing: border-box;
+    line-height: 1.5;
+    resize: none;
+    overflow: hidden;
+    outline: none;
+    min-height: 2rem;
+    display: block;
+  }
   .seg-text:focus { background: var(--color-surface); outline: none; }
 
   @media (max-width: 768px) {
