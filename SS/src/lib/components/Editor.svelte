@@ -58,13 +58,16 @@
     return path.split(/[\\/]/).pop() ?? path
   }
 
-  function setContent(node: HTMLElement, text: string) {
-  node.textContent = text
+  function initTextarea(node: HTMLTextAreaElement, text: string) {
+  node.value = text
+  node.style.height = 'auto'
+  node.style.height = node.scrollHeight + 'px'
   return {
     update(newText: string) {
-      // Only update if not focused to avoid cursor jumping
       if (document.activeElement !== node) {
-        node.textContent = newText
+        node.value = newText
+        node.style.height = 'auto'
+        node.style.height = node.scrollHeight + 'px'
       }
     }
   }
@@ -125,16 +128,13 @@
                   onclick={(e) => { e.stopPropagation(); resetSubtitleText(index) }}>↺</button>
               {/if}
             </div>
-            <div
+            <textarea
               class="seg-text"
-              contenteditable="true"
-              role="textbox"
-              tabindex="0"
-              style="color: white; min-height: 2rem; display: block; padding: 0.4rem 0.6rem;"
-              use:setContent={sub.text}
-              oninput={(e) => updateSubtitleText(index, (e.currentTarget as HTMLElement).textContent ?? '')}
+              style="color: white; display: block;"
+              use:initTextarea={sub.text}
+              oninput={(e) => updateSubtitleText(index, (e.currentTarget as HTMLTextAreaElement).value)}
               onfocus={() => selectSegment(index)}
-            ></div>
+            ></textarea>
           </div>
         {/each}
       </div>
@@ -250,12 +250,20 @@
   }
   .reset-btn:hover { color: var(--color-text); }
   .seg-text {
-    width: 100%; padding: 0.4rem 0.6rem; border: none;
-    border-top: 1px solid var(--color-border); background: var(--color-bg);
-    color: var(--color-text); font-size: 0.82rem; font-family: inherit;
-    min-height: 2rem; box-sizing: border-box; line-height: 1.5;
-    white-space: pre-wrap; word-break: break-word; outline: none; cursor: text;
-  }
+  width: 100%;
+  padding: 0.4rem 0.6rem;
+  border: none;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-bg);
+  font-size: 0.82rem;
+  font-family: inherit;
+  box-sizing: border-box;
+  line-height: 1.5;
+  resize: none;
+  overflow: hidden;
+  outline: none;
+  min-height: 2rem;
+}
   .seg-text:focus { background: var(--color-surface); outline: none; }
 
   @media (max-width: 768px) {
