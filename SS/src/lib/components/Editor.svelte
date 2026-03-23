@@ -57,6 +57,18 @@
   function getFileName(path: string) {
     return path.split(/[\\/]/).pop() ?? path
   }
+
+  function setContent(node: HTMLElement, text: string) {
+  node.textContent = text
+  return {
+    update(newText: string) {
+      // Only update if not focused to avoid cursor jumping
+      if (document.activeElement !== node) {
+        node.textContent = newText
+      }
+    }
+  }
+}
 </script>
 
 <div class="editor">
@@ -118,9 +130,11 @@
               contenteditable="true"
               role="textbox"
               tabindex="0"
+              style="color: white; min-height: 2rem; display: block; padding: 0.4rem 0.6rem;"
+              use:setContent={sub.text}
               oninput={(e) => updateSubtitleText(index, (e.currentTarget as HTMLElement).textContent ?? '')}
               onfocus={() => selectSegment(index)}
-            >{sub.text}</div>
+            ></div>
           </div>
         {/each}
       </div>
