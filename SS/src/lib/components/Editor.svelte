@@ -232,9 +232,13 @@
     display: flex; flex-direction: column; gap: 0.35rem;
   }
   .segment {
-    border-radius: 6px; border: 1px solid var(--color-border);
-    background: var(--color-surface); overflow: hidden; transition: border-color 0.15s;
-  }
+  border-radius: 6px;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  overflow: visible;  /* changed from hidden */
+  transition: border-color 0.15s;
+  min-height: 60px;   /* add this */
+}
   .segment:hover { border-color: var(--color-border-hover); }
   .segment.selected { border-color: var(--color-accent); }
   .segment-header {
@@ -249,21 +253,13 @@
     color: var(--color-text-muted); font-size: 0.85rem; padding: 0 2px; line-height: 1;
   }
   .reset-btn:hover { color: var(--color-text); }
-  .seg-text {
-  width: 100%;
-  padding: 0.4rem 0.6rem;
-  border: none;
-  border-top: 1px solid var(--color-border);
-  background: var(--color-bg);
-  font-size: 0.82rem;
-  font-family: inherit;
-  box-sizing: border-box;
-  line-height: 1.5;
-  resize: none;
-  overflow: hidden;
-  outline: none;
-  min-height: 2rem;
-}
+    .seg-text {
+      height: 40px;
+      min-height: 40px;
+      display: block;
+      visibility: visible;
+      opacity: 1;
+    }
   .seg-text:focus { background: var(--color-surface); outline: none; }
 
   @media (max-width: 768px) {
