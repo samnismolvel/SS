@@ -174,14 +174,37 @@ function buildWordByWordEvents(subtitles: Subtitle[], template: Template): strin
   const highlightAss = hexToAss(template.highlightColor)
 
   // Each subtitle is already one word (from whisper token-level output)
-  // Group into sentences of max 8 words or 5 seconds
-  const words = subtitles.map(sub => ({
-    word: sub.text.replace(/[^\w\s]/g, '').trim(),
+  // Step 1: Build raw list with timing
+  const raw = subtitles.map(sub => ({
+    word: sub.text.trim(),
     start: srtTimeToAss(sub.start),
     end:   srtTimeToAss(sub.end),
     startMs: assTimeToMs(srtTimeToAss(sub.start)),
     endMs:   assTimeToMs(srtTimeToAss(sub.end)),
-  })).filter(w => w.word.length > 0)
+  }))
+
+  // Step 2: Merge contraction suffixes ('re, 'll, 've, 't, 's, 'd, 'm) into previous word
+  const merged: typeof raw = []
+  for (const token of raw) {
+    const isContraction = /^'[a-z]+$/i.test(token.word)
+    if (isContraction && merged.length > 0) {
+      const prev = merged[merged.length - 1]
+      merged[merged.length - 1] = {
+        ...prev,
+        word: prev.word + token.word,
+        end: token.end,
+        endMs: token.endMs,
+      }
+    } else {
+      merged.push(token)
+    }
+  }
+
+  // Step 3: Strip punctuation, keep only tokens with actual word characters
+  const words = merged.map(w => ({
+    ...w,
+    word: w.word.replace(/[^\w']/g, '').trim()
+  })).filter(w => w.word.length > 0 && /\w/.test(w.word))
 
   let i = 0
   while (i < words.length) {
