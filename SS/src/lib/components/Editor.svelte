@@ -1,9 +1,9 @@
 <script lang="ts">
-  import { session, isDirty, findAndReplace, selectSegment, updateSubtitleText, resetSubtitleText } from '$lib/stores/editor'
-  import { activeTemplate } from '$lib/stores/templates'
+  import { session, isDirty, findAndReplace, selectSegment, updateSubtitleText, resetSubtitleText, updateSubtitleOverrides, clearSubtitleOverrides } from '$lib/stores/editor'
+  import { activeTemplate, updateActiveTemplate, allTemplates, setActiveTemplate, saveActiveAsTemplate } from '$lib/stores/templates'
   import { buildAss } from '$lib/utils/ass'
-  import SegmentInspector from './SegmentInspector.svelte'
-  import TemplatePanel from './TemplatePanel.svelte'
+  import { convertFileSrc } from '@tauri-apps/api/core'
+  import type { Subtitle, Template, WordMode, Alignment } from '$lib/types'
 
   interface Props {
     onburn: (detail: { videoPath: string; outputPath: string; assContent: string }) => void
@@ -11,16 +11,12 @@
   }
   let { onburn, oncancel }: Props = $props()
 
-  // All state via explicit subscribe
+  // Store subscriptions
   let sessionVal = $state(null as any)
   let isDirtyVal = $state(false)
   let templateVal = $state(null as any)
   let items = $state([] as any[])
   let selIdx = $state(null as number | null)
-  let searchTerm = $state('')
-  let replaceTerm = $state('')
-  let findMode = $state('all' as 'all' | 'single')
-  let replaceMessage = $state('')
 
   $effect(() => {
     const u1 = session.subscribe(v => {
@@ -33,9 +29,108 @@
     return () => { u1(); u2(); u3() }
   })
 
-  let selectedSub = $derived(
-    sessionVal && selIdx !== null ? sessionVal.subtitles[selIdx] : null
-  )
+  // Video player state
+  let videoEl = $state(null as HTMLVideoElement | null)
+  let currentTime = $state(0)
+  let duration = $state(0)
+  let playing = $state(false)
+  let videoSrc = $state('')
+
+  $effect(() => {
+    if (sessionVal?.videoPath) {
+      videoSrc = convertFileSrc(sessionVal.videoPath)
+    }
+  })
+
+  // Active subtitle based on currentTime
+  let activeSub = $derived((() => {
+    if (!items.length) return null
+    return items.find((sub: any) => {
+      const start = srtToSeconds(sub.start)
+      const end = srtToSeconds(sub.end)
+      return currentTime >= start && currentTime <= end
+    }) ?? null
+  })())
+
+  function srtToSeconds(srt: string): number {
+    if (!srt) return 0
+    const [time, ms] = srt.split(',')
+    const [h, m, s] = time.split(':').map(Number)
+    return h * 3600 + m * 60 + s + (parseInt(ms) / 1000)
+  }
+
+  function onTimeUpdate() {
+    if (videoEl) currentTime = videoEl.currentTime
+  }
+
+  function onLoadedMetadata() {
+    if (videoEl) duration = videoEl.duration
+  }
+
+  function togglePlay() {
+    if (!videoEl) return
+    if (playing) videoEl.pause()
+    else videoEl.play()
+    playing = !playing
+  }
+
+  function onVideoPlay() { playing = true }
+  function onVideoPause() { playing = false }
+
+  function seekTo(seconds: number) {
+    if (videoEl) {
+      videoEl.currentTime = seconds
+      currentTime = seconds
+    }
+  }
+
+  function seekToSegment(sub: any) {
+    seekTo(srtToSeconds(sub.start))
+    const idx = items.indexOf(sub)
+    if (idx !== -1) selectSegment(idx)
+    if (videoEl && playing) {
+      videoEl.pause()
+      playing = false
+    }
+  }
+
+  function clickTimeline(e: MouseEvent) {
+    const bar = e.currentTarget as HTMLElement
+    const rect = bar.getBoundingClientRect()
+    const ratio = (e.clientX - rect.left) / rect.width
+    seekTo(ratio * duration)
+  }
+
+  // Subtitle overlay positioning
+  function getAlignmentStyle(alignment: number): string {
+    const positions: Record<number, string> = {
+      1: 'bottom: 10%; left: 5%; text-align: left;',
+      2: 'bottom: 10%; left: 50%; transform: translateX(-50%); text-align: center;',
+      3: 'bottom: 10%; right: 5%; text-align: right;',
+      4: 'top: 50%; left: 5%; transform: translateY(-50%); text-align: left;',
+      5: 'top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center;',
+      6: 'top: 50%; right: 5%; transform: translateY(-50%); text-align: right;',
+      7: 'top: 5%; left: 5%; text-align: left;',
+      8: 'top: 5%; left: 50%; transform: translateX(-50%); text-align: center;',
+      9: 'top: 5%; right: 5%; text-align: right;',
+    }
+    return positions[alignment] ?? positions[2]
+  }
+
+  function formatTime(s: number): string {
+    const m = Math.floor(s / 60)
+    const sec = Math.floor(s % 60)
+    return `${m}:${sec.toString().padStart(2, '0')}`
+  }
+
+  // Selected segment derived
+  let selectedSub = $derived(selIdx !== null ? items[selIdx] : null)
+
+  // Find & replace
+  let searchTerm = $state('')
+  let replaceTerm = $state('')
+  let findMode = $state('all' as 'all' | 'single')
+  let replaceMessage = $state('')
 
   function handleFindReplace() {
     if (!searchTerm) return
@@ -50,230 +145,662 @@
     onburn({ videoPath: sessionVal.videoPath, outputPath: sessionVal.outputPath, assContent })
   }
 
-  function handleSegmentClick(index: number) {
-    selectSegment(selIdx === index ? null : index)
-  }
-
   function getFileName(path: string) {
     return path.split(/[\\/]/).pop() ?? path
   }
 
+  // Template panel helpers
+  const SYSTEM_FONTS = [
+    'Arial', 'Arial Black', 'Comic Sans MS', 'Courier New', 'Georgia',
+    'Impact', 'Lucida Console', 'Tahoma', 'Times New Roman',
+    'Trebuchet MS', 'Verdana', 'Segoe UI', 'Calibri', 'Cambria', 'Consolas',
+  ]
+
+  let advanced = $state(false)
+  let customFont = $state(false)
+  let templatesVal = $state([] as any[])
+  let showSaveDialog = $state(false)
+  let saveTemplateName = $state('')
+
+  $effect(() => {
+    const u = allTemplates.subscribe(v => { templatesVal = v })
+    return u
+  })
+
+  $effect(() => {
+    if (templateVal?.fontName && !SYSTEM_FONTS.includes(templateVal.fontName)) {
+      customFont = true
+    }
+  })
+
+  function handleFontSelect(e: Event) {
+    const val = (e.target as HTMLSelectElement).value
+    if (val === '__custom__') customFont = true
+    else { customFont = false; updateActiveTemplate({ fontName: val }) }
+  }
+
+  function handlePresetSelect(e: Event) {
+    const id = (e.target as HTMLSelectElement).value
+    const found = templatesVal.find((t: any) => t.id === id)
+    if (found) setActiveTemplate(found)
+  }
+
+  function handleSaveTemplate() {
+    if (!saveTemplateName.trim()) return
+    saveActiveAsTemplate(saveTemplateName.trim())
+    saveTemplateName = ''
+    showSaveDialog = false
+  }
+
+  // Segment inspector helpers
+  function setOverride(key: string, value: any) {
+    if (selIdx === null) return
+    updateSubtitleOverrides(selIdx, { [key]: value })
+  }
+
+  function clearOverrides() {
+    if (selIdx === null) return
+    clearSubtitleOverrides(selIdx)
+  }
+
+  let overrides = $derived(selectedSub?.overrides ?? {})
+  let effective = $derived(templateVal ? { ...templateVal, ...overrides } : null)
+  let hasOverrides = $derived(!!selectedSub?.overrides && Object.keys(selectedSub.overrides).length > 0)
+
+  // Segment text action
   function initTextarea(node: HTMLTextAreaElement, text: string) {
-  node.value = text
-  node.style.height = 'auto'
-  node.style.height = node.scrollHeight + 'px'
-  return {
-    update(newText: string) {
-      if (document.activeElement !== node) {
-        node.value = newText
-        node.style.height = 'auto'
-        node.style.height = node.scrollHeight + 'px'
+    node.value = text
+    node.style.height = 'auto'
+    node.style.height = Math.max(60, node.scrollHeight) + 'px'
+    return {
+      update(newText: string) {
+        if (document.activeElement !== node) {
+          node.value = newText
+          node.style.height = 'auto'
+          node.style.height = Math.max(60, node.scrollHeight) + 'px'
+        }
       }
     }
   }
-}
 </script>
 
 <div class="editor">
-  <!-- Top bar -->
-  <div class="editor-topbar">
-    <div class="topbar-left">
-      <button class="back-btn" onclick={oncancel}>← Queue</button>
-      <div class="file-info">
-        <span class="file-name">{getFileName(sessionVal?.videoPath ?? '')}</span>
-        <span class="sub-count">{items.length} segments</span>
-        {#if isDirtyVal}<span class="dirty-badge">unsaved</span>{/if}
-      </div>
+  <!-- ── Topbar ── -->
+  <div class="topbar">
+    <button class="back-btn" onclick={oncancel}>← Queue</button>
+    <span class="file-name">{getFileName(sessionVal?.videoPath ?? '')}</span>
+    <span class="seg-count">{items.length} segments</span>
+    {#if isDirtyVal}<span class="dirty-badge">unsaved</span>{/if}
+    <div class="spacer"></div>
+    <div class="find-replace">
+      <input type="text" bind:value={searchTerm} placeholder="Find..." class="fr-input" />
+      <input type="text" bind:value={replaceTerm} placeholder="Replace..." class="fr-input" />
+      <select bind:value={findMode} class="fr-select">
+        <option value="all">All</option>
+        <option value="single">First</option>
+      </select>
+      <button class="btn-sm" onclick={handleFindReplace}>Replace</button>
+      {#if replaceMessage}<span class="replace-msg">{replaceMessage}</span>{/if}
     </div>
-    <div class="topbar-right">
-      <div class="find-replace">
-        <input type="text" bind:value={searchTerm} placeholder="Find..." class="fr-input" />
-        <input type="text" bind:value={replaceTerm} placeholder="Replace..." class="fr-input" />
-        <select bind:value={findMode} class="fr-select">
-          <option value="all">All</option>
-          <option value="single">First</option>
-        </select>
-        <button class="btn-sm" onclick={handleFindReplace}>Replace</button>
-        {#if replaceMessage}<span class="replace-msg">{replaceMessage}</span>{/if}
-      </div>
-      <button class="btn-sm btn-burn" onclick={handleBurn}>Burn Subtitles →</button>
-    </div>
+    <button class="btn-burn" onclick={handleBurn}>Burn Subtitles →</button>
   </div>
 
-  <!-- Three panels -->
-  <div class="editor-body">
+  <!-- ── Main area ── -->
+  <div class="main">
 
-    <!-- LEFT: Segment list inlined -->
-    <div class="panel panel-left">
-      <div class="segment-list-header">
-        <span class="panel-label">Segments</span>
-        <span class="count">{items.length}</span>
-      </div>
-      <div class="segment-list">
-        {#each items as sub, index}
-          <div
-            class="segment"
-            class:selected={selIdx === index}
-            class:modified={sub.text !== sub.originalText}
-          >
-            <div class="segment-header"
-              role="button" tabindex="0"
-              onclick={() => handleSegmentClick(index)}
-              onkeydown={(e) => e.key === 'Enter' && handleSegmentClick(index)}
+    <!-- LEFT: Video + timeline -->
+    <div class="left-col">
+
+      <!-- Video player -->
+      <div class="video-wrap">
+        {#if videoSrc}
+          <video
+            bind:this={videoEl}
+            src={videoSrc}
+            ontimeupdate={onTimeUpdate}
+            onloadedmetadata={onLoadedMetadata}
+            onplay={onVideoPlay}
+            onpause={onVideoPause}
+            class="video"
+          ></video>
+          <!-- Subtitle overlay -->
+          {#if activeSub && templateVal}
+            <div
+              class="sub-overlay"
+              style="
+                position: absolute;
+                {getAlignmentStyle(effective?.alignment ?? 2)}
+                font-family: {effective?.fontName ?? 'Arial'};
+                font-size: {(effective?.fontSize ?? 24) * 0.8}px;
+                font-weight: {effective?.bold ? 'bold' : 'normal'};
+                font-style: {effective?.italic ? 'italic' : 'normal'};
+                color: {effective?.primaryColor ?? '#ffffff'};
+                text-shadow:
+                  -{effective?.outline ?? 2}px -{effective?.outline ?? 2}px 0 {effective?.outlineColor ?? '#000'},
+                  {effective?.outline ?? 2}px -{effective?.outline ?? 2}px 0 {effective?.outlineColor ?? '#000'},
+                  -{effective?.outline ?? 2}px {effective?.outline ?? 2}px 0 {effective?.outlineColor ?? '#000'},
+                  {effective?.outline ?? 2}px {effective?.outline ?? 2}px 0 {effective?.outlineColor ?? '#000'};
+                max-width: 90%;
+                pointer-events: auto;
+                cursor: pointer;
+                padding: 2px 8px;
+              "
+              onclick={() => seekToSegment(activeSub)}
             >
-              <span class="seg-index">#{sub.index}</span>
-              <span class="seg-timing">{sub.start} → {sub.end}</span>
-              {#if sub.text !== sub.originalText}
-                <button class="reset-btn"
-                  onclick={(e) => { e.stopPropagation(); resetSubtitleText(index) }}>↺</button>
+              {activeSub.text}
+            </div>
+          {/if}
+
+          <!-- Controls -->
+          <div class="video-controls">
+            <button class="play-btn" onclick={togglePlay}>
+              {playing ? '⏸' : '▶'}
+            </button>
+            <span class="time">{formatTime(currentTime)} / {formatTime(duration)}</span>
+            <div class="progress-bar" onclick={clickTimeline} role="slider" tabindex="0"
+              aria-valuenow={currentTime} aria-valuemin={0} aria-valuemax={duration}
+              onkeydown={(e) => {
+                if (e.key === 'ArrowRight') seekTo(currentTime + 5)
+                if (e.key === 'ArrowLeft') seekTo(currentTime - 5)
+              }}>
+              <div class="progress-fill" style="width: {duration ? (currentTime/duration)*100 : 0}%"></div>
+            </div>
+          </div>
+        {:else}
+          <div class="no-video">No video loaded</div>
+        {/if}
+      </div>
+
+      <!-- Timeline -->
+      <div class="timeline-wrap">
+        <div class="timeline-label">Timeline — click a segment to edit</div>
+        <div class="timeline-scroll">
+          {#each items as sub, index}
+            {@const startPct = duration ? (srtToSeconds(sub.start) / duration) * 100 : 0}
+            {@const widthPct = duration ? ((srtToSeconds(sub.end) - srtToSeconds(sub.start)) / duration) * 100 : 0}
+            <button
+              class="seg-block"
+              class:active={selIdx === index}
+              class:playing-now={activeSub === sub}
+              style="left: {startPct}%; width: max({widthPct}%, 0.3%);"
+              onclick={() => seekToSegment(sub)}
+              title="#{sub.index} {sub.start} — {sub.text}"
+            ></button>
+          {/each}
+          <!-- Playhead -->
+          <div class="playhead" style="left: {duration ? (currentTime/duration)*100 : 0}%"></div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- RIGHT: Style panel + segment editor -->
+    <div class="right-col">
+
+      {#if selectedSub && effective}
+        <!-- Segment editor -->
+        <div class="seg-editor">
+          <div class="seg-editor-header">
+            <span class="seg-ref">#{selectedSub.index}</span>
+            <span class="seg-timing-small">{selectedSub.start} → {selectedSub.end}</span>
+            {#if hasOverrides}
+              <button class="clear-btn" onclick={clearOverrides}>Clear overrides</button>
+            {/if}
+            <button class="close-seg" onclick={() => selectSegment(null)}>✕</button>
+          </div>
+
+          <textarea
+            class="seg-textarea"
+            use:initTextarea={selectedSub.text}
+            oninput={(e) => updateSubtitleText(selIdx!, (e.currentTarget as HTMLTextAreaElement).value)}
+          ></textarea>
+
+          <div class="seg-overrides">
+            <div class="override-row">
+              <label>Color</label>
+              <input type="color" value={effective.primaryColor}
+                oninput={(e) => setOverride('primaryColor', e.currentTarget.value)} />
+              {#if 'primaryColor' in overrides}
+                <span class="override-dot" title="Overridden"></span>
               {/if}
             </div>
-            <textarea
-              class="seg-text"
-              
-              use:initTextarea={sub.text}
-              oninput={(e) => updateSubtitleText(index, (e.currentTarget as HTMLTextAreaElement).value)}
-              onfocus={() => selectSegment(index)}
-            ></textarea>
+            <div class="override-row">
+              <label>Outline</label>
+              <input type="color" value={effective.outlineColor}
+                oninput={(e) => setOverride('outlineColor', e.currentTarget.value)} />
+              {#if 'outlineColor' in overrides}
+                <span class="override-dot" title="Overridden"></span>
+              {/if}
+            </div>
+            <div class="override-row">
+              <label>Size</label>
+              <input type="number" min="8" max="120" value={effective.fontSize}
+                onchange={(e) => setOverride('fontSize', Number(e.currentTarget.value))} />
+              {#if 'fontSize' in overrides}
+                <span class="override-dot" title="Overridden"></span>
+              {/if}
+            </div>
+            <div class="override-row">
+              <label>Position</label>
+              <select value={effective.alignment}
+                onchange={(e) => setOverride('alignment', Number(e.currentTarget.value))}>
+                <option value={7}>Top Left</option>
+                <option value={8}>Top Center</option>
+                <option value={9}>Top Right</option>
+                <option value={4}>Mid Left</option>
+                <option value={5}>Mid Center</option>
+                <option value={6}>Mid Right</option>
+                <option value={1}>Bot Left</option>
+                <option value={2}>Bot Center</option>
+                <option value={3}>Bot Right</option>
+              </select>
+              {#if 'alignment' in overrides}
+                <span class="override-dot" title="Overridden"></span>
+              {/if}
+            </div>
           </div>
-        {/each}
-      </div>
-    </div>
-
-    <!-- CENTER: Template panel -->
-    <div class="panel panel-center">
-      <TemplatePanel />
-    </div>
-
-    <!-- RIGHT: Inspector -->
-    <div class="panel panel-right">
-      {#if selectedSub !== null && selIdx !== null && templateVal !== null}
-        <SegmentInspector subtitle={selectedSub} index={selIdx} template={templateVal} />
-      {:else}
-        <div class="inspector-empty">
-          <span>Select a segment<br/>to inspect</span>
         </div>
       {/if}
-    </div>
 
+      <!-- Template panel (always visible) -->
+      <div class="template-panel">
+        <div class="tp-header">
+          <span class="panel-label">Style</span>
+          <select class="preset-select" onchange={handlePresetSelect} value={templateVal?.id}>
+            {#each templatesVal as t}
+              <option value={t.id}>{t.name}</option>
+            {/each}
+          </select>
+          <button class="icon-btn" onclick={() => showSaveDialog = !showSaveDialog}>+ Save</button>
+          <button class="mode-toggle" class:active={advanced} onclick={() => advanced = !advanced}>
+            {advanced ? 'Simple' : 'Advanced'}
+          </button>
+        </div>
+
+        {#if showSaveDialog}
+          <div class="save-row">
+            <input type="text" bind:value={saveTemplateName} placeholder="Template name..."
+              onkeydown={(e) => e.key === 'Enter' && handleSaveTemplate()} />
+            <button onclick={handleSaveTemplate}>Save</button>
+            <button onclick={() => showSaveDialog = false}>✕</button>
+          </div>
+        {/if}
+
+        {#if templateVal}
+        <div class="tp-body">
+          <div class="field-row">
+            <label class="checkbox-label">
+              <input type="checkbox" checked={templateVal.wordByWord}
+                onchange={(e) => updateActiveTemplate({ wordByWord: e.currentTarget.checked })} />
+              Word-by-word
+            </label>
+          </div>
+          {#if templateVal.wordByWord}
+            <div class="field-row">
+              <label>Mode</label>
+              <select value={templateVal.wordMode}
+                onchange={(e) => updateActiveTemplate({ wordMode: e.currentTarget.value as WordMode })}>
+                <option value="highlight">Highlight</option>
+                <option value="solo">Solo</option>
+              </select>
+            </div>
+            <div class="field-row">
+              <label>Highlight</label>
+              <input type="color" value={templateVal.highlightColor}
+                oninput={(e) => updateActiveTemplate({ highlightColor: e.currentTarget.value })} />
+            </div>
+          {/if}
+
+          <div class="divider"></div>
+
+          <div class="field-row">
+            <label>Font</label>
+            <select onchange={handleFontSelect} value={customFont ? '__custom__' : templateVal.fontName}>
+              {#each SYSTEM_FONTS as f}<option value={f}>{f}</option>{/each}
+              <option value="__custom__">Custom...</option>
+            </select>
+          </div>
+          {#if customFont}
+            <div class="field-row">
+              <label></label>
+              <input type="text" value={templateVal.fontName} placeholder="Font name..."
+                onchange={(e) => updateActiveTemplate({ fontName: e.currentTarget.value })} />
+            </div>
+          {/if}
+          <div class="field-row">
+            <label>Size</label>
+            <input type="number" min="8" max="120" value={templateVal.fontSize} class="short-input"
+              onchange={(e) => updateActiveTemplate({ fontSize: Number(e.currentTarget.value) })} />
+            {#if advanced}
+              <button class="toggle-btn" class:active={templateVal.bold}
+                onclick={() => updateActiveTemplate({ bold: !templateVal.bold })}><b>B</b></button>
+              <button class="toggle-btn" class:active={templateVal.italic}
+                onclick={() => updateActiveTemplate({ italic: !templateVal.italic })}><i>I</i></button>
+            {/if}
+          </div>
+
+          <div class="divider"></div>
+
+          <div class="field-row">
+            <label>Text</label>
+            <input type="color" value={templateVal.primaryColor}
+              oninput={(e) => updateActiveTemplate({ primaryColor: e.currentTarget.value })} />
+            <span class="hex">{templateVal.primaryColor}</span>
+          </div>
+          <div class="field-row">
+            <label>Outline</label>
+            <input type="color" value={templateVal.outlineColor}
+              oninput={(e) => updateActiveTemplate({ outlineColor: e.currentTarget.value })} />
+            <span class="hex">{templateVal.outlineColor}</span>
+          </div>
+          {#if advanced}
+            <div class="field-row">
+              <label>Back</label>
+              <input type="color" value={templateVal.backColor}
+                oninput={(e) => updateActiveTemplate({ backColor: e.currentTarget.value })} />
+            </div>
+          {/if}
+
+          <div class="divider"></div>
+
+          <div class="field-row">
+            <label>Outline</label>
+            <input type="range" min="0" max="4" step="0.5" value={templateVal.outline}
+              oninput={(e) => updateActiveTemplate({ outline: Number(e.currentTarget.value) })} />
+            <span class="range-val">{templateVal.outline}</span>
+          </div>
+          <div class="field-row">
+            <label>Shadow</label>
+            <input type="range" min="0" max="4" step="0.5" value={templateVal.shadow}
+              oninput={(e) => updateActiveTemplate({ shadow: Number(e.currentTarget.value) })} />
+            <span class="range-val">{templateVal.shadow}</span>
+          </div>
+
+          {#if advanced}
+            <div class="field-row">
+              <label>Spacing</label>
+              <input type="range" min="0" max="10" step="0.5" value={templateVal.spacing}
+                oninput={(e) => updateActiveTemplate({ spacing: Number(e.currentTarget.value) })} />
+              <span class="range-val">{templateVal.spacing}</span>
+            </div>
+            <div class="field-row">
+              <label>Margin V</label>
+              <input type="range" min="0" max="100" value={templateVal.marginV}
+                oninput={(e) => updateActiveTemplate({ marginV: Number(e.currentTarget.value) })} />
+              <span class="range-val">{templateVal.marginV}</span>
+            </div>
+          {/if}
+
+          <div class="divider"></div>
+
+          <div class="field-row">
+            <label>Position</label>
+            <div class="align-grid">
+              {#each [7,8,9,4,5,6,1,2,3] as pos}
+                <button class="align-btn" class:active={templateVal.alignment === pos}
+                  onclick={() => updateActiveTemplate({ alignment: pos as Alignment })}></button>
+              {/each}
+            </div>
+          </div>
+        </div>
+        {/if}
+      </div>
+
+    </div>
   </div>
 </div>
 
 <style>
   .editor { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
 
-  .editor-topbar {
-    display: flex; align-items: center; justify-content: space-between;
-    gap: 1rem; padding: 0.625rem 1rem; border-bottom: 1px solid var(--color-border);
-    background: var(--color-surface); flex-shrink: 0; flex-wrap: wrap;
+  /* Topbar */
+  .topbar {
+    display: flex; align-items: center; gap: 0.75rem; padding: 0.5rem 1rem;
+    border-bottom: 1px solid var(--color-border); background: var(--color-surface);
+    flex-shrink: 0; flex-wrap: wrap;
   }
-  .topbar-left { display: flex; align-items: center; gap: 0.75rem; }
   .back-btn {
-    padding: 0.35rem 0.75rem; border-radius: 6px; border: 1px solid var(--color-border);
+    padding: 0.3rem 0.75rem; border-radius: 6px; border: 1px solid var(--color-border);
     background: transparent; color: var(--color-text-muted); font-size: 0.8rem; cursor: pointer;
   }
   .back-btn:hover { background: var(--color-surface-hover); color: var(--color-text); }
-  .file-info { display: flex; align-items: center; gap: 0.5rem; }
   .file-name { font-weight: 600; font-size: 0.9rem; }
-  .sub-count { font-size: 0.8rem; color: var(--color-text-muted); }
+  .seg-count { font-size: 0.8rem; color: var(--color-text-muted); }
   .dirty-badge {
     font-size: 0.7rem; padding: 2px 6px; border-radius: 20px;
     background: var(--color-warning-subtle); color: var(--color-warning);
   }
-  .topbar-right { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
-  .find-replace { display: flex; align-items: center; gap: 0.35rem; }
+  .spacer { flex: 1; }
+  .find-replace { display: flex; align-items: center; gap: 0.3rem; }
   .fr-input {
-    padding: 0.35rem 0.6rem; border-radius: 5px; border: 1px solid var(--color-border);
-    background: var(--color-bg); color: var(--color-text); font-size: 0.8rem; width: 120px;
+    padding: 0.3rem 0.5rem; border-radius: 5px; border: 1px solid var(--color-border);
+    background: var(--color-bg); color: var(--color-text); font-size: 0.8rem; width: 100px;
   }
-  .fr-input:focus { outline: none; border-color: var(--color-accent); }
   .fr-select {
-    padding: 0.35rem 0.5rem; border-radius: 5px; border: 1px solid var(--color-border);
+    padding: 0.3rem 0.4rem; border-radius: 5px; border: 1px solid var(--color-border);
     background: var(--color-bg); color: var(--color-text); font-size: 0.8rem;
   }
   .btn-sm {
-    padding: 0.35rem 0.75rem; border-radius: 5px; border: 1px solid var(--color-border);
-    background: var(--color-surface); color: var(--color-text); font-size: 0.8rem;
-    font-weight: 500; cursor: pointer; white-space: nowrap;
+    padding: 0.3rem 0.6rem; border-radius: 5px; border: 1px solid var(--color-border);
+    background: var(--color-surface); color: var(--color-text); font-size: 0.8rem; cursor: pointer;
   }
   .btn-sm:hover { background: var(--color-surface-hover); }
-  .btn-burn { background: var(--color-accent); color: white; border-color: var(--color-accent); }
+  .replace-msg { font-size: 0.75rem; color: var(--color-success); }
+  .btn-burn {
+    padding: 0.35rem 1rem; border-radius: 6px; border: none;
+    background: var(--color-accent); color: white; font-size: 0.85rem;
+    font-weight: 500; cursor: pointer; white-space: nowrap;
+  }
   .btn-burn:hover { filter: brightness(1.1); }
-  .replace-msg { font-size: 0.75rem; color: var(--color-success); white-space: nowrap; }
 
-  .editor-body {
-    display: grid; grid-template-columns: 280px 1fr 260px; flex: 1; overflow: hidden;
-  }
-  .panel { display: flex; flex-direction: column; overflow: hidden; border-right: 1px solid var(--color-border); }
-  .panel:last-child { border-right: none; }
-  .panel-left { background: var(--color-bg); }
-  .panel-center { background: var(--color-surface); }
-  .panel-right { background: var(--color-bg); }
-  .inspector-empty {
-    flex: 1; display: flex; align-items: center; justify-content: center;
-    text-align: center; color: var(--color-text-muted); font-size: 0.85rem; line-height: 1.6; padding: 2rem;
+  /* Layout */
+  .main { display: grid; grid-template-columns: 1fr 300px; flex: 1; overflow: hidden; }
+
+  /* Left column */
+  .left-col {
+    display: flex; flex-direction: column; overflow: hidden;
+    border-right: 1px solid var(--color-border);
   }
 
-  /* Segment list */
-  .segment-list-header {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 0.75rem 1rem; border-bottom: 1px solid var(--color-border); flex-shrink: 0;
+  /* Video */
+  .video-wrap {
+    flex: 1; position: relative; background: #000;
+    display: flex; align-items: center; justify-content: center; overflow: hidden;
+  }
+  .video { width: 100%; height: 100%; object-fit: contain; display: block; }
+  .no-video { color: #666; font-size: 0.9rem; }
+
+  .sub-overlay {
+    position: absolute;
+    line-height: 1.3;
+    border-radius: 3px;
+  }
+  .sub-overlay:hover { opacity: 0.85; }
+
+  .video-controls {
+    position: absolute; bottom: 0; left: 0; right: 0;
+    display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 0.75rem;
+    background: linear-gradient(transparent, rgba(0,0,0,0.7));
+  }
+  .play-btn {
+    background: none; border: none; color: white; font-size: 1rem;
+    cursor: pointer; padding: 0; width: 28px;
+  }
+  .time { color: white; font-size: 0.75rem; white-space: nowrap; font-family: monospace; }
+  .progress-bar {
+    flex: 1; height: 4px; background: rgba(255,255,255,0.3);
+    border-radius: 2px; cursor: pointer; position: relative;
+  }
+  .progress-fill {
+    height: 100%; background: var(--color-accent);
+    border-radius: 2px; pointer-events: none;
+  }
+
+  /* Timeline */
+  .timeline-wrap {
+    flex-shrink: 0; border-top: 1px solid var(--color-border);
+    background: var(--color-surface);
+  }
+  .timeline-label {
+    font-size: 0.65rem; color: var(--color-text-muted); padding: 0.3rem 0.75rem;
+    text-transform: uppercase; letter-spacing: 0.5px;
+  }
+  .timeline-scroll {
+    position: relative; height: 32px; overflow: hidden;
+    background: var(--color-bg); margin: 0 0.75rem 0.5rem;
+    border-radius: 4px; border: 1px solid var(--color-border);
+  }
+  .seg-block {
+    position: absolute; top: 4px; height: 24px;
+    background: var(--color-accent-subtle); border: 1px solid var(--color-accent);
+    border-radius: 2px; cursor: pointer; padding: 0;
+    opacity: 0.7; transition: opacity 0.1s;
+  }
+  .seg-block:hover { opacity: 1; }
+  .seg-block.active { background: var(--color-accent); opacity: 1; }
+  .seg-block.playing-now { background: var(--color-success); border-color: var(--color-success); opacity: 1; }
+  .playhead {
+    position: absolute; top: 0; bottom: 0; width: 2px;
+    background: white; pointer-events: none; z-index: 2;
+  }
+
+  /* Right column */
+  .right-col {
+    display: flex; flex-direction: column; overflow: hidden; background: var(--color-bg);
+  }
+
+  /* Segment editor */
+  .seg-editor {
+    flex-shrink: 0; border-bottom: 1px solid var(--color-border);
+    background: var(--color-surface); padding: 0.75rem;
+  }
+  .seg-editor-header {
+    display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;
+  }
+  .seg-ref { font-size: 0.75rem; font-weight: 700; color: var(--color-accent); }
+  .seg-timing-small { font-size: 0.7rem; color: var(--color-text-muted); font-family: monospace; flex: 1; }
+  .clear-btn {
+    font-size: 0.7rem; padding: 2px 6px; border-radius: 4px;
+    border: 1px solid var(--color-danger); background: transparent; color: var(--color-danger); cursor: pointer;
+  }
+  .clear-btn:hover { background: var(--color-danger-subtle); }
+  .close-seg {
+    background: none; border: none; color: var(--color-text-muted);
+    cursor: pointer; font-size: 0.85rem; padding: 2px 4px;
+  }
+  .close-seg:hover { color: var(--color-text); }
+
+  .seg-textarea {
+    width: 100%; padding: 0.4rem 0.6rem; border-radius: 5px;
+    border: 1px solid var(--color-border); background: var(--color-bg);
+    color: var(--color-text); font-size: 0.85rem; font-family: inherit;
+    resize: none; overflow: hidden; min-height: 60px; box-sizing: border-box;
+    line-height: 1.5; outline: none;
+  }
+  .seg-textarea:focus { border-color: var(--color-accent); }
+
+  .seg-overrides { display: flex; flex-direction: column; gap: 0.35rem; margin-top: 0.5rem; }
+  .override-row { display: flex; align-items: center; gap: 0.4rem; }
+  .override-row label { font-size: 0.72rem; color: var(--color-text-muted); min-width: 50px; }
+  .override-row input[type="color"] {
+    width: 28px; height: 24px; padding: 1px; border-radius: 4px;
+    border: 1px solid var(--color-border); cursor: pointer;
+  }
+  .override-row input[type="number"] {
+    width: 55px; padding: 0.2rem 0.4rem; border-radius: 4px;
+    border: 1px solid var(--color-border); background: var(--color-bg);
+    color: var(--color-text); font-size: 0.75rem;
+  }
+  .override-row select {
+    flex: 1; padding: 0.2rem 0.4rem; border-radius: 4px;
+    border: 1px solid var(--color-border); background: var(--color-bg);
+    color: var(--color-text); font-size: 0.75rem;
+  }
+  .override-dot {
+    width: 6px; height: 6px; border-radius: 50%; background: var(--color-accent); flex-shrink: 0;
+  }
+
+  /* Template panel */
+  .template-panel { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+  .tp-header {
+    display: flex; align-items: center; gap: 0.4rem; padding: 0.6rem 0.75rem;
+    border-bottom: 1px solid var(--color-border); flex-shrink: 0; flex-wrap: wrap;
   }
   .panel-label {
-    font-size: 0.75rem; font-weight: 600; text-transform: uppercase;
+    font-size: 0.7rem; font-weight: 600; text-transform: uppercase;
     letter-spacing: 0.5px; color: var(--color-text-muted);
   }
-  .count {
-    font-size: 0.75rem; color: var(--color-text-muted);
-    background: var(--color-surface-hover); padding: 1px 6px; border-radius: 10px;
+  .preset-select {
+    flex: 1; padding: 0.25rem 0.4rem; border-radius: 4px;
+    border: 1px solid var(--color-border); background: var(--color-bg);
+    color: var(--color-text); font-size: 0.75rem;
   }
-  .segment-list {
-    flex: 1; overflow-y: auto; padding: 0.5rem;
-    display: flex; flex-direction: column; gap: 0.35rem;
+  .icon-btn {
+    padding: 0.25rem 0.5rem; border-radius: 4px; border: 1px solid var(--color-border);
+    background: transparent; color: var(--color-text-muted); font-size: 0.72rem; cursor: pointer;
   }
-  .segment {
-  border-radius: 6px;
-  border: 1px solid var(--color-border);
-  background: var(--color-surface);
-  overflow: visible;  /* changed from hidden */
-  transition: border-color 0.15s;
-  min-height: 60px;   /* add this */
-}
-  .segment:hover { border-color: var(--color-border-hover); }
-  .segment.selected { border-color: var(--color-accent); }
-  .segment-header {
-    display: flex; align-items: center; gap: 0.5rem; padding: 0.4rem 0.6rem;
-    cursor: pointer; user-select: none; background: var(--color-surface-hover);
+  .icon-btn:hover { background: var(--color-surface-hover); color: var(--color-text); }
+  .mode-toggle {
+    padding: 0.25rem 0.5rem; border-radius: 4px; border: 1px solid var(--color-border);
+    background: transparent; color: var(--color-text-muted); font-size: 0.72rem; cursor: pointer;
   }
-  .segment.selected .segment-header { background: var(--color-accent-subtle); }
-  .seg-index { font-size: 0.7rem; font-weight: 700; color: var(--color-text-muted); min-width: 24px; }
-  .seg-timing { font-size: 0.7rem; font-family: monospace; color: var(--color-text-muted); flex: 1; }
-  .reset-btn {
-    background: none; border: none; cursor: pointer;
-    color: var(--color-text-muted); font-size: 0.85rem; padding: 0 2px; line-height: 1;
-  }
-  .reset-btn:hover { color: var(--color-text); }
-  .seg-text {
-    width: 100%;
-    padding: 0.4rem 0.6rem;
-    border: none;
-    border-top: 1px solid var(--color-border);
-    background: var(--color-bg);
-    color: var(--color-text);
-    font-size: 0.82rem;
-    font-family: inherit;
-    box-sizing: border-box;
-    line-height: 1.5;
-    resize: none;
-    overflow: hidden;
-    outline: none;
-    min-height: 2rem;
-    display: block;
-  }
-  .seg-text:focus { background: var(--color-surface); outline: none; }
+  .mode-toggle.active { background: var(--color-accent-subtle); border-color: var(--color-accent); color: var(--color-accent); }
 
-  @media (max-width: 768px) {
-    .editor-body { grid-template-columns: 1fr; grid-template-rows: auto auto auto; }
-    .panel { border-right: none; border-bottom: 1px solid var(--color-border); max-height: 40vh; }
+  .save-row {
+    display: flex; gap: 0.3rem; padding: 0.4rem 0.75rem;
+    border-bottom: 1px solid var(--color-border); background: var(--color-surface-hover);
   }
+  .save-row input {
+    flex: 1; padding: 0.25rem 0.4rem; border-radius: 4px;
+    border: 1px solid var(--color-border); background: var(--color-bg);
+    color: var(--color-text); font-size: 0.75rem;
+  }
+  .save-row button {
+    padding: 0.25rem 0.5rem; border-radius: 4px; border: 1px solid var(--color-border);
+    background: var(--color-surface); color: var(--color-text); font-size: 0.75rem; cursor: pointer;
+  }
+  .save-row button:first-of-type { background: var(--color-accent); border-color: var(--color-accent); color: white; }
+
+  .tp-body { flex: 1; overflow-y: auto; padding: 0.6rem 0.75rem; display: flex; flex-direction: column; gap: 0.4rem; }
+
+  .field-row { display: flex; align-items: center; gap: 0.4rem; }
+  .field-row label { font-size: 0.72rem; color: var(--color-text-muted); min-width: 50px; }
+  .checkbox-label {
+    display: flex; align-items: center; gap: 0.35rem; font-size: 0.8rem;
+    color: var(--color-text); cursor: pointer; min-width: unset !important;
+  }
+  .field-row input[type="text"], .field-row input[type="number"], .field-row select {
+    flex: 1; padding: 0.25rem 0.4rem; border-radius: 4px;
+    border: 1px solid var(--color-border); background: var(--color-bg);
+    color: var(--color-text); font-size: 0.75rem;
+  }
+  .field-row input:focus, .field-row select:focus { outline: none; border-color: var(--color-accent); }
+  .short-input { max-width: 55px; flex: none !important; }
+  .field-row input[type="color"] {
+    width: 28px; height: 24px; padding: 1px; border-radius: 4px;
+    border: 1px solid var(--color-border); cursor: pointer; flex: none;
+  }
+  .hex { font-size: 0.7rem; font-family: monospace; color: var(--color-text-muted); }
+  .field-row input[type="range"] { flex: 1; accent-color: var(--color-accent); }
+  .range-val { font-size: 0.7rem; color: var(--color-text-muted); min-width: 24px; text-align: right; }
+  .divider { height: 1px; background: var(--color-border); margin: 0.2rem 0; }
+
+  .toggle-btn {
+    width: 26px; height: 26px; border-radius: 4px; border: 1px solid var(--color-border);
+    background: var(--color-bg); color: var(--color-text-muted); cursor: pointer; font-size: 0.8rem;
+  }
+  .toggle-btn.active { background: var(--color-accent); border-color: var(--color-accent); color: white; }
+
+  .align-grid { display: grid; grid-template-columns: repeat(3, 24px); gap: 2px; }
+  .align-btn {
+    width: 24px; height: 24px; border-radius: 3px; border: 1px solid var(--color-border);
+    background: var(--color-bg); cursor: pointer; position: relative;
+  }
+  .align-btn::after {
+    content: ''; position: absolute; width: 5px; height: 5px; border-radius: 50%;
+    background: var(--color-text-muted); top: 50%; left: 50%; transform: translate(-50%, -50%);
+  }
+  .align-btn.active { background: var(--color-accent-subtle); border-color: var(--color-accent); }
+  .align-btn.active::after { background: var(--color-accent); }
+  .align-btn:hover:not(.active) { background: var(--color-surface-hover); }
 </style>
