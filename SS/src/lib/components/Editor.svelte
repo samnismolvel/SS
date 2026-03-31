@@ -94,13 +94,6 @@
     }
   }
 
-  function clickTimeline(e: MouseEvent) {
-    const bar = e.currentTarget as HTMLElement
-    const rect = bar.getBoundingClientRect()
-    const ratio = (e.clientX - rect.left) / rect.width
-    seekTo(ratio * duration)
-  }
-
   // Subtitle overlay positioning
   function getAlignmentStyle(alignment: number): string {
     const positions: Record<number, string> = {
@@ -263,6 +256,7 @@
             onpause={onVideoPause}
             class="video"
           ></video>
+
           <!-- Subtitle overlay -->
           {#if activeSub && templateVal}
             <div
@@ -297,7 +291,10 @@
               {playing ? '⏸' : '▶'}
             </button>
             <span class="time">{formatTime(currentTime)} / {formatTime(duration)}</span>
-            <div class="progress-bar" onclick={clickTimeline} role="slider" tabindex="0"
+            <div class="progress-bar" onclick={(e) => {
+                  const rect = e.currentTarget.getBoundingClientRect()
+                  seekTo(((e.clientX - rect.left) / rect.width) * duration)
+                }} role="slider" tabindex="0"
               aria-valuenow={currentTime} aria-valuemin={0} aria-valuemax={duration}
               onkeydown={(e) => {
                 if (e.key === 'ArrowRight') seekTo(currentTime + 5)
@@ -309,27 +306,6 @@
         {:else}
           <div class="no-video">No video loaded</div>
         {/if}
-      </div>
-
-      <!-- Timeline -->
-      <div class="timeline-wrap">
-        <div class="timeline-label">Timeline — click a segment to edit</div>
-        <div class="timeline-scroll">
-          {#each items as sub, index}
-            {@const startPct = duration ? (srtToSeconds(sub.start) / duration) * 100 : 0}
-            {@const widthPct = duration ? ((srtToSeconds(sub.end) - srtToSeconds(sub.start)) / duration) * 100 : 0}
-            <button
-              class="seg-block"
-              class:active={selIdx === index}
-              class:playing-now={activeSub === sub}
-              style="left: {startPct}%; width: max({widthPct}%, 0.3%);"
-              onclick={() => seekToSegment(sub)}
-              title="#{sub.index} {sub.start} — {sub.text}"
-            ></button>
-          {/each}
-          <!-- Playhead -->
-          <div class="playhead" style="left: {duration ? (currentTime/duration)*100 : 0}%"></div>
-        </div>
       </div>
 
     </div>
@@ -634,34 +610,6 @@
   .progress-fill {
     height: 100%; background: var(--color-accent);
     border-radius: 2px; pointer-events: none;
-  }
-
-  /* Timeline */
-  .timeline-wrap {
-    flex-shrink: 0; border-top: 1px solid var(--color-border);
-    background: var(--color-surface);
-  }
-  .timeline-label {
-    font-size: 0.65rem; color: var(--color-text-muted); padding: 0.3rem 0.75rem;
-    text-transform: uppercase; letter-spacing: 0.5px;
-  }
-  .timeline-scroll {
-    position: relative; height: 32px; overflow: hidden;
-    background: var(--color-bg); margin: 0 0.75rem 0.5rem;
-    border-radius: 4px; border: 1px solid var(--color-border);
-  }
-  .seg-block {
-    position: absolute; top: 4px; height: 24px;
-    background: var(--color-accent-subtle); border: 1px solid var(--color-accent);
-    border-radius: 2px; cursor: pointer; padding: 0;
-    opacity: 0.7; transition: opacity 0.1s;
-  }
-  .seg-block:hover { opacity: 1; }
-  .seg-block.active { background: var(--color-accent); opacity: 1; }
-  .seg-block.playing-now { background: var(--color-success); border-color: var(--color-success); opacity: 1; }
-  .playhead {
-    position: absolute; top: 0; bottom: 0; width: 2px;
-    background: white; pointer-events: none; z-index: 2;
   }
 
   /* Right column */
