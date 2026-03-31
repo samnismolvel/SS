@@ -88,9 +88,10 @@ function buildTokens(subtitles: Subtitle[]): Token[] {
     }
   }
 
-  // Step 3: strip punctuation, filter empty / punctuation-only tokens
+  // Step 3: strip leading/trailing punctuation only, filter punctuation-only tokens
+  // Use replace on edges only — don't strip internal characters like spaces in multi-word tokens
   return merged
-    .map(t => ({ ...t, word: t.word.replace(/[^\w']/g, '').trim() }))
+    .map(t => ({ ...t, word: t.word.replace(/^[^\w]+|[^\w']+$/g, '').trim() }))
     .filter(t => t.word.length > 0 && /\w/.test(t.word))
 }
 
