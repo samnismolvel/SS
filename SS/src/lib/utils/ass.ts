@@ -49,7 +49,8 @@ export function msToAssTime(ms: number): string {
 // ─── Token type ───────────────────────────────────────────────────────────────
 
 interface Token {
-  word: string
+  word: string       // cleaned display word
+  rawWord: string    // original for punctuation break detection
   startSrt: string
   endSrt: string
   startMs: number
@@ -73,6 +74,7 @@ function isValidWord(w: string): boolean {
 function buildTokens(subtitles: Subtitle[]): Token[] {
   const raw: Token[] = subtitles.map(sub => ({
     word: sub.text.trim(),
+    rawWord: sub.text.trim(),
     startSrt: sub.start,
     endSrt: sub.end,
     startMs: assTimeToMs(srtTimeToAss(sub.start)),
@@ -97,7 +99,7 @@ function buildTokens(subtitles: Subtitle[]): Token[] {
   }
 
   return merged
-    .map(t => ({ ...t, word: cleanWord(t.word) }))
+    .map(t => ({ ...t, rawWord: t.word, word: cleanWord(t.word) }))
     .filter(t => isValidWord(t.word))
 }
 
@@ -125,6 +127,9 @@ function groupIntoLines(tokens: Token[], maxWords = 6, maxMs = 3000): Line[] {
       if (group.length > 0 && /^[A-Z]/.test(token.word)) break
       group.push(token)
       i++
+      // Break after a word that ends with a period or comma (end of clause)
+      const lastRaw = group[group.length - 1].rawWord
+      if (/[.,!?;:]/.test(lastRaw)) break
       if (group.length > 1) {
         const dur = group[group.length - 1].endMs - group[0].startMs
         if (dur > maxMs) break
@@ -267,6 +272,7 @@ function buildWordByWordEvents(subtitles: Subtitle[], template: Template): strin
     words.forEach((word, wi) => {
       wordTokens.push({
         word,
+        rawWord: word,
         startSrt: sub.start,
         endSrt: sub.end,
         startMs: Math.round(startMs + wi * msPerWord),

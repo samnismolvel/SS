@@ -52,6 +52,19 @@
     }) ?? null
   })())
 
+  // For word-by-word preview: which word in the active subtitle is current
+  // Distribute timing evenly across words in the line
+  let activeWordIndex = $derived((() => {
+    if (!activeSub || !templateVal?.wordByWord) return -1
+    const words = activeSub.text.trim().split(' ').filter((w: string) => w.length > 0)
+    if (words.length <= 1) return 0
+    const startSec = srtToSeconds(activeSub.start)
+    const endSec = srtToSeconds(activeSub.end)
+    const secPerWord = (endSec - startSec) / words.length
+    const idx = Math.floor((currentTime - startSec) / secPerWord)
+    return Math.min(idx, words.length - 1)
+  })())
+
   function srtToSeconds(srt: string): number {
     if (!srt) return 0
     const [time, ms] = srt.split(',')
@@ -281,7 +294,13 @@
               "
               onclick={() => seekToSegment(activeSub)}
             >
-              {activeSub.text}
+              {#if templateVal.wordByWord && templateVal.wordMode !== 'none'}
+                {#each activeSub.text.trim().split(' ').filter((w: string) => w.length > 0) as word, wi}
+                  <span style="color: {wi === activeWordIndex ? templateVal.highlightColor : (effective?.primaryColor ?? '#fff')}; white-space: pre;">{word}{wi < activeSub.text.trim().split(' ').filter((w: string) => w.length > 0).length - 1 ? ' ' : ''}</span>
+                {/each}
+              {:else}
+                {activeSub.text}
+              {/if}
             </div>
           {/if}
 
@@ -292,9 +311,9 @@
             </button>
             <span class="time">{formatTime(currentTime)} / {formatTime(duration)}</span>
             <div class="progress-bar" onclick={(e) => {
-                  const rect = e.currentTarget.getBoundingClientRect()
-                  seekTo(((e.clientX - rect.left) / rect.width) * duration)
-                }} role="slider" tabindex="0"
+                const rect = e.currentTarget.getBoundingClientRect()
+                seekTo(((e.clientX - rect.left) / rect.width) * duration)
+            }} role="slider" tabindex="0"
               aria-valuenow={currentTime} aria-valuemin={0} aria-valuemax={duration}
               onkeydown={(e) => {
                 if (e.key === 'ArrowRight') seekTo(currentTime + 5)
