@@ -3,8 +3,8 @@
   import { session, closeSession } from '$lib/stores/editor'
   import { queue, processing, currentVideoIndex, updateQueueItem, resetProgress } from '$lib/stores/queue'
   import type { EditorSession, QueueItem } from '$lib/types'
-  import Queue from '$lib/components/Queue.svelte'
-  import Editor from '$lib/components/Editor.svelte'
+  import Queue from '../lib/components/Queue.svelte'
+  import Editor from '../lib/components/Editor.svelte'
 
   let dark = $state(true)
 
