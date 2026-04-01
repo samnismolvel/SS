@@ -1,9 +1,10 @@
 <script lang="ts">
   import { session, isDirty, findAndReplace, selectSegment, updateSubtitleText, resetSubtitleText, updateSubtitleOverrides, clearSubtitleOverrides } from '$lib/stores/editor'
   import { activeTemplate, updateActiveTemplate, allTemplates, setActiveTemplate, saveActiveAsTemplate } from '$lib/stores/templates'
-  import { buildAss } from '$lib/utils/ass'
+  import { buildAss, distributeWordTimings } from '$lib/utils/ass'
   import { convertFileSrc } from '@tauri-apps/api/core'
   import type { Subtitle, Template, WordMode, Alignment } from '$lib/types'
+
 
   interface Props {
     onburn: (detail: { videoPath: string; outputPath: string; assContent: string }) => void
@@ -55,14 +56,20 @@
   // For word-by-word preview: which word in the active subtitle is current
   // Distribute timing evenly across words in the line
   let activeWordIndex = $derived((() => {
-    if (!activeSub || !templateVal?.wordByWord) return -1
+  if (!activeSub || !templateVal?.wordByWord) return -1
     const words = activeSub.text.trim().split(' ').filter((w: string) => w.length > 0)
     if (words.length <= 1) return 0
-    const startSec = srtToSeconds(activeSub.start)
-    const endSec = srtToSeconds(activeSub.end)
-    const secPerWord = (endSec - startSec) / words.length
-    const idx = Math.floor((currentTime - startSec) / secPerWord)
-    return Math.min(idx, words.length - 1)
+ 
+    const startMs = srtToSeconds(activeSub.start) * 1000
+    const endMs   = srtToSeconds(activeSub.end) * 1000
+    const nowMs   = currentTime * 1000
+  
+    // Use the same length-weighted distribution as ass.ts so preview matches burn
+    const timings = distributeWordTimings(words, startMs, endMs)
+    const idx = timings.findIndex(t => nowMs >= t.startMs && nowMs < t.endMs)
+    if (idx !== -1) return idx
+    // If we're past the last word's end, keep the last word highlighted
+    return nowMs >= endMs ? words.length - 1 : 0
   })())
 
   function srtToSeconds(srt: string): number {

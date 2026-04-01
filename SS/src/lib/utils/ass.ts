@@ -49,8 +49,8 @@ export function msToAssTime(ms: number): string {
 // ─── Token type ───────────────────────────────────────────────────────────────
 
 interface Token {
-  word: string       // cleaned display word
-  rawWord: string    // original for punctuation break detection
+  word: string
+  rawWord: string
   startSrt: string
   endSrt: string
   startMs: number
@@ -58,7 +58,6 @@ interface Token {
 }
 
 // ─── Clean a single word token ────────────────────────────────────────────────
-// Strip leading/trailing punctuation but keep internal chars like apostrophes.
 
 function cleanWord(w: string): string {
   return w.replace(/^[^\w]+/, '').replace(/[^\w']+$/, '').trim()
@@ -68,8 +67,70 @@ function isValidWord(w: string): boolean {
   return w.length > 0 && /\w/.test(w)
 }
 
+// ─── Length-weighted word timing ──────────────────────────────────────────────
+// Distributes a segment's duration across its words proportionally by character
+// length, so longer/harder words get more screen time than short ones.
+// Each word is clamped between MIN_WORD_MS and MAX_WORD_MS for readability.
+
+const MIN_WORD_MS = 120   // no word flashes faster than this
+const MAX_WORD_MS = 1200  // no word lingers longer than this
+
+export function distributeWordTimings(
+  words: string[],
+  startMs: number,
+  endMs: number
+): Array<{ startMs: number; endMs: number }> {
+  if (words.length === 0) return []
+  if (words.length === 1) return [{ startMs, endMs }]
+
+  const totalMs = endMs - startMs
+  const lengths = words.map(w => Math.max(w.length, 1))
+  const totalLen = lengths.reduce((a, b) => a + b, 0)
+
+  // First pass: proportional durations
+  const durations = lengths.map(len => (len / totalLen) * totalMs)
+
+  // Second pass: clamp each word, track overflow/underflow
+  let surplus = 0
+  const clamped = durations.map(d => {
+    const c = Math.max(MIN_WORD_MS, Math.min(MAX_WORD_MS, d))
+    surplus += d - c  // positive = we freed up time, negative = we borrowed
+    return c
+  })
+
+  // Third pass: redistribute surplus to unclamped words (those not at their limit)
+  // Iterate until stable (usually 1-2 passes)
+  let iterations = 0
+  while (Math.abs(surplus) > 1 && iterations++ < 5) {
+    const unclamped = clamped.map((c, i) =>
+      (surplus > 0 && c < MAX_WORD_MS) || (surplus < 0 && c > MIN_WORD_MS) ? i : -1
+    ).filter(i => i >= 0)
+
+    if (unclamped.length === 0) break
+    const share = surplus / unclamped.length
+    surplus = 0
+    for (const i of unclamped) {
+      const next = Math.max(MIN_WORD_MS, Math.min(MAX_WORD_MS, clamped[i] + share))
+      surplus += clamped[i] + share - next
+      clamped[i] = next
+    }
+  }
+
+  // Build absolute timestamps
+  const result: Array<{ startMs: number; endMs: number }> = []
+  let cursor = startMs
+  for (let i = 0; i < words.length; i++) {
+    const wStart = Math.round(cursor)
+    const wEnd = i === words.length - 1
+      ? endMs  // last word always ends exactly at segment end
+      : Math.round(cursor + clamped[i])
+    result.push({ startMs: wStart, endMs: wEnd })
+    cursor += clamped[i]
+  }
+  return result
+}
+
 // ─── Build token list from raw subtitles ──────────────────────────────────────
-// Handles Whisper's token-per-SRT-block output format.
 
 function buildTokens(subtitles: Subtitle[]): Token[] {
   const raw: Token[] = subtitles.map(sub => ({
@@ -81,7 +142,7 @@ function buildTokens(subtitles: Subtitle[]): Token[] {
     endMs: assTimeToMs(srtTimeToAss(sub.end)),
   }))
 
-  // Merge contraction suffixes ('re, 'll, 've, 't, 's, 'd, 'm)
+  // Merge contraction suffixes
   const merged: Token[] = []
   for (const token of raw) {
     const isContraction = /^'[a-z]+$/i.test(token.word)
@@ -104,7 +165,6 @@ function buildTokens(subtitles: Subtitle[]): Token[] {
 }
 
 // ─── Group tokens into natural subtitle lines ─────────────────────────────────
-// Breaks on: max words, max duration, or a capital letter (new sentence).
 
 interface Line {
   text: string
@@ -123,11 +183,9 @@ function groupIntoLines(tokens: Token[], maxWords = 6, maxMs = 3000): Line[] {
 
     while (i < tokens.length && group.length < maxWords) {
       const token = tokens[i]
-      // Break before a capital letter (new sentence), but not at the very start
       if (group.length > 0 && /^[A-Z]/.test(token.word)) break
       group.push(token)
       i++
-      // Break after a word that ends with a period or comma (end of clause)
       const lastRaw = group[group.length - 1].rawWord
       if (/[.,!?;:]/.test(lastRaw)) break
       if (group.length > 1) {
@@ -136,12 +194,10 @@ function groupIntoLines(tokens: Token[], maxWords = 6, maxMs = 3000): Line[] {
       }
     }
 
-    // Safety: if stuck on a capital at start of tokens, consume it
     if (group.length === 0 && i < tokens.length) {
       group.push(tokens[i])
       i++
     }
-
     if (group.length === 0) continue
 
     lines.push({
@@ -260,28 +316,29 @@ function buildWordByWordEvents(subtitles: Subtitle[], template: Template): strin
   const primaryColor   = '{\\c' + hexToAss(template.primaryColor) + '}'
   const highlightColor = '{\\c' + hexToAss(template.highlightColor) + '}'
 
-  // subtitles from parseSRT are already grouped lines, not individual tokens.
-  // Expand each line back into individual word tokens with distributed timing.
+  // Expand each subtitle line into word tokens with length-weighted timing
   const wordTokens: Token[] = []
   for (const sub of subtitles) {
     const words = sub.text.trim().split(' ').map(cleanWord).filter(isValidWord)
     if (words.length === 0) continue
     const startMs = assTimeToMs(srtTimeToAss(sub.start))
     const endMs   = assTimeToMs(srtTimeToAss(sub.end))
-    const msPerWord = (endMs - startMs) / words.length
+
+    // ↓ KEY CHANGE: length-weighted distribution instead of even split
+    const timings = distributeWordTimings(words, startMs, endMs)
+
     words.forEach((word, wi) => {
       wordTokens.push({
         word,
         rawWord: word,
         startSrt: sub.start,
         endSrt: sub.end,
-        startMs: Math.round(startMs + wi * msPerWord),
-        endMs: Math.round(startMs + (wi + 1) * msPerWord),
+        startMs: timings[wi].startMs,
+        endMs: timings[wi].endMs,
       })
     })
   }
 
-  // Filter out any remaining punctuation-only tokens
   const tokens = wordTokens.filter(t => isValidWord(t.word))
 
   // Group into sentences: max 8 words, 5 seconds, break on capital
@@ -304,7 +361,6 @@ function buildWordByWordEvents(subtitles: Subtitle[], template: Template): strin
       sentence.push(tokens[i])
       i++
     }
-
     if (sentence.length === 0) continue
 
     if (template.wordMode === 'highlight') {
@@ -312,11 +368,9 @@ function buildWordByWordEvents(subtitles: Subtitle[], template: Template): strin
         const { startMs, endMs } = sentence[wi]
         let text = ''
         for (let j = 0; j < sentence.length; j++) {
-          if (j === wi) {
-            text += highlightColor + sentence[j].word + primaryColor
-          } else {
-            text += sentence[j].word
-          }
+          text += j === wi
+            ? highlightColor + sentence[j].word + primaryColor
+            : sentence[j].word
           if (j < sentence.length - 1) text += ' '
         }
         events.push('Dialogue: 0,' + msToAssTime(startMs) + ',' + msToAssTime(endMs) + ',Default,,0,0,0,,' + text)
@@ -332,7 +386,6 @@ function buildWordByWordEvents(subtitles: Subtitle[], template: Template): strin
 }
 
 // ─── SRT parser ───────────────────────────────────────────────────────────────
-// Parses raw whisper token-per-line SRT into clean grouped lines for the editor.
 
 export function parseSRT(content: string): Subtitle[] {
   const blocks = content.trim().split(/\n\n+/)
