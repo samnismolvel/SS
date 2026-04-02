@@ -75,7 +75,7 @@ function msToSrt(ms: number): string {
 // MIN_LINE_GAP_MS  — enforce at least this gap between consecutive lines so a
 //                    late-ending line never overlaps the next one's start.
 
-const START_OFFSET_MS = 120
+const START_OFFSET_MS = 80
 const MIN_LINE_GAP_MS = 0   // set to e.g. 40 if you want a hard visual gap
 
 // Apply offset + overlap clamping to a flat list of Lines in-place.
