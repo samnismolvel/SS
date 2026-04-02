@@ -180,8 +180,9 @@ export function distributeWordTimings(
 }
 
 // ─── Build token list from raw subtitles ──────────────────────────────────────
-// Each subtitle coming from parseSRT is already a single whisper word token.
-// buildTokens only needs to clean text and merge contractions here.
+// buildTokens treats each subtitle's text as a single token.
+// When called from buildPlainEvents, each subtitle IS a single word (raw SRT).
+// Contraction merging handles "'s", "'t", "'re" etc.
 
 function buildTokens(subtitles: Subtitle[]): Token[] {
   const raw: Token[] = subtitles.map(sub => ({
@@ -429,39 +430,66 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template): string[] {
 }
 
 // ─── Word-by-word events ──────────────────────────────────────────────────────
+//
+// Receives the GROUPED subtitles from parseSRT (one Subtitle = one display line,
+// potentially multiple words). Per-word timing is derived via distributeWordTimings
+// which is accurate enough for the highlight/solo display effect.
+// Plain mode (buildPlainEvents) is the one that needs frame-accurate per-word
+// timestamps — it gets them via buildTokens on the raw single-word SRT blocks.
 
 function buildWordByWordEvents(subtitles: Subtitle[], template: Template): string[] {
   const events: string[] = []
   const primaryColor   = '{\\c' + hexToAss(template.primaryColor) + '}'
   const highlightColor = '{\\c' + hexToAss(template.highlightColor) + '}'
   const syncOffset     = template.syncOffset ?? 120
-
-  // Each subtitle is already a single word token from parseSRT.
-  // buildTokens just cleans + merges contractions — no timing distribution needed.
-  const wordTokens = buildTokens(subtitles)
-
-  // Group into display sentences, then apply timing correction to sentence boundaries.
   const wbwOpts: GroupOptions = {
     ...groupOptsFromTemplate(template),
     maxWords: 8,
     maxMs:    5000,
   }
+
+  // Build word-level tokens from the grouped subtitles.
+  // Each grouped subtitle may contain multiple words — we split them and assign
+  // timing via distributeWordTimings over the subtitle's real time span.
+  const wordTokens: Token[] = []
+  for (const sub of subtitles) {
+    const words = sub.text.trim().split(' ').map(cleanWord).filter(isValidWord)
+    if (words.length === 0) continue
+    const startMs = srtToMs(sub.start)
+    const endMs   = srtToMs(sub.end)
+    const timings = distributeWordTimings(words, startMs, endMs)
+    words.forEach((word, wi) => {
+      wordTokens.push({
+        word,
+        rawWord:  word,
+        startSrt: sub.start,
+        endSrt:   sub.end,
+        startMs:  timings[wi].startMs,
+        endMs:    timings[wi].endMs,
+      })
+    })
+  }
+
+  const validTokens = wordTokens.filter(t => isValidWord(t.word))
+
+  // Group into display sentences using the shared groupTokens logic,
+  // then apply timing correction.
   const sentences = applyTimingCorrection(
-    groupTokens(wordTokens, wbwOpts),
+    groupTokens(validTokens, wbwOpts),
     syncOffset
   )
 
   for (const sentence of sentences) {
-    // Recover the original per-word tokens inside this sentence's uncorrected span.
-    const uncorrectedStart = sentence.startMs - syncOffset
-    const uncorrectedEnd   = sentence.endMs   - syncOffset
-    const sentenceTokens   = wordTokens.filter(
-      t => t.startMs >= uncorrectedStart && t.endMs <= uncorrectedEnd + 50
-    )
-
     const sentenceWords = sentence.text.split(' ')
 
-    // Map each display word to its corrected timing.
+    // Recover the per-word tokens for this sentence.
+    // Token lookup uses the uncorrected time range (before syncOffset was added).
+    const uncorrectedStart = sentence.startMs - syncOffset
+    const uncorrectedEnd   = sentence.endMs   - syncOffset
+    const sentenceTokens   = validTokens.filter(
+      t => t.startMs >= uncorrectedStart - 50 && t.endMs <= uncorrectedEnd + 50
+    )
+
     const resolvedTokens: Token[] = sentenceWords.map((word, wi) => {
       const found = sentenceTokens[wi]
       if (found) {
@@ -473,8 +501,8 @@ function buildWordByWordEvents(subtitles: Subtitle[], template: Template): strin
           endSrt:   msToSrt(found.endMs   + syncOffset),
         }
       }
-      // Fallback: distribute evenly across sentence span
-      const span = (sentence.endMs - sentence.startMs) / sentenceWords.length
+      // Fallback: even distribution across sentence span
+      const span = (sentence.endMs - sentence.startMs) / Math.max(sentenceWords.length, 1)
       return {
         word,
         rawWord:  word,
@@ -512,6 +540,7 @@ function buildWordByWordEvents(subtitles: Subtitle[], template: Template): strin
 
   return events
 }
+
 
 // ─── SRT parser ───────────────────────────────────────────────────────────────
 // Timing correction is NOT applied here — it's burn-time only (buildAss).
