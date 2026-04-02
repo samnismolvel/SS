@@ -62,14 +62,14 @@
     if (words.length === 1) return 0
  
     const startMs = srtToSeconds(activeSub.start) * 1000
-    const endMs   = srtToSeconds(activeSub.end) * 1000
+    const endMs   = srtToSeconds(activeSub.end)   * 1000
     const nowMs   = currentTime * 1000
  
     // Use the same length-weighted distribution as ass.ts so preview matches burn
     const timings = distributeWordTimings(words, startMs, endMs)
  
-    // Use <= on the upper bound so boundary frames don't fall through the cracks.
-    // (timeupdate fires ~every 250ms so hitting an exact boundary is common.)
+    // Use <= on upper bound — timeupdate fires ~every 250 ms so exact boundary
+    // hits are common and must not fall through to -1.
     const idx = timings.findIndex(t => nowMs >= t.startMs && nowMs <= t.endMs)
     if (idx !== -1) return idx
  
@@ -316,9 +316,21 @@
               onclick={() => seekToSegment(activeSub)}
             >
               {#if templateVal.wordByWord && templateVal.wordMode !== 'none'}
-                {#each activeSub.text.trim().split(' ').filter((w: string) => w.length > 0) as word, wi}
-                  <span style="color: {wi === activeWordIndex ? templateVal.highlightColor : (effective?.primaryColor ?? '#fff')}; white-space: pre;">{word}{wi < activeSub.text.trim().split(' ').filter((w: string) => w.length > 0).length - 1 ? ' ' : ''}</span>
-                {/each}
+                {#if templateVal.wordMode === 'solo'}
+                  <!-- Solo: only the active word is visible, matching burned ASS output -->
+                  {#if activeWordIndex >= 0}
+                    {@const soloWords = activeSub.text.trim().split(' ').filter((w: string) => w.length > 0)}
+                    <span style="color: {templateVal.highlightColor}; white-space: pre;">
+                      {soloWords[activeWordIndex] ?? ''}
+                    </span>
+                  {/if}
+                {:else}
+                  <!-- Highlight: full sentence visible, active word coloured differently -->
+                  {#each activeSub.text.trim().split(' ').filter((w: string) => w.length > 0) as word, wi}
+                    {@const words = activeSub.text.trim().split(' ').filter((w: string) => w.length > 0)}
+                    <span style="color: {wi === activeWordIndex ? templateVal.highlightColor : (effective?.primaryColor ?? '#fff')}; white-space: pre;">{word}{wi < words.length - 1 ? ' ' : ''}</span>
+                  {/each}
+                {/if}
               {:else}
                 {activeSub.text}
               {/if}
