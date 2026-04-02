@@ -56,20 +56,34 @@
   // For word-by-word preview: which word in the active subtitle is current
   // Distribute timing evenly across words in the line
   let activeWordIndex = $derived((() => {
-  if (!activeSub || !templateVal?.wordByWord) return -1
+    if (!activeSub || !templateVal?.wordByWord) return -1
     const words = activeSub.text.trim().split(' ').filter((w: string) => w.length > 0)
-    if (words.length <= 1) return 0
+    if (words.length === 0) return -1
+    if (words.length === 1) return 0
  
     const startMs = srtToSeconds(activeSub.start) * 1000
     const endMs   = srtToSeconds(activeSub.end) * 1000
     const nowMs   = currentTime * 1000
-  
+ 
     // Use the same length-weighted distribution as ass.ts so preview matches burn
     const timings = distributeWordTimings(words, startMs, endMs)
-    const idx = timings.findIndex(t => nowMs >= t.startMs && nowMs < t.endMs)
+ 
+    // Use <= on the upper bound so boundary frames don't fall through the cracks.
+    // (timeupdate fires ~every 250ms so hitting an exact boundary is common.)
+    const idx = timings.findIndex(t => nowMs >= t.startMs && nowMs <= t.endMs)
     if (idx !== -1) return idx
-    // If we're past the last word's end, keep the last word highlighted
-    return nowMs >= endMs ? words.length - 1 : 0
+ 
+    // Before the first word
+    if (nowMs < timings[0].startMs) return 0
+ 
+    // After the last word
+    if (nowMs >= timings[timings.length - 1].endMs) return words.length - 1
+ 
+    // Between two adjacent words — snap to the word we most recently passed
+    for (let i = timings.length - 1; i >= 0; i--) {
+      if (nowMs >= timings[i].startMs) return i
+    }
+    return 0
   })())
 
   function srtToSeconds(srt: string): number {

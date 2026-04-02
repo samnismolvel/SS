@@ -70,10 +70,11 @@ function isValidWord(w: string): boolean {
 // ─── Length-weighted word timing ──────────────────────────────────────────────
 // Distributes a segment's duration across its words proportionally by character
 // length, so longer/harder words get more screen time than short ones.
-// Each word is clamped between MIN_WORD_MS and MAX_WORD_MS for readability.
+// MIN_WORD_MS is set to 250 so that every word window is wide enough to be
+// caught by the video element's timeupdate event (~250 ms fire rate).
 
-const MIN_WORD_MS = 120   // no word flashes faster than this
-const MAX_WORD_MS = 1200  // no word lingers longer than this
+const MIN_WORD_MS = 250   // must be >= typical timeupdate interval
+const MAX_WORD_MS = 1500
 
 export function distributeWordTimings(
   words: string[],
@@ -94,12 +95,11 @@ export function distributeWordTimings(
   let surplus = 0
   const clamped = durations.map(d => {
     const c = Math.max(MIN_WORD_MS, Math.min(MAX_WORD_MS, d))
-    surplus += d - c  // positive = we freed up time, negative = we borrowed
+    surplus += d - c
     return c
   })
 
-  // Third pass: redistribute surplus to unclamped words (those not at their limit)
-  // Iterate until stable (usually 1-2 passes)
+  // Third pass: redistribute surplus to unclamped words
   let iterations = 0
   while (Math.abs(surplus) > 1 && iterations++ < 5) {
     const unclamped = clamped.map((c, i) =>
@@ -122,7 +122,7 @@ export function distributeWordTimings(
   for (let i = 0; i < words.length; i++) {
     const wStart = Math.round(cursor)
     const wEnd = i === words.length - 1
-      ? endMs  // last word always ends exactly at segment end
+      ? endMs
       : Math.round(cursor + clamped[i])
     result.push({ startMs: wStart, endMs: wEnd })
     cursor += clamped[i]
@@ -174,7 +174,7 @@ interface Line {
   endMs: number
 }
 
-function groupIntoLines(tokens: Token[], maxWords = 6, maxMs = 3000): Line[] {
+function groupIntoLines(tokens: Token[], maxWords = 7, maxMs = 4000): Line[] {
   const lines: Line[] = []
   let i = 0
 
@@ -183,20 +183,36 @@ function groupIntoLines(tokens: Token[], maxWords = 6, maxMs = 3000): Line[] {
 
     while (i < tokens.length && group.length < maxWords) {
       const token = tokens[i]
-      if (group.length > 0 && /^[A-Z]/.test(token.word)) break
+      const lastRaw = group.length > 0 ? group[group.length - 1].rawWord : ''
+
+      // Only break on a capital letter if the previous token ended a sentence.
+      // This prevents "I", proper nouns, and whisper mid-sentence capitalisation
+      // from fragmenting lines into single words.
+      const prevEndedSentence = /[.!?]$/.test(lastRaw)
+      if (group.length > 0 && prevEndedSentence && /^[A-Z]/.test(token.word)) break
+
       group.push(token)
       i++
-      const lastRaw = group[group.length - 1].rawWord
-      if (/[.,!?;:]/.test(lastRaw)) break
-      if (group.length > 1) {
+
+      const currentRaw = group[group.length - 1].rawWord
+
+      // Hard break on sentence-ending punctuation
+      if (/[.!?]$/.test(currentRaw)) break
+
+      // Soft break on clause-ending punctuation (comma, semicolon, colon)
+      // only when we already have a reasonable number of words
+      if (group.length >= 4 && /[,;:]$/.test(currentRaw)) break
+
+      // Duration cap — only enforce once we have at least 3 words, so we
+      // never emit a 1- or 2-word line purely because the segment is short.
+      if (group.length >= 3) {
         const dur = group[group.length - 1].endMs - group[0].startMs
         if (dur > maxMs) break
       }
     }
 
     if (group.length === 0 && i < tokens.length) {
-      group.push(tokens[i])
-      i++
+      group.push(tokens[i++])
     }
     if (group.length === 0) continue
 
@@ -323,8 +339,6 @@ function buildWordByWordEvents(subtitles: Subtitle[], template: Template): strin
     if (words.length === 0) continue
     const startMs = assTimeToMs(srtTimeToAss(sub.start))
     const endMs   = assTimeToMs(srtTimeToAss(sub.end))
-
-    // ↓ KEY CHANGE: length-weighted distribution instead of even split
     const timings = distributeWordTimings(words, startMs, endMs)
 
     words.forEach((word, wi) => {
@@ -341,25 +355,33 @@ function buildWordByWordEvents(subtitles: Subtitle[], template: Template): strin
 
   const tokens = wordTokens.filter(t => isValidWord(t.word))
 
-  // Group into sentences: max 8 words, 5 seconds, break on capital
+  // Group into display sentences using the same smarter break logic as groupIntoLines
   let i = 0
   while (i < tokens.length) {
     const sentence: Token[] = []
 
     while (i < tokens.length && sentence.length < 8) {
       const token = tokens[i]
-      if (sentence.length > 0 && /^[A-Z]/.test(token.word)) break
+      const lastRaw = sentence.length > 0 ? sentence[sentence.length - 1].rawWord : ''
+      const prevEndedSentence = /[.!?]$/.test(lastRaw)
+
+      if (sentence.length > 0 && prevEndedSentence && /^[A-Z]/.test(token.word)) break
+
       sentence.push(token)
       i++
-      if (sentence.length > 1) {
+
+      const currentRaw = sentence[sentence.length - 1].rawWord
+      if (/[.!?]$/.test(currentRaw)) break
+      if (sentence.length >= 4 && /[,;:]$/.test(currentRaw)) break
+
+      if (sentence.length >= 3) {
         const dur = sentence[sentence.length - 1].endMs - sentence[0].startMs
         if (dur > 5000) break
       }
     }
 
     if (sentence.length === 0 && i < tokens.length) {
-      sentence.push(tokens[i])
-      i++
+      sentence.push(tokens[i++])
     }
     if (sentence.length === 0) continue
 
@@ -373,11 +395,18 @@ function buildWordByWordEvents(subtitles: Subtitle[], template: Template): strin
             : sentence[j].word
           if (j < sentence.length - 1) text += ' '
         }
-        events.push('Dialogue: 0,' + msToAssTime(startMs) + ',' + msToAssTime(endMs) + ',Default,,0,0,0,,' + text)
+        // Always open with primaryColor to prevent color bleed from previous event
+        events.push(
+          'Dialogue: 0,' + msToAssTime(startMs) + ',' + msToAssTime(endMs) +
+          ',Default,,0,0,0,,' + primaryColor + text
+        )
       }
     } else if (template.wordMode === 'solo') {
       for (const { word, startMs, endMs } of sentence) {
-        events.push('Dialogue: 0,' + msToAssTime(startMs) + ',' + msToAssTime(endMs) + ',Default,,0,0,0,,' + highlightColor + word)
+        events.push(
+          'Dialogue: 0,' + msToAssTime(startMs) + ',' + msToAssTime(endMs) +
+          ',Default,,0,0,0,,' + highlightColor + word
+        )
       }
     }
   }
