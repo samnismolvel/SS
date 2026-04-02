@@ -57,6 +57,16 @@ interface Token {
   endMs: number
 }
 
+// ─── Line type ────────────────────────────────────────────────────────────────
+
+interface Line {
+  text: string
+  startSrt: string
+  endSrt: string
+  startMs: number
+  endMs: number
+}
+
 // ─── Clean a single word token ────────────────────────────────────────────────
 
 function cleanWord(w: string): string {
@@ -70,10 +80,10 @@ function isValidWord(w: string): boolean {
 // ─── Length-weighted word timing ──────────────────────────────────────────────
 // Distributes a segment's duration across its words proportionally by character
 // length, so longer/harder words get more screen time than short ones.
-// MIN_WORD_MS is set to 250 so that every word window is wide enough to be
-// caught by the video element's timeupdate event (~250 ms fire rate).
+// MIN_WORD_MS matches the browser's timeupdate fire rate so no word window is
+// too short to be caught in the preview.
 
-const MIN_WORD_MS = 250   // must be >= typical timeupdate interval
+const MIN_WORD_MS = 250
 const MAX_WORD_MS = 1500
 
 export function distributeWordTimings(
@@ -134,15 +144,15 @@ export function distributeWordTimings(
 
 function buildTokens(subtitles: Subtitle[]): Token[] {
   const raw: Token[] = subtitles.map(sub => ({
-    word: sub.text.trim(),
-    rawWord: sub.text.trim(),
+    word:     sub.text.trim(),
+    rawWord:  sub.text.trim(),
     startSrt: sub.start,
-    endSrt: sub.end,
-    startMs: assTimeToMs(srtTimeToAss(sub.start)),
-    endMs: assTimeToMs(srtTimeToAss(sub.end)),
+    endSrt:   sub.end,
+    startMs:  assTimeToMs(srtTimeToAss(sub.start)),
+    endMs:    assTimeToMs(srtTimeToAss(sub.end)),
   }))
 
-  // Merge contraction suffixes
+  // Merge contraction suffixes ("'s", "'t", "'re", etc.)
   const merged: Token[] = []
   for (const token of raw) {
     const isContraction = /^'[a-z]+$/i.test(token.word)
@@ -150,9 +160,9 @@ function buildTokens(subtitles: Subtitle[]): Token[] {
       const prev = merged[merged.length - 1]
       merged[merged.length - 1] = {
         ...prev,
-        word: prev.word + token.word,
-        endSrt: token.endSrt,
-        endMs: token.endMs,
+        word:    prev.word + token.word,
+        endSrt:  token.endSrt,
+        endMs:   token.endMs,
       }
     } else {
       merged.push(token)
@@ -164,17 +174,35 @@ function buildTokens(subtitles: Subtitle[]): Token[] {
     .filter(t => isValidWord(t.word))
 }
 
-// ─── Group tokens into natural subtitle lines ─────────────────────────────────
+// ─── Grouping options ─────────────────────────────────────────────────────────
 
-interface Line {
-  text: string
-  startSrt: string
-  endSrt: string
-  startMs: number
-  endMs: number
+interface GroupOptions {
+  maxWords?: number  // hard cap on words per line            (default 6)
+  maxMs?: number     // hard cap on line duration in ms       (default 4000)
+  minMs?: number     // merge forward if line is shorter      (default 600)
+  pauseMs?: number   // inter-token gap that forces a break   (default 400)
 }
 
-function groupIntoLines(tokens: Token[], maxWords = 7, maxMs = 4000): Line[] {
+// ─── Core grouping — shared by parseSRT and buildWordByWordEvents ─────────────
+//
+// Break rules, in priority order:
+//   1. Pause gap between tokens (speaker breath or edit cut)
+//   2. Sentence-ending punctuation  . ! ?
+//   3. Capital letter when ≥2 words already banked
+//      (whisper capitalises after speaker cuts even mid-transcript)
+//   4. Clause-ending punctuation  , ; :  after ≥4 words
+//      — skipped for numeric commas like "10,000"
+//   5. Duration cap (only after ≥3 words so we never emit 1-word flash lines)
+//   6. Word-count cap
+
+function groupTokens(tokens: Token[], opts: GroupOptions = {}): Line[] {
+  const {
+    maxWords = 6,
+    maxMs    = 4000,
+    minMs    = 600,
+    pauseMs  = 400,
+  } = opts
+
   const lines: Line[] = []
   let i = 0
 
@@ -182,46 +210,62 @@ function groupIntoLines(tokens: Token[], maxWords = 7, maxMs = 4000): Line[] {
     const group: Token[] = []
 
     while (i < tokens.length && group.length < maxWords) {
-      const token = tokens[i]
-      const lastRaw = group.length > 0 ? group[group.length - 1].rawWord : ''
+      const token      = tokens[i]
+      const lastRaw    = group.length > 0 ? group[group.length - 1].rawWord  : ''
+      const lastEndMs  = group.length > 0 ? group[group.length - 1].endMs    : -Infinity
 
-      // Only break on a capital letter if the previous token ended a sentence.
-      // This prevents "I", proper nouns, and whisper mid-sentence capitalisation
-      // from fragmenting lines into single words.
-      const prevEndedSentence = /[.!?]$/.test(lastRaw)
-      if (group.length > 0 && prevEndedSentence && /^[A-Z]/.test(token.word)) break
+      // Rule 1 — pause gap
+      if (group.length > 0 && (token.startMs - lastEndMs) > pauseMs) break
+
+      // Rule 3 — capital letter after ≥2 words banked.
+      // Requires ≥2 so a lone leading capital (e.g. "I" as first word) doesn't
+      // leave the group empty and cause an infinite loop.
+      if (group.length >= 2 && /^[A-Z]/.test(token.word)) break
 
       group.push(token)
       i++
 
       const currentRaw = group[group.length - 1].rawWord
 
-      // Hard break on sentence-ending punctuation
+      // Rule 2 — sentence-ending punctuation
       if (/[.!?]$/.test(currentRaw)) break
 
-      // Soft break on clause-ending punctuation (comma, semicolon, colon)
-      // only when we already have a reasonable number of words
-      if (group.length >= 4 && /[,;:]$/.test(currentRaw)) break
+      // Rule 4 — clause punctuation after ≥4 words (skip numeric commas)
+      const isNumericComma = /\d,\d/.test(currentRaw)
+      if (!isNumericComma && group.length >= 4 && /[,;:]$/.test(currentRaw)) break
 
-      // Duration cap — only enforce once we have at least 3 words, so we
-      // never emit a 1- or 2-word line purely because the segment is short.
+      // Rule 5 — duration cap (only once we have 3+ words)
       if (group.length >= 3) {
         const dur = group[group.length - 1].endMs - group[0].startMs
         if (dur > maxMs) break
       }
     }
 
+    // Safety: if the inner loop stalled without consuming anything, force one token
     if (group.length === 0 && i < tokens.length) {
       group.push(tokens[i++])
     }
     if (group.length === 0) continue
 
+    // Minimum duration guard: if the completed line is very short AND the next
+    // token follows without a meaningful pause, absorb it so we don't emit
+    // a rapid-fire flash subtitle.
+    const lineDur = group[group.length - 1].endMs - group[0].startMs
+    if (
+      lineDur < minMs &&
+      group.length < maxWords &&
+      i < tokens.length &&
+      (tokens[i].startMs - group[group.length - 1].endMs) <= pauseMs
+    ) {
+      group.push(tokens[i++])
+    }
+
     lines.push({
-      text: group.map(t => t.word).join(' '),
+      text:     group.map(t => t.word).join(' '),
       startSrt: group[0].startSrt,
-      endSrt: group[group.length - 1].endSrt,
-      startMs: group[0].startMs,
-      endMs: group[group.length - 1].endMs,
+      endSrt:   group[group.length - 1].endSrt,
+      startMs:  group[0].startMs,
+      endMs:    group[group.length - 1].endMs,
     })
   }
 
@@ -304,8 +348,8 @@ export function buildAss(subtitles: Subtitle[], template: Template): string {
 
 function buildPlainEvents(subtitles: Subtitle[], template: Template): string[] {
   const events: string[] = []
-  const tokens = buildTokens(subtitles)
-  const grouped = groupIntoLines(tokens)
+  const tokens  = buildTokens(subtitles)
+  const grouped = groupTokens(tokens)
 
   const overrideMap = new Map<string, Subtitle['overrides']>()
   for (const sub of subtitles) {
@@ -332,7 +376,7 @@ function buildWordByWordEvents(subtitles: Subtitle[], template: Template): strin
   const primaryColor   = '{\\c' + hexToAss(template.primaryColor) + '}'
   const highlightColor = '{\\c' + hexToAss(template.highlightColor) + '}'
 
-  // Expand each subtitle line into word tokens with length-weighted timing
+  // Expand each subtitle line into per-word tokens with length-weighted timing
   const wordTokens: Token[] = []
   for (const sub of subtitles) {
     const words = sub.text.trim().split(' ').map(cleanWord).filter(isValidWord)
@@ -344,65 +388,65 @@ function buildWordByWordEvents(subtitles: Subtitle[], template: Template): strin
     words.forEach((word, wi) => {
       wordTokens.push({
         word,
-        rawWord: word,
+        rawWord:  word,
         startSrt: sub.start,
-        endSrt: sub.end,
-        startMs: timings[wi].startMs,
-        endMs: timings[wi].endMs,
+        endSrt:   sub.end,
+        startMs:  timings[wi].startMs,
+        endMs:    timings[wi].endMs,
       })
     })
   }
 
-  const tokens = wordTokens.filter(t => isValidWord(t.word))
+  const validTokens = wordTokens.filter(t => isValidWord(t.word))
 
-  // Group into display sentences using the same smarter break logic as groupIntoLines
-  let i = 0
-  while (i < tokens.length) {
-    const sentence: Token[] = []
+  // Group into display sentences using the shared groupTokens logic.
+  // Word-by-word lines allow slightly more words / time since the highlight
+  // effect makes longer lines easy to follow.
+  const sentences = groupTokens(validTokens, { maxWords: 8, maxMs: 5000, minMs: 600, pauseMs: 400 })
 
-    while (i < tokens.length && sentence.length < 8) {
-      const token = tokens[i]
-      const lastRaw = sentence.length > 0 ? sentence[sentence.length - 1].rawWord : ''
-      const prevEndedSentence = /[.!?]$/.test(lastRaw)
+  for (const sentence of sentences) {
+    // Recover the original per-word tokens that fall inside this sentence's span.
+    // Allow a small 50 ms fudge on endMs to absorb rounding from distributeWordTimings.
+    const sentenceTokens = validTokens.filter(
+      t => t.startMs >= sentence.startMs && t.endMs <= sentence.endMs + 50
+    )
 
-      if (sentence.length > 0 && prevEndedSentence && /^[A-Z]/.test(token.word)) break
+    const sentenceWords = sentence.text.split(' ')
 
-      sentence.push(token)
-      i++
-
-      const currentRaw = sentence[sentence.length - 1].rawWord
-      if (/[.!?]$/.test(currentRaw)) break
-      if (sentence.length >= 4 && /[,;:]$/.test(currentRaw)) break
-
-      if (sentence.length >= 3) {
-        const dur = sentence[sentence.length - 1].endMs - sentence[0].startMs
-        if (dur > 5000) break
+    // Build the final token list for this sentence. If the lookup above comes
+    // up short (edge-case rounding), fall back to evenly-distributed timing.
+    const resolvedTokens: Token[] = sentenceWords.map((word, wi) => {
+      const found = sentenceTokens[wi]
+      if (found) return found
+      const span = (sentence.endMs - sentence.startMs) / sentenceWords.length
+      return {
+        word,
+        rawWord:  word,
+        startSrt: sentence.startSrt,
+        endSrt:   sentence.endSrt,
+        startMs:  Math.round(sentence.startMs + wi * span),
+        endMs:    Math.round(sentence.startMs + (wi + 1) * span),
       }
-    }
-
-    if (sentence.length === 0 && i < tokens.length) {
-      sentence.push(tokens[i++])
-    }
-    if (sentence.length === 0) continue
+    })
 
     if (template.wordMode === 'highlight') {
-      for (let wi = 0; wi < sentence.length; wi++) {
-        const { startMs, endMs } = sentence[wi]
+      for (let wi = 0; wi < resolvedTokens.length; wi++) {
+        const { startMs, endMs } = resolvedTokens[wi]
         let text = ''
-        for (let j = 0; j < sentence.length; j++) {
+        for (let j = 0; j < resolvedTokens.length; j++) {
           text += j === wi
-            ? highlightColor + sentence[j].word + primaryColor
-            : sentence[j].word
-          if (j < sentence.length - 1) text += ' '
+            ? highlightColor + resolvedTokens[j].word + primaryColor
+            : resolvedTokens[j].word
+          if (j < resolvedTokens.length - 1) text += ' '
         }
-        // Always open with primaryColor to prevent color bleed from previous event
+        // Always open with primaryColor to prevent color bleed from the previous event
         events.push(
           'Dialogue: 0,' + msToAssTime(startMs) + ',' + msToAssTime(endMs) +
           ',Default,,0,0,0,,' + primaryColor + text
         )
       }
     } else if (template.wordMode === 'solo') {
-      for (const { word, startMs, endMs } of sentence) {
+      for (const { word, startMs, endMs } of resolvedTokens) {
         events.push(
           'Dialogue: 0,' + msToAssTime(startMs) + ',' + msToAssTime(endMs) +
           ',Default,,0,0,0,,' + highlightColor + word
@@ -431,14 +475,14 @@ export function parseSRT(content: string): Subtitle[] {
     })
     .filter((s): s is Subtitle => s !== null)
 
-  const tokens = buildTokens(rawSubs)
-  const grouped = groupIntoLines(tokens)
+  const tokens  = buildTokens(rawSubs)
+  const grouped = groupTokens(tokens)
 
   return grouped.map((line, i) => ({
-    index: i + 1,
-    start: line.startSrt,
-    end: line.endSrt,
-    text: line.text,
+    index:        i + 1,
+    start:        line.startSrt,
+    end:          line.endSrt,
+    text:         line.text,
     originalText: line.text,
   }))
 }
