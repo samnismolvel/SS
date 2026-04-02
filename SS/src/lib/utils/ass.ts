@@ -55,40 +55,30 @@ function srtToMs(srt: string): number {
 
 function msToSrt(ms: number): string {
   const clamped = Math.max(0, ms)
-  const h    = Math.floor(clamped / 3600000)
-  const rem1 = clamped % 3600000
-  const m    = Math.floor(rem1 / 60000)
-  const rem2 = rem1 % 60000
-  const s    = Math.floor(rem2 / 1000)
+  const h      = Math.floor(clamped / 3600000)
+  const rem1   = clamped % 3600000
+  const m      = Math.floor(rem1 / 60000)
+  const rem2   = rem1 % 60000
+  const s      = Math.floor(rem2 / 1000)
   const millis = rem2 % 1000
   return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')},${millis.toString().padStart(3, '0')}`
 }
 
 // ─── Whisper timing correction ────────────────────────────────────────────────
 //
-// Whisper timestamps word onsets slightly early — it triggers on the leading
-// edge of acoustic energy before the phoneme is fully audible. A small positive
-// shift on start times makes subtitles feel synchronised rather than anticipatory.
+// Whisper timestamps word onsets slightly early. A positive shift on start
+// times makes subtitles feel synchronised rather than anticipatory.
 //
-// START_OFFSET_MS  — push start times forward (later) by this many ms.
-//                    100–150 ms is the sweet spot for most whisper models.
-// MIN_LINE_GAP_MS  — enforce at least this gap between consecutive lines so a
-//                    late-ending line never overlaps the next one's start.
+// syncOffset  — how many ms to push start times forward (user-tunable, default 120)
+// Applied ONLY at burn time (buildAss), never written back into the stored SRT,
+// so re-burning never double-applies the offset.
 
-const START_OFFSET_MS = 20
-const MIN_LINE_GAP_MS = 0   // set to e.g. 40 if you want a hard visual gap
-
-// Apply offset + overlap clamping to a flat list of Lines in-place.
-// Each line's startMs is pushed forward by START_OFFSET_MS, then clamped so
-// it never starts before the previous line has ended (+ MIN_LINE_GAP_MS).
-function applyTimingCorrection(lines: Line[]): Line[] {
+function applyTimingCorrection(lines: Line[], syncOffsetMs: number): Line[] {
   let prevEndMs = 0
   return lines.map(line => {
-    const rawStart  = line.startMs + START_OFFSET_MS
-    const startMs   = Math.max(rawStart, prevEndMs + MIN_LINE_GAP_MS)
-    // Never let the correction push start past end
-    const endMs     = Math.max(line.endMs, startMs + 100)
-    prevEndMs       = endMs
+    const startMs = Math.max(line.startMs + syncOffsetMs, prevEndMs)
+    const endMs   = Math.max(line.endMs + syncOffsetMs, startMs + 100)
+    prevEndMs     = endMs
     return {
       ...line,
       startMs,
@@ -131,12 +121,13 @@ function isValidWord(w: string): boolean {
 }
 
 // ─── Length-weighted word timing ──────────────────────────────────────────────
-// Distributes a segment's duration across its words proportionally by character
-// length, so longer/harder words get more screen time than short ones.
-// MIN_WORD_MS matches the browser's timeupdate fire rate (~250 ms) so no word
-// window is too short to be caught in the preview.
+// Used only by the preview (activeWordIndex in Editor.svelte).
+// At burn time, every subtitle coming from parseSRT is already a single word
+// with its own real timestamp, so distributeWordTimings is a no-op there.
+// For the preview we still need it because the stored subtitle spans the whole
+// grouped line and we must estimate which word is current.
 
-const MIN_WORD_MS = 250
+const MIN_WORD_MS = 250   // >= browser timeupdate interval so no word is missed
 const MAX_WORD_MS = 1500
 
 export function distributeWordTimings(
@@ -151,10 +142,8 @@ export function distributeWordTimings(
   const lengths  = words.map(w => Math.max(w.length, 1))
   const totalLen = lengths.reduce((a, b) => a + b, 0)
 
-  // First pass: proportional durations
   const durations = lengths.map(len => (len / totalLen) * totalMs)
 
-  // Second pass: clamp, track surplus
   let surplus = 0
   const clamped = durations.map(d => {
     const c = Math.max(MIN_WORD_MS, Math.min(MAX_WORD_MS, d))
@@ -162,7 +151,6 @@ export function distributeWordTimings(
     return c
   })
 
-  // Third pass: redistribute surplus
   let iterations = 0
   while (Math.abs(surplus) > 1 && iterations++ < 5) {
     const unclamped = clamped
@@ -180,7 +168,6 @@ export function distributeWordTimings(
     }
   }
 
-  // Build absolute timestamps
   const result: Array<{ startMs: number; endMs: number }> = []
   let cursor = startMs
   for (let i = 0; i < words.length; i++) {
@@ -193,6 +180,8 @@ export function distributeWordTimings(
 }
 
 // ─── Build token list from raw subtitles ──────────────────────────────────────
+// Each subtitle coming from parseSRT is already a single whisper word token.
+// buildTokens only needs to clean text and merge contractions here.
 
 function buildTokens(subtitles: Subtitle[]): Token[] {
   const raw: Token[] = subtitles.map(sub => ({
@@ -229,33 +218,33 @@ function buildTokens(subtitles: Subtitle[]): Token[] {
 // ─── Grouping options ─────────────────────────────────────────────────────────
 
 interface GroupOptions {
-  maxWords?: number  // hard cap on words per line           (default 6)
-  maxMs?: number     // hard cap on line duration in ms      (default 4000)
-  minMs?: number     // merge forward if line is shorter     (default 600)
-  pauseMs?: number   // inter-token gap that forces a break  (default 400)
+  maxWords?:   number   // hard cap on words per line           (default 6)
+  maxMs?:      number   // hard cap on line duration ms         (default 4000)
+  minMs?:      number   // merge forward if shorter             (default 600)
+  breathMs?:   number   // gap: ignore (mid-thought breath)     (default 250)
+  clauseMs?:   number   // gap: soft break if line long enough  (default 500)
+  cutMs?:      number   // gap: always hard break               (default 800)
 }
 
-// ─── Core grouping — shared by parseSRT and buildWordByWordEvents ─────────────
+// ─── Core grouping ────────────────────────────────────────────────────────────
 //
 // Break rules, in priority order:
-//   1. Pause gap between tokens  (speaker breath / edit cut)
-//   2. Sentence-ending punctuation  . ! ?
-//   3. Capital letter when group is non-empty
-//      (whisper capitalises after speaker cuts even mid-transcript)
-//      — The previous ≥2 guard is intentionally removed. Forward progress is
-//        guaranteed by the outer safety that force-consumes one token whenever
-//        the group would otherwise be empty.
-//   4. Clause-ending punctuation  , ; :  after ≥4 words
-//      — skipped for numeric commas like "10,000"
-//   5. Duration cap  (only after ≥3 words to avoid 1-word flash lines)
-//   6. Word-count cap
+//   1. Gap >= cutMs      → hard break (speaker pause / edit cut)
+//   2. Gap >= clauseMs   → soft break when we already have ≥3 words banked
+//   3. Sentence-ending punctuation  . ! ?
+//   4. Capital letter when group is non-empty (whisper capitalises after cuts)
+//   5. Clause punctuation  , ; :  after ≥4 words  (skip numeric commas)
+//   6. Duration cap  (only after ≥3 words to avoid 1-word flash lines)
+//   7. Word-count cap
 
 function groupTokens(tokens: Token[], opts: GroupOptions = {}): Line[] {
   const {
     maxWords = 6,
     maxMs    = 4000,
     minMs    = 600,
-    pauseMs  = 400,
+    breathMs = 250,
+    clauseMs = 500,
+    cutMs    = 800,
   } = opts
 
   const lines: Line[] = []
@@ -266,15 +255,17 @@ function groupTokens(tokens: Token[], opts: GroupOptions = {}): Line[] {
 
     while (i < tokens.length && group.length < maxWords) {
       const token     = tokens[i]
+      const lastEndMs = group.length > 0 ? group[group.length - 1].endMs : -Infinity
+      const gap       = token.startMs - lastEndMs
       const lastRaw   = group.length > 0 ? group[group.length - 1].rawWord : ''
-      const lastEndMs = group.length > 0 ? group[group.length - 1].endMs   : -Infinity
 
-      // Rule 1 — pause gap: real silence = new thought, always break
-      if (group.length > 0 && (token.startMs - lastEndMs) > pauseMs) break
+      // Rule 1 — hard cut pause
+      if (group.length > 0 && gap >= cutMs) break
 
-      // Rule 3 — capital letter: any capitalised word starts a new line.
-      // No minimum word-count guard — the outer safety (force-consume one token
-      // when group is empty) guarantees we always make forward progress.
+      // Rule 2 — clause pause with enough words already banked
+      if (group.length >= 3 && gap >= clauseMs) break
+
+      // Rule 4 — capital letter (any non-empty group)
       if (group.length > 0 && /^[A-Z]/.test(token.word)) break
 
       group.push(token)
@@ -282,36 +273,30 @@ function groupTokens(tokens: Token[], opts: GroupOptions = {}): Line[] {
 
       const currentRaw = group[group.length - 1].rawWord
 
-      // Rule 2 — sentence-ending punctuation
+      // Rule 3 — sentence-ending punctuation
       if (/[.!?]$/.test(currentRaw)) break
 
-      // Rule 4 — clause punctuation after ≥4 words (skip numeric commas)
+      // Rule 5 — clause punctuation after ≥4 words (skip numeric commas)
       const isNumericComma = /\d,\d/.test(currentRaw)
       if (!isNumericComma && group.length >= 4 && /[,;:]$/.test(currentRaw)) break
 
-      // Rule 5 — duration cap (only once we have ≥3 words)
+      // Rule 6 — duration cap (only once we have ≥3 words)
       if (group.length >= 3) {
         const dur = group[group.length - 1].endMs - group[0].startMs
         if (dur > maxMs) break
       }
     }
 
-    // Safety: if stalled, force-consume one token so we always advance
-    if (group.length === 0 && i < tokens.length) {
-      group.push(tokens[i++])
-    }
+    // Safety: stalled → force-consume one token
+    if (group.length === 0 && i < tokens.length) group.push(tokens[i++])
     if (group.length === 0) continue
 
-    // Minimum duration guard: absorb one more token if this line is very short
-    // and the next token follows without a meaningful pause — avoids flash lines.
+    // Minimum duration guard: absorb one more token when line is very short
+    // and the next follows without a hard pause — prevents flash subtitles.
     const lineDur = group[group.length - 1].endMs - group[0].startMs
-    if (
-      lineDur < minMs &&
-      group.length < maxWords &&
-      i < tokens.length &&
-      (tokens[i].startMs - group[group.length - 1].endMs) <= pauseMs
-    ) {
-      group.push(tokens[i++])
+    const nextGap = i < tokens.length ? tokens[i].startMs - group[group.length - 1].endMs : Infinity
+    if (lineDur < minMs && group.length < maxWords && nextGap < cutMs) {
+      if (i < tokens.length) group.push(tokens[i++])
     }
 
     lines.push({
@@ -398,12 +383,32 @@ export function buildAss(subtitles: Subtitle[], template: Template): string {
   return lines.join('\n')
 }
 
+// ─── Grouping options from template ──────────────────────────────────────────
+
+function groupOptsFromTemplate(template: Template): GroupOptions {
+  return {
+    maxWords: 6,
+    maxMs:    4000,
+    minMs:    600,
+    breathMs: 250,
+    // clauseMs and cutMs come from the user-tunable pauseThreshold.
+    // pauseThreshold is the "clause" boundary; cutMs is 1.6× that.
+    clauseMs: template.pauseThreshold ?? 500,
+    cutMs:    Math.round((template.pauseThreshold ?? 500) * 1.6),
+  }
+}
+
 // ─── Plain events ─────────────────────────────────────────────────────────────
 
 function buildPlainEvents(subtitles: Subtitle[], template: Template): string[] {
   const events: string[] = []
+  const syncOffset = template.syncOffset ?? 120
+
   const tokens  = buildTokens(subtitles)
-  const grouped = applyTimingCorrection(groupTokens(tokens))
+  const grouped = applyTimingCorrection(
+    groupTokens(tokens, groupOptsFromTemplate(template)),
+    syncOffset
+  )
 
   const overrideMap = new Map<string, Subtitle['overrides']>()
   for (const sub of subtitles) {
@@ -429,58 +434,43 @@ function buildWordByWordEvents(subtitles: Subtitle[], template: Template): strin
   const events: string[] = []
   const primaryColor   = '{\\c' + hexToAss(template.primaryColor) + '}'
   const highlightColor = '{\\c' + hexToAss(template.highlightColor) + '}'
+  const syncOffset     = template.syncOffset ?? 120
 
-  // Expand each subtitle line into per-word tokens with length-weighted timing
-  const wordTokens: Token[] = []
-  for (const sub of subtitles) {
-    const words = sub.text.trim().split(' ').map(cleanWord).filter(isValidWord)
-    if (words.length === 0) continue
-    const startMs = srtToMs(sub.start)
-    const endMs   = srtToMs(sub.end)
-    const timings = distributeWordTimings(words, startMs, endMs)
+  // Each subtitle is already a single word token from parseSRT.
+  // buildTokens just cleans + merges contractions — no timing distribution needed.
+  const wordTokens = buildTokens(subtitles)
 
-    words.forEach((word, wi) => {
-      wordTokens.push({
-        word,
-        rawWord:  word,
-        startSrt: sub.start,
-        endSrt:   sub.end,
-        startMs:  timings[wi].startMs,
-        endMs:    timings[wi].endMs,
-      })
-    })
+  // Group into display sentences, then apply timing correction to sentence boundaries.
+  const wbwOpts: GroupOptions = {
+    ...groupOptsFromTemplate(template),
+    maxWords: 8,
+    maxMs:    5000,
   }
-
-  const validTokens = wordTokens.filter(t => isValidWord(t.word))
-
-  // Group into display sentences. Word-by-word allows slightly more words/time
-  // since the highlight effect makes longer lines easy to follow.
-  const rawSentences = groupTokens(
-    validTokens,
-    { maxWords: 8, maxMs: 5000, minMs: 600, pauseMs: 400 }
+  const sentences = applyTimingCorrection(
+    groupTokens(wordTokens, wbwOpts),
+    syncOffset
   )
-  const sentences = applyTimingCorrection(rawSentences)
 
   for (const sentence of sentences) {
-    // Recover per-word tokens within this sentence's (corrected) time span.
-    // Allow 50 ms fudge on endMs to absorb rounding.
-    const sentenceTokens = validTokens.filter(
-      t => t.startMs >= (sentence.startMs - START_OFFSET_MS) &&
-           t.endMs   <= (sentence.endMs   - START_OFFSET_MS + 50)
+    // Recover the original per-word tokens inside this sentence's uncorrected span.
+    const uncorrectedStart = sentence.startMs - syncOffset
+    const uncorrectedEnd   = sentence.endMs   - syncOffset
+    const sentenceTokens   = wordTokens.filter(
+      t => t.startMs >= uncorrectedStart && t.endMs <= uncorrectedEnd + 50
     )
 
     const sentenceWords = sentence.text.split(' ')
 
-    // Apply the same offset to the recovered per-word tokens
+    // Map each display word to its corrected timing.
     const resolvedTokens: Token[] = sentenceWords.map((word, wi) => {
       const found = sentenceTokens[wi]
       if (found) {
         return {
           ...found,
-          startMs:  found.startMs + START_OFFSET_MS,
-          endMs:    found.endMs   + START_OFFSET_MS,
-          startSrt: msToSrt(found.startMs + START_OFFSET_MS),
-          endSrt:   msToSrt(found.endMs   + START_OFFSET_MS),
+          startMs:  found.startMs + syncOffset,
+          endMs:    found.endMs   + syncOffset,
+          startSrt: msToSrt(found.startMs + syncOffset),
+          endSrt:   msToSrt(found.endMs   + syncOffset),
         }
       }
       // Fallback: distribute evenly across sentence span
@@ -505,7 +495,6 @@ function buildWordByWordEvents(subtitles: Subtitle[], template: Template): strin
             : resolvedTokens[j].word
           if (j < resolvedTokens.length - 1) text += ' '
         }
-        // Always open with primaryColor to prevent color bleed from previous event
         events.push(
           'Dialogue: 0,' + msToAssTime(startMs) + ',' + msToAssTime(endMs) +
           ',Default,,0,0,0,,' + primaryColor + text
@@ -525,6 +514,8 @@ function buildWordByWordEvents(subtitles: Subtitle[], template: Template): strin
 }
 
 // ─── SRT parser ───────────────────────────────────────────────────────────────
+// Timing correction is NOT applied here — it's burn-time only (buildAss).
+// This keeps stored SRT timestamps clean so re-burning never double-shifts.
 
 export function parseSRT(content: string): Subtitle[] {
   const blocks = content.trim().split(/\n\n+/)
@@ -541,8 +532,10 @@ export function parseSRT(content: string): Subtitle[] {
     })
     .filter((s): s is Subtitle => s !== null)
 
+  // Group raw word tokens into display lines using default opts.
+  // No timing correction here — offsets applied at burn time only.
   const tokens  = buildTokens(rawSubs)
-  const grouped = applyTimingCorrection(groupTokens(tokens))
+  const grouped = groupTokens(tokens)
 
   return grouped.map((line, i) => ({
     index:        i + 1,

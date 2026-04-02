@@ -30,6 +30,9 @@ export interface Template {
   wordByWord: boolean
   wordMode: WordMode
   highlightColor: string // color used for the active word
+  // Timing tuning (user-adjustable in Advanced panel)
+  syncOffset: number      // ms to shift subtitle starts forward (whisper early-onset correction)
+  pauseThreshold: number  // inter-word gap ms that triggers a line break (clause boundary)
 }
 
 // ─── Enums / Literals ────────────────────────────────────────────────────────

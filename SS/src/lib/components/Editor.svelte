@@ -316,21 +316,9 @@
               onclick={() => seekToSegment(activeSub)}
             >
               {#if templateVal.wordByWord && templateVal.wordMode !== 'none'}
-                {#if templateVal.wordMode === 'solo'}
-                  <!-- Solo: only the active word is visible, matching burned ASS output -->
-                  {#if activeWordIndex >= 0}
-                    {@const soloWords = activeSub.text.trim().split(' ').filter((w: string) => w.length > 0)}
-                    <span style="color: {templateVal.highlightColor}; white-space: pre;">
-                      {soloWords[activeWordIndex] ?? ''}
-                    </span>
-                  {/if}
-                {:else}
-                  <!-- Highlight: full sentence visible, active word coloured differently -->
-                  {#each activeSub.text.trim().split(' ').filter((w: string) => w.length > 0) as word, wi}
-                    {@const words = activeSub.text.trim().split(' ').filter((w: string) => w.length > 0)}
-                    <span style="color: {wi === activeWordIndex ? templateVal.highlightColor : (effective?.primaryColor ?? '#fff')}; white-space: pre;">{word}{wi < words.length - 1 ? ' ' : ''}</span>
-                  {/each}
-                {/if}
+                {#each activeSub.text.trim().split(' ').filter((w: string) => w.length > 0) as word, wi}
+                  <span style="color: {wi === activeWordIndex ? templateVal.highlightColor : (effective?.primaryColor ?? '#fff')}; white-space: pre;">{word}{wi < activeSub.text.trim().split(' ').filter((w: string) => w.length > 0).length - 1 ? ' ' : ''}</span>
+                {/each}
               {:else}
                 {activeSub.text}
               {/if}
@@ -556,6 +544,21 @@
               <input type="range" min="0" max="100" value={templateVal.marginV}
                 oninput={(e) => updateActiveTemplate({ marginV: Number(e.currentTarget.value) })} />
               <span class="range-val">{templateVal.marginV}</span>
+            </div>
+
+            <div class="divider"></div>
+
+            <div class="field-row">
+              <label title="Push subtitle start times forward to compensate for whisper early onset detection.">Sync offset</label>
+              <input type="range" min="0" max="300" step="10" value={templateVal.syncOffset ?? 120}
+                oninput={(e) => updateActiveTemplate({ syncOffset: Number(e.currentTarget.value) })} />
+              <span class="range-val">{templateVal.syncOffset ?? 120}ms</span>
+            </div>
+            <div class="field-row">
+              <label title="Inter-word pause that triggers a new subtitle line. 400–600 ms suits natural speech.">Pause split</label>
+              <input type="range" min="200" max="800" step="50" value={templateVal.pauseThreshold ?? 500}
+                oninput={(e) => updateActiveTemplate({ pauseThreshold: Number(e.currentTarget.value) })} />
+              <span class="range-val">{templateVal.pauseThreshold ?? 500}ms</span>
             </div>
           {/if}
 

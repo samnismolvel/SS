@@ -28,6 +28,8 @@ export const PRESETS: Template[] = [
     wordByWord: false,
     wordMode: 'none',
     highlightColor: '#FFFF00',
+    syncOffset: 120,
+    pauseThreshold: 500,
   },
   {
     id: PRESET_IDS.TIKTOK,
@@ -52,6 +54,8 @@ export const PRESETS: Template[] = [
     wordByWord: true,
     wordMode: 'highlight',
     highlightColor: '#FF2D55',
+    syncOffset: 120,
+    pauseThreshold: 500,
   },
   {
     id: PRESET_IDS.CINEMATIC,
@@ -76,6 +80,8 @@ export const PRESETS: Template[] = [
     wordByWord: false,
     wordMode: 'none',
     highlightColor: '#F5F5DC',
+    syncOffset: 120,
+    pauseThreshold: 500,
   },
   {
     id: PRESET_IDS.MINIMAL,
@@ -100,6 +106,8 @@ export const PRESETS: Template[] = [
     wordByWord: false,
     wordMode: 'none',
     highlightColor: '#FFFFFF',
+    syncOffset: 120,
+    pauseThreshold: 500,
   },
   {
     id: PRESET_IDS.KARAOKE,
@@ -124,6 +132,8 @@ export const PRESETS: Template[] = [
     wordByWord: true,
     wordMode: 'highlight',
     highlightColor: '#00BFFF',
+    syncOffset: 120,
+    pauseThreshold: 500,
   },
 ]
 
