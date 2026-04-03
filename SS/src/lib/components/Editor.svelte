@@ -3,7 +3,7 @@
   import { activeTemplate, updateActiveTemplate, allTemplates, setActiveTemplate, saveActiveAsTemplate } from '$lib/stores/templates'
   import { buildAss, distributeWordTimings } from '$lib/utils/ass'
   import { convertFileSrc } from '@tauri-apps/api/core'
-  import type { Subtitle, Template, WordMode, Alignment } from '$lib/types'
+  import type { Subtitle, Template, WordMode, Alignment, AnimationMode } from '$lib/types'
 
 
   interface Props {
@@ -456,6 +456,17 @@
 
         {#if templateVal}
         <div class="tp-body">
+          <div class="field-row">
+            <label>Animation</label>
+            <select value={templateVal.animation ?? 'none'}
+              onchange={(e) => updateActiveTemplate({ animation: e.currentTarget.value as AnimationMode })}>
+              <option value="none">None</option>
+              <option value="fade">Fade</option>
+            </select>
+          </div>
+
+          <div class="divider"></div>
+
           <div class="field-row">
             <label class="checkbox-label">
               <input type="checkbox" checked={templateVal.wordByWord}

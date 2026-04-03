@@ -1,4 +1,4 @@
-import type { Template, Subtitle } from '../types'
+import type { Template, Subtitle, AnimationMode } from '../types'
 
 // ─── Color helpers ────────────────────────────────────────────────────────────
 
@@ -399,6 +399,32 @@ function groupOptsFromTemplate(template: Template): GroupOptions {
   }
 }
 
+// ─── Animation tag builder ───────────────────────────────────────────────────
+//
+// Returns an ASS override tag string to prepend to each dialogue event's text.
+// All tags are self-contained per-event so they work cleanly with libass/FFmpeg.
+//
+// fade: \fad(inMs, outMs) — cross-fade the event in and out.
+//   inMs  = time in ms to fade in  from the event start
+//   outMs = time in ms to fade out into the event end
+//   Both are clamped to half the event duration so they never overlap.
+
+function buildAnimationTag(
+  animation: AnimationMode,
+  eventDurationMs: number
+): string {
+  if (animation === 'none' || !animation) return ''
+
+  if (animation === 'fade') {
+    const half   = Math.floor(eventDurationMs / 2)
+    const fadeIn  = Math.min(80, half)
+    const fadeOut = Math.min(80, half)
+    return `{\\fad(${fadeIn},${fadeOut})}`
+  }
+
+  return ''
+}
+
 // ─── Plain events ─────────────────────────────────────────────────────────────
 
 function buildPlainEvents(subtitles: Subtitle[], template: Template): string[] {
@@ -423,7 +449,8 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template): string[] {
     const end       = srtTimeToAss(line.endSrt)
     const tags      = buildInlineTags(style, template)
     const text      = line.text.replace(/\{/g, '\\{').replace(/\}/g, '\\}')
-    events.push('Dialogue: 0,' + start + ',' + end + ',Default,,0,0,0,,' + tags + text)
+    const animTag   = buildAnimationTag(template.animation, srtToMs(line.endSrt) - srtToMs(line.startSrt))
+    events.push('Dialogue: 0,' + start + ',' + end + ',Default,,0,0,0,,' + animTag + tags + text)
   }
 
   return events
@@ -523,16 +550,20 @@ function buildWordByWordEvents(subtitles: Subtitle[], template: Template): strin
             : resolvedTokens[j].word
           if (j < resolvedTokens.length - 1) text += ' '
         }
+        const wordDur = endMs - startMs
+        const animTag = buildAnimationTag(template.animation, wordDur)
         events.push(
           'Dialogue: 0,' + msToAssTime(startMs) + ',' + msToAssTime(endMs) +
-          ',Default,,0,0,0,,' + primaryColor + text
+          ',Default,,0,0,0,,' + animTag + primaryColor + text
         )
       }
     } else if (template.wordMode === 'solo') {
       for (const { word, startMs, endMs } of resolvedTokens) {
+        const wordDur = endMs - startMs
+        const animTag = buildAnimationTag(template.animation, wordDur)
         events.push(
           'Dialogue: 0,' + msToAssTime(startMs) + ',' + msToAssTime(endMs) +
-          ',Default,,0,0,0,,' + highlightColor + word
+          ',Default,,0,0,0,,' + animTag + highlightColor + word
         )
       }
     }

@@ -33,6 +33,7 @@ export interface Template {
   // Timing tuning (user-adjustable in Advanced panel)
   syncOffset: number      // ms to shift subtitle starts forward (whisper early-onset correction)
   pauseThreshold: number  // inter-word gap ms that triggers a line break (clause boundary)
+  animation: AnimationMode  // entrance/transition animation applied at burn time
 }
 
 // ─── Enums / Literals ────────────────────────────────────────────────────────
@@ -44,6 +45,8 @@ export type Alignment =
   | 7 | 8 | 9   // top-left,    top-center,    top-right
 
 export type WordMode = 'highlight' | 'solo' | 'none'
+
+export type AnimationMode = 'none' | 'fade'
 
 export type SubtitleStatus = 'pending' | 'processing' | 'done' | 'failed'
 

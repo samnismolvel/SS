@@ -1,5 +1,5 @@
 import { writable, derived } from 'svelte/store'
-import type { Template } from '../types'
+import type { Template, AnimationMode } from '../types'
 import { PRESET_IDS } from '../types'
 
 // ─── Built-in presets ─────────────────────────────────────────────────────────
@@ -30,6 +30,7 @@ export const PRESETS: Template[] = [
     highlightColor: '#FFFF00',
     syncOffset: 120,
     pauseThreshold: 500,
+    animation: 'none' as AnimationMode,
   },
   {
     id: PRESET_IDS.TIKTOK,
@@ -56,6 +57,7 @@ export const PRESETS: Template[] = [
     highlightColor: '#FF2D55',
     syncOffset: 120,
     pauseThreshold: 500,
+    animation: 'none' as AnimationMode,
   },
   {
     id: PRESET_IDS.CINEMATIC,
@@ -82,6 +84,7 @@ export const PRESETS: Template[] = [
     highlightColor: '#F5F5DC',
     syncOffset: 120,
     pauseThreshold: 500,
+    animation: 'none' as AnimationMode,
   },
   {
     id: PRESET_IDS.MINIMAL,
@@ -108,6 +111,7 @@ export const PRESETS: Template[] = [
     highlightColor: '#FFFFFF',
     syncOffset: 120,
     pauseThreshold: 500,
+    animation: 'none' as AnimationMode,
   },
   {
     id: PRESET_IDS.KARAOKE,
@@ -134,6 +138,7 @@ export const PRESETS: Template[] = [
     highlightColor: '#00BFFF',
     syncOffset: 120,
     pauseThreshold: 500,
+    animation: 'none' as AnimationMode,
   },
 ]
 
