@@ -316,9 +316,21 @@
               onclick={() => seekToSegment(activeSub)}
             >
               {#if templateVal.wordByWord && templateVal.wordMode !== 'none'}
-                {#each activeSub.text.trim().split(' ').filter((w: string) => w.length > 0) as word, wi}
-                  <span style="color: {wi === activeWordIndex ? templateVal.highlightColor : (effective?.primaryColor ?? '#fff')}; white-space: pre;">{word}{wi < activeSub.text.trim().split(' ').filter((w: string) => w.length > 0).length - 1 ? ' ' : ''}</span>
-                {/each}
+                {#if templateVal.wordMode === 'solo'}
+                  <!-- Solo: only the active word is visible, matching burned ASS output -->
+                  {#if activeWordIndex >= 0}
+                    {@const soloWords = activeSub.text.trim().split(' ').filter((w: string) => w.length > 0)}
+                    <span style="color: {templateVal.highlightColor}; white-space: pre;">
+                      {soloWords[activeWordIndex] ?? ''}
+                    </span>
+                  {/if}
+                {:else}
+                  <!-- Highlight: full sentence visible, active word coloured differently -->
+                  {#each activeSub.text.trim().split(' ').filter((w: string) => w.length > 0) as word, wi}
+                    {@const allWords = activeSub.text.trim().split(' ').filter((w: string) => w.length > 0)}
+                    <span style="color: {wi === activeWordIndex ? templateVal.highlightColor : (effective?.primaryColor ?? '#fff')}; white-space: pre;">{word}{wi < allWords.length - 1 ? ' ' : ''}</span>
+                  {/each}
+                {/if}
               {:else}
                 {activeSub.text}
               {/if}

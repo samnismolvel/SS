@@ -388,9 +388,9 @@ export function buildAss(subtitles: Subtitle[], template: Template): string {
 
 function groupOptsFromTemplate(template: Template): GroupOptions {
   return {
-    maxWords: 6,
-    maxMs:    4000,
-    minMs:    600,
+    maxWords: 4,     // 4 words keeps plain subtitles readable without crowding
+    maxMs:    3500,
+    minMs:    500,
     breathMs: 250,
     // clauseMs and cutMs come from the user-tunable pauseThreshold.
     // pauseThreshold is the "clause" boundary; cutMs is 1.6× that.
