@@ -462,6 +462,7 @@
               onchange={(e) => updateActiveTemplate({ animation: e.currentTarget.value as AnimationMode })}>
               <option value="none">None</option>
               <option value="fade">Fade</option>
+              <option value="pop">Pop</option>
             </select>
           </div>
 

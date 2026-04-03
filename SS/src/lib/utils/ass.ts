@@ -404,10 +404,14 @@ function groupOptsFromTemplate(template: Template): GroupOptions {
 // Returns an ASS override tag string to prepend to each dialogue event's text.
 // All tags are self-contained per-event so they work cleanly with libass/FFmpeg.
 //
-// fade: \fad(inMs, outMs) — cross-fade the event in and out.
-//   inMs  = time in ms to fade in  from the event start
-//   outMs = time in ms to fade out into the event end
-//   Both are clamped to half the event duration so they never overlap.
+// fade: \fad(inMs, outMs)
+//   Fades the event in and out. Both values clamped to half the event duration.
+//
+// pop: \fscx\fscy + \t() scale transform
+//   Scales the subtitle from 50% → 100% over 150 ms (clamped to event length).
+//   Uses \fscx/\fscy (horizontal/vertical scale %) rather than \fs so it
+//   works relative to the style's base font size and doesn't fight other tags.
+//   A simultaneous short fade-in (\fad) smooths the leading edge.
 
 function buildAnimationTag(
   animation: AnimationMode,
@@ -416,10 +420,19 @@ function buildAnimationTag(
   if (animation === 'none' || !animation) return ''
 
   if (animation === 'fade') {
-    const half   = Math.floor(eventDurationMs / 2)
+    const half    = Math.floor(eventDurationMs / 2)
     const fadeIn  = Math.min(80, half)
     const fadeOut = Math.min(80, half)
     return `{\\fad(${fadeIn},${fadeOut})}`
+  }
+
+  if (animation === 'pop') {
+    // Scale from 50% → 100% over popMs, clamped so it never exceeds the event.
+    const popMs  = Math.min(150, eventDurationMs)
+    const fadeIn = Math.min(60, Math.floor(eventDurationMs / 2))
+    // \fscx50\fscy50 sets the start scale; \t(0,popMs,...) animates to 100%.
+    // \fad(fadeIn,0) softens the very first frames so the pop doesn't feel harsh.
+    return `{\\fad(${fadeIn},0)\\fscx50\\fscy50\\t(0,${popMs},\\fscx100\\fscy100)}`
   }
 
   return ''
