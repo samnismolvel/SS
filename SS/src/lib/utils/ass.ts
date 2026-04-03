@@ -361,7 +361,7 @@ export function buildAss(subtitles: Subtitle[], template: Template): string {
   lines.push('Title: Subtitles')
   lines.push('ScriptType: v4.00+')
   lines.push('Collisions: Normal')
-  lines.push('WrapStyle: 0')
+  lines.push('WrapStyle: 2')  // 2 = no wrapping — overflow clips, never wraps to a second line
   lines.push('')
   lines.push('[V4+ Styles]')
   lines.push(
@@ -388,9 +388,9 @@ export function buildAss(subtitles: Subtitle[], template: Template): string {
 
 function groupOptsFromTemplate(template: Template): GroupOptions {
   return {
-    maxWords: 4,     // 4 words keeps plain subtitles readable without crowding
-    maxMs:    3500,
-    minMs:    500,
+    maxWords: 3,     // 3 words guarantees a single line at typical font sizes
+    maxMs:    3000,
+    minMs:    400,
     breathMs: 250,
     // clauseMs and cutMs come from the user-tunable pauseThreshold.
     // pauseThreshold is the "clause" boundary; cutMs is 1.6× that.
