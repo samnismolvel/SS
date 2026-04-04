@@ -355,22 +355,13 @@ function buildInlineTags(style: EffectiveStyle, base: Template): string {
 
 // ─── Main ASS builder ─────────────────────────────────────────────────────────
 
-export function buildAss(
-  subtitles: Subtitle[],
-  template: Template,
-  videoWidth  = 1920,
-  videoHeight = 1080,
-): string {
+export function buildAss(subtitles: Subtitle[], template: Template): string {
   const lines: string[] = []
   lines.push('[Script Info]')
   lines.push('Title: Subtitles')
   lines.push('ScriptType: v4.00+')
   lines.push('Collisions: Normal')
-  lines.push('WrapStyle: 2')
-  // Use libass native script resolution (384x288) so font sizes stay visually
-  // correct. All \pos/\move coords are scaled from video pixels to script space.
-  lines.push('PlayResX: 384')
-  lines.push('PlayResY: 288')
+  lines.push('WrapStyle: 0')
   lines.push('')
   lines.push('[V4+ Styles]')
   lines.push(
@@ -385,9 +376,9 @@ export function buildAss(
   lines.push('Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text')
 
   if (template.wordByWord && template.wordMode !== 'none') {
-    lines.push(...buildWordByWordEvents(subtitles, template, videoWidth, videoHeight))
+    lines.push(...buildWordByWordEvents(subtitles, template))
   } else {
-    lines.push(...buildPlainEvents(subtitles, template, videoWidth, videoHeight))
+    lines.push(...buildPlainEvents(subtitles, template))
   }
 
   return lines.join('\n')
@@ -442,8 +433,6 @@ function buildAnimationTag(
   alignment: number = 2,
   marginV: number = 20,
   fontSize: number = 24,
-  videoWidth: number = 1920,
-  videoHeight: number = 1080,
 ): string {
   if (animation === 'none' || !animation) return ''
 
@@ -461,28 +450,26 @@ function buildAnimationTag(
   }
 
   if (animation === 'slide-up') {
-    const slideMs       = Math.min(180, eventDurationMs)
-    const fadeIn        = Math.min(80, Math.floor(eventDurationMs / 2))
-    // Work in video pixels, then convert to script coords at the end
-    const slideOffsetPx = Math.round(videoHeight * 0.037)
-    const lineHeightPx  = Math.round(fontSize * (videoHeight / SCRIPT_H) * 1.4)
+    const slideMs    = Math.min(180, eventDurationMs)
+    const fadeIn     = Math.min(80, Math.floor(eventDurationMs / 2))
+    // All coords in 384x288 script space (libass default, no PlayRes override).
+    // marginV in the style is also in script units so it maps directly.
+    const slideOffset = 12  // ~40px at 1080p equivalent in 288p script space
+    const lineHeight  = Math.round(fontSize * 1.4)
+    const cx          = 192  // horizontal centre of 384px script width
     const row = alignment <= 3 ? 'bottom' : alignment <= 6 ? 'middle' : 'top'
 
-    let yEndPx: number, yStartPx: number
+    let yEnd: number, yStart: number
     if (row === 'bottom') {
-      yEndPx   = videoHeight - marginV - lineHeightPx
-      yStartPx = yEndPx + slideOffsetPx
+      yEnd   = SCRIPT_H - marginV - lineHeight
+      yStart = yEnd + slideOffset
     } else if (row === 'middle') {
-      yEndPx   = Math.round(videoHeight / 2)
-      yStartPx = yEndPx + slideOffsetPx
+      yEnd   = Math.round(SCRIPT_H / 2)
+      yStart = yEnd + slideOffset
     } else {
-      yEndPx   = marginV + lineHeightPx
-      yStartPx = yEndPx - slideOffsetPx
+      yEnd   = marginV + lineHeight
+      yStart = yEnd - slideOffset
     }
-
-    const cx     = toScriptX(videoWidth / 2, videoWidth)
-    const yEnd   = toScriptY(yEndPx,   videoHeight)
-    const yStart = toScriptY(yStartPx, videoHeight)
 
     return `{\\fad(${fadeIn},0)\\move(${cx},${yStart},${cx},${yEnd},0,${slideMs})}`
   }
@@ -529,12 +516,7 @@ function buildTypewriterEvents(
 
 // ─── Plain events─────────────────────────────────────────
 
-function buildPlainEvents(
-  subtitles: Subtitle[],
-  template: Template,
-  videoWidth: number,
-  videoHeight: number,
-): string[] {
+function buildPlainEvents(subtitles: Subtitle[], template: Template): string[] {
   const events: string[] = []
   const syncOffset = template.syncOffset ?? 50
 
@@ -556,24 +538,13 @@ function buildPlainEvents(
     const end        = srtTimeToAss(line.endSrt)
     const text       = line.text.replace(/\{/g, '\\{').replace(/\}/g, '\\}')
     const durationMs = srtToMs(line.endSrt) - srtToMs(line.startSrt)
-
-    // If the user dragged this segment, emit \pos() in script coordinates.
-    // posX/posY are stored as % of the actual video frame (0–100).
-    const posX = (overrides as any)?.posX as number | undefined
-    const posY = (overrides as any)?.posY as number | undefined
-    const posTag = (posX != null && posY != null)
-      ? `{\\pos(${toScriptX(posX / 100 * videoWidth, videoWidth)},${toScriptY(posY / 100 * videoHeight, videoHeight)})}`
-      : ''
-
-    const tags    = posTag + buildInlineTags(style, template)
-    const animTag = buildAnimationTag(
+    const tags       = buildInlineTags(style, template)
+    const animTag    = buildAnimationTag(
       template.animation,
       durationMs,
       style.alignment ?? template.alignment,
       style.marginV   ?? template.marginV,
       style.fontSize  ?? template.fontSize,
-      videoWidth,
-      videoHeight,
     )
     if (template.animation === 'typewriter') {
       events.push(...buildTypewriterEvents(
@@ -597,7 +568,7 @@ function buildPlainEvents(
 // Plain mode (buildPlainEvents) is the one that needs frame-accurate per-word
 // timestamps — it gets them via buildTokens on the raw single-word SRT blocks.
 
-function buildWordByWordEvents(subtitles: Subtitle[], template: Template, videoWidth: number, videoHeight: number): string[] {
+function buildWordByWordEvents(subtitles: Subtitle[], template: Template): string[] {
   const events: string[] = []
   const primaryColor   = '{\\c' + hexToAss(template.primaryColor) + '}'
   const highlightColor = '{\\c' + hexToAss(template.highlightColor) + '}'
@@ -684,7 +655,7 @@ function buildWordByWordEvents(subtitles: Subtitle[], template: Template, videoW
           if (j < resolvedTokens.length - 1) text += ' '
         }
         const wordDur = endMs - startMs
-        const animTag = buildAnimationTag(template.animation, wordDur, template.alignment, template.marginV, template.fontSize, videoWidth, videoHeight)
+        const animTag = buildAnimationTag(template.animation, wordDur, template.alignment, template.marginV, template.fontSize)
         events.push(
           'Dialogue: 0,' + msToAssTime(startMs) + ',' + msToAssTime(endMs) +
           ',Default,,0,0,0,,' + animTag + primaryColor + text
@@ -693,7 +664,7 @@ function buildWordByWordEvents(subtitles: Subtitle[], template: Template, videoW
     } else if (template.wordMode === 'solo') {
       for (const { word, startMs, endMs } of resolvedTokens) {
         const wordDur = endMs - startMs
-        const animTag = buildAnimationTag(template.animation, wordDur, template.alignment, template.marginV, template.fontSize, videoWidth, videoHeight)
+        const animTag = buildAnimationTag(template.animation, wordDur, template.alignment, template.marginV, template.fontSize)
         events.push(
           'Dialogue: 0,' + msToAssTime(startMs) + ',' + msToAssTime(endMs) +
           ',Default,,0,0,0,,' + animTag + highlightColor + word

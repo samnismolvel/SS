@@ -37,11 +37,6 @@
   let playing = $state(false)
   let videoSrc = $state('')
 
-  // Drag-to-reposition state
-  let videoWrapEl = $state(null as HTMLDivElement | null)
-  let isDragging  = $state(false)
-  let dragOffsetX = $state(0)
-  let dragOffsetY = $state(0)
 
   $effect(() => {
     if (sessionVal?.videoPath) {
@@ -134,46 +129,6 @@
     }
   }
 
-  // ── Letterbox-aware video frame rect ──────────────────────────────────────
-  // video-wrap uses object-fit:contain — compute the rect of the actual rendered
-  // frame (excluding black bars) so drag coords map to real video pixels.
-  function getVideoFrameRect(): { left: number; top: number; width: number; height: number } | null {
-    if (!videoWrapEl || !videoEl || !videoEl.videoWidth) return null
-    const wrap   = videoWrapEl.getBoundingClientRect()
-    const vidAR  = videoEl.videoWidth / videoEl.videoHeight
-    const wrapAR = wrap.width / wrap.height
-    let frameW: number, frameH: number
-    if (vidAR > wrapAR) {
-      frameW = wrap.width;  frameH = wrap.width / vidAR
-    } else {
-      frameH = wrap.height; frameW = wrap.height * vidAR
-    }
-    return {
-      left:   wrap.left + (wrap.width  - frameW) / 2,
-      top:    wrap.top  + (wrap.height - frameH) / 2,
-      width:  frameW,
-      height: frameH,
-    }
-  }
-
-  // Returns CSS positioning string for the overlay div.
-  // Uses posX/posY (% of video frame) when set by drag; falls back to alignment grid.
-  function getOverlayStyle(sub: any, alignment: number): string {
-    const posX = sub?.overrides?.posX
-    const posY = sub?.overrides?.posY
-    if (posX != null && posY != null) {
-      const frame = getVideoFrameRect()
-      const wrap  = videoWrapEl?.getBoundingClientRect()
-      if (frame && wrap) {
-        const absX = frame.left - wrap.left + (posX / 100) * frame.width
-        const absY = frame.top  - wrap.top  + (posY / 100) * frame.height
-        return `left: ${absX}px; top: ${absY}px; text-align: left; transform: none;`
-      }
-      return `left: ${posX}%; top: ${posY}%; text-align: left; transform: none;`
-    }
-    return getAlignmentStyle(alignment)
-  }
-
   function getAlignmentStyle(alignment: number): string {
     const positions: Record<number, string> = {
       1: 'bottom: 10%; left: 5%; text-align: left;',
@@ -187,39 +142,6 @@
       9: 'top: 5%; right: 5%; text-align: right;',
     }
     return positions[alignment] ?? positions[2]
-  }
-
-  // ── Drag handlers ───────────────────────────────────────────────────────────
-  function onOverlayPointerDown(e: PointerEvent, sub: any) {
-    e.preventDefault()
-    e.stopPropagation()
-    const idx = items.indexOf(sub)
-    if (idx !== -1) selectSegment(idx)
-    const el = e.currentTarget as HTMLElement
-    const r  = el.getBoundingClientRect()
-    dragOffsetX = e.clientX - r.left
-    dragOffsetY = e.clientY - r.top
-    isDragging  = true
-    el.setPointerCapture(e.pointerId)
-  }
-
-  function onOverlayPointerMove(e: PointerEvent, sub: any) {
-    if (!isDragging) return
-    e.preventDefault()
-    const frame = getVideoFrameRect()
-    if (!frame) return
-    const rawX     = e.clientX - frame.left - dragOffsetX
-    const rawY     = e.clientY - frame.top  - dragOffsetY
-    const clampedX = Math.max(0, Math.min(frame.width  - 4, rawX))
-    const clampedY = Math.max(0, Math.min(frame.height - 4, rawY))
-    const pctX = (clampedX / frame.width)  * 100
-    const pctY = (clampedY / frame.height) * 100
-    const idx = items.indexOf(sub)
-    if (idx !== -1) updateSubtitleOverrides(idx, { posX: pctX, posY: pctY })
-  }
-
-  function onOverlayPointerUp(_e: PointerEvent) {
-    isDragging = false
   }
 
   function formatTime(s: number): string {
@@ -246,9 +168,7 @@
 
   function handleBurn() {
     if (!sessionVal || !templateVal) return
-    const w = videoEl?.videoWidth  ?? 1920
-    const h = videoEl?.videoHeight ?? 1080
-    const assContent = buildAss(sessionVal.subtitles, templateVal, w, h)
+    const assContent = buildAss(sessionVal.subtitles, templateVal)
     onburn({ videoPath: sessionVal.videoPath, outputPath: sessionVal.outputPath, assContent })
   }
 
@@ -359,7 +279,7 @@
     <div class="left-col">
 
       <!-- Video player -->
-      <div class="video-wrap" bind:this={videoWrapEl}>
+      <div class="video-wrap">
         {#if videoSrc}
           <video
             bind:this={videoEl}
@@ -372,17 +292,14 @@
           ></video>
 
           <!-- Subtitle overlay -->
-          <!-- While paused: show selectedSub (so you can drag it).
-               While playing: always show activeSub so the overlay tracks the video. -->
-          {#if (activeSub || (selectedSub && !playing)) && templateVal}
-            {@const displaySub = (!playing && selectedSub) ? selectedSub : activeSub}
-            {@const displayEff = (!playing && selectedSub) ? effective : templateVal}
+          {#if activeSub && templateVal}
+            {@const displaySub = activeSub}
+            {@const displayEff = templateVal}
             <div
               class="sub-overlay"
-              class:is-dragging={isDragging}
               style="
                 position: absolute;
-                {getOverlayStyle(displaySub, displayEff?.alignment ?? 2)}
+                {getAlignmentStyle(displayEff?.alignment ?? 2)}
                 font-family: {displayEff?.fontName ?? 'Arial'};
                 font-size: {(displayEff?.fontSize ?? 24) * 0.8}px;
                 font-weight: {displayEff?.bold ? 'bold' : 'normal'};
@@ -394,16 +311,9 @@
                   -{displayEff?.outline ?? 2}px {displayEff?.outline ?? 2}px 0 {displayEff?.outlineColor ?? '#000'},
                   {displayEff?.outline ?? 2}px {displayEff?.outline ?? 2}px 0 {displayEff?.outlineColor ?? '#000'};
                 max-width: 90%;
-                pointer-events: auto;
-                cursor: {isDragging ? 'grabbing' : 'grab'};
+                pointer-events: none;
                 padding: 2px 8px;
-                user-select: none;
-                touch-action: none;
               "
-              onpointerdown={(e) => onOverlayPointerDown(e, displaySub)}
-              onpointermove={(e) => onOverlayPointerMove(e, displaySub)}
-              onpointerup={onOverlayPointerUp}
-              onpointercancel={onOverlayPointerUp}
             >
               {#if templateVal.wordByWord && templateVal.wordMode !== 'none'}
                 {#if templateVal.wordMode === 'solo'}
@@ -764,10 +674,8 @@
     position: absolute;
     line-height: 1.3;
     border-radius: 3px;
-    touch-action: none;
-  }
+    }
   .sub-overlay:hover { outline: 1px dashed rgba(255,255,255,0.45); }
-  .sub-overlay.is-dragging { outline: 1px dashed rgba(255,255,255,0.9); }
 
   .video-controls {
     position: absolute; bottom: 0; left: 0; right: 0;
