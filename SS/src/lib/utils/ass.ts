@@ -497,18 +497,23 @@ function buildTypewriterEvents(
   const chars = [...text]  // spread handles multi-byte / emoji correctly
   if (chars.length === 0) return []
 
-  const totalMs      = endMs - startMs
-  const rawDelay     = Math.floor(totalMs / chars.length)
-  const charDelayMs  = Math.max(30, Math.min(80, rawDelay))
+  const totalMs     = endMs - startMs
+  const rawDelay    = Math.floor(totalMs / chars.length)
+  const charDelayMs = Math.max(30, Math.min(80, rawDelay))
   const events: string[] = []
 
   for (let i = 0; i < chars.length; i++) {
-    const charStartMs  = Math.min(startMs + i * charDelayMs, endMs - 1)
-    const charStart    = msToAssTime(charStartMs)
-    const partial      = chars.slice(0, i + 1).join('')
-    // Each event shows all chars revealed so far, holding until the line ends
+    const charStartMs = Math.min(startMs + i * charDelayMs, endMs - 1)
+    // Each event ends exactly when the next one begins — no overlap, no stacking.
+    // The final character's event holds until the natural line end.
+    const charEndMs   = i < chars.length - 1
+      ? Math.min(startMs + (i + 1) * charDelayMs, endMs)
+      : endMs
+    const charStart = msToAssTime(charStartMs)
+    const charEnd   = msToAssTime(charEndMs)
+    const partial   = chars.slice(0, i + 1).join('')
     events.push(
-      'Dialogue: 0,' + charStart + ',' + endAss + ',Default,,0,0,0,,' + tags + partial
+      'Dialogue: 0,' + charStart + ',' + charEnd + ',Default,,0,0,0,,' + tags + partial
     )
   }
 
