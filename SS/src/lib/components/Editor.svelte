@@ -144,6 +144,34 @@
     return positions[alignment] ?? positions[2]
   }
 
+  // ── Animation preview ────────────────────────────────────────────────────────
+  // Returns a CSS animation string approximating the ASS animation for preview.
+  // Keyed on activeSub.start so the animation restarts on each new subtitle.
+  function getAnimationStyle(animation: string | undefined): string {
+    switch (animation) {
+      case 'fade':      return 'animation: sub-fade 0.08s ease-in both;'
+      case 'pop':       return 'animation: sub-pop 0.15s ease-out both;'
+      case 'slide-up':  return 'animation: sub-slide-up 0.18s ease-out both;'
+      default:          return ''
+    }
+  }
+
+  // Typewriter: derive visible text from currentTime within the active subtitle.
+  // Uses the same charDelayMs logic as buildTypewriterEvents in ass.ts.
+  let typewriterText = $derived((() => {
+    if (!activeSub || templateVal?.animation !== 'typewriter') return null
+    const text      = activeSub.text
+    const chars     = [...text]
+    const startMs   = srtToSeconds(activeSub.start) * 1000
+    const endMs     = srtToSeconds(activeSub.end)   * 1000
+    const totalMs   = endMs - startMs
+    const rawDelay  = Math.floor(totalMs / chars.length)
+    const delayMs   = Math.max(30, Math.min(80, rawDelay))
+    const elapsed   = currentTime * 1000 - startMs
+    const revealed  = Math.min(chars.length, Math.max(0, Math.ceil(elapsed / delayMs)))
+    return chars.slice(0, revealed).join('')
+  })())
+
   function formatTime(s: number): string {
     const m = Math.floor(s / 60)
     const sec = Math.floor(s % 60)
@@ -295,6 +323,8 @@
           {#if activeSub && templateVal}
             {@const displaySub = activeSub}
             {@const displayEff = templateVal}
+            <!-- key on activeSub.start so CSS animations restart on each new subtitle -->
+            {#key activeSub?.start}
             <div
               class="sub-overlay"
               style="
@@ -313,6 +343,7 @@
                 max-width: 90%;
                 pointer-events: none;
                 padding: 2px 8px;
+                {getAnimationStyle(templateVal?.animation)}
               "
             >
               {#if templateVal.wordByWord && templateVal.wordMode !== 'none'}
@@ -330,9 +361,14 @@
                   {/each}
                 {/if}
               {:else}
-                {displaySub.text}
+                {#if templateVal?.animation === 'typewriter'}
+                  {typewriterText ?? ''}
+                {:else}
+                  {displaySub.text}
+                {/if}
               {/if}
             </div>
+            {/key}
           {/if}
 
           <!-- Controls -->
@@ -835,4 +871,18 @@
   .align-btn.active { background: var(--color-accent-subtle); border-color: var(--color-accent); }
   .align-btn.active::after { background: var(--color-accent); }
   .align-btn:hover:not(.active) { background: var(--color-surface-hover); }
+
+  /* ── Animation preview keyframes ── */
+  @keyframes sub-fade {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+  }
+  @keyframes sub-pop {
+    from { transform: scale(0.5); opacity: 0.6; }
+    to   { transform: scale(1);   opacity: 1; }
+  }
+  @keyframes sub-slide-up {
+    from { transform: translateY(30px); opacity: 0.4; }
+    to   { transform: translateY(0);    opacity: 1; }
+  }
 </style>
