@@ -240,9 +240,9 @@ interface GroupOptions {
 
 function groupTokens(tokens: Token[], opts: GroupOptions = {}): Line[] {
   const {
-    maxWords = 6,
-    maxMs    = 4000,
-    minMs    = 600,
+    maxWords = 3,
+    maxMs    = 3000,
+    minMs    = 400,
     breathMs = 250,
     clauseMs = 500,
     cutMs    = 800,
@@ -718,7 +718,7 @@ export function parseSRT(content: string): Subtitle[] {
   // Group raw word tokens into display lines using default opts.
   // No timing correction here — offsets applied at burn time only.
   const tokens  = buildTokens(rawSubs)
-  const grouped = groupTokens(tokens)
+  const grouped = groupTokens(tokens, { maxWords: 3, maxMs: 3000, minMs: 400 })
 
   return grouped.map((line, i) => ({
     index:        i + 1,
