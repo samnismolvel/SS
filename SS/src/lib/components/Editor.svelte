@@ -330,6 +330,11 @@
               style="
                 position: absolute;
                 {getAlignmentStyle(displayEff?.alignment ?? 2)}
+                max-width: 90%;
+                pointer-events: none;
+              "
+            ><span style="
+                display: inline-block;
                 font-family: {displayEff?.fontName ?? 'Arial'};
                 font-size: {(displayEff?.fontSize ?? 24) * 0.8}px;
                 font-weight: {displayEff?.bold ? 'bold' : 'normal'};
@@ -340,12 +345,9 @@
                   {displayEff?.outline ?? 2}px -{displayEff?.outline ?? 2}px 0 {displayEff?.outlineColor ?? '#000'},
                   -{displayEff?.outline ?? 2}px {displayEff?.outline ?? 2}px 0 {displayEff?.outlineColor ?? '#000'},
                   {displayEff?.outline ?? 2}px {displayEff?.outline ?? 2}px 0 {displayEff?.outlineColor ?? '#000'};
-                max-width: 90%;
-                pointer-events: none;
                 padding: 2px 8px;
                 {getAnimationStyle(templateVal?.animation)}
-              "
-            >
+              ">
               {#if templateVal.wordByWord && templateVal.wordMode !== 'none'}
                 {#if templateVal.wordMode === 'solo'}
                   {#if activeWordIndex >= 0}
@@ -367,7 +369,7 @@
                   {displaySub.text}
                 {/if}
               {/if}
-            </div>
+            </span></div>
             {/key}
           {/if}
 
@@ -394,6 +396,24 @@
         {/if}
       </div>
 
+      <!-- Segment list -->
+      <div class="seg-list">
+        {#each items as sub, i}
+          <div
+            class="seg-item"
+            class:active={selIdx === i}
+            onclick={() => seekToSegment(sub)}
+            role="button"
+            tabindex="0"
+            onkeydown={(e) => e.key === 'Enter' && seekToSegment(sub)}
+          >
+            <span class="seg-num">#{sub.index}</span>
+            <span class="seg-time">{sub.start.slice(0, 8)}</span>
+            <span class="seg-text">{sub.text}</span>
+          </div>
+        {/each}
+      </div>
+
     </div>
 
     <!-- RIGHT: Style panel + segment editor -->
@@ -405,11 +425,6 @@
           <div class="seg-editor-header">
             <span class="seg-ref">#{selectedSub.index}</span>
             <span class="seg-timing-small">{selectedSub.start} → {selectedSub.end}</span>
-            {#if selectedSub?.overrides?.posX != null}
-              <button class="clear-btn" onclick={() => {
-                if (selIdx !== null) updateSubtitleOverrides(selIdx, { posX: undefined, posY: undefined })
-              }}>↺ pos</button>
-            {/if}
             {#if hasOverrides}
               <button class="clear-btn" onclick={clearOverrides}>Clear overrides</button>
             {/if}
@@ -871,6 +886,22 @@
   .align-btn.active { background: var(--color-accent-subtle); border-color: var(--color-accent); }
   .align-btn.active::after { background: var(--color-accent); }
   .align-btn:hover:not(.active) { background: var(--color-surface-hover); }
+
+  /* Segment list */
+  .seg-list {
+    overflow-y: auto; flex-shrink: 0; max-height: 180px;
+    border-top: 1px solid var(--color-border);
+  }
+  .seg-item {
+    display: flex; align-items: baseline; gap: 0.4rem;
+    padding: 0.3rem 0.6rem; cursor: pointer; font-size: 0.78rem;
+    border-bottom: 1px solid var(--color-border);
+  }
+  .seg-item:hover { background: var(--color-surface-hover); }
+  .seg-item.active { background: var(--color-accent-subtle); }
+  .seg-num { font-size: 0.68rem; color: var(--color-accent); font-weight: 700; min-width: 24px; }
+  .seg-time { font-size: 0.68rem; color: var(--color-text-muted); font-family: monospace; min-width: 64px; }
+  .seg-text { color: var(--color-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
   /* ── Animation preview keyframes ── */
   @keyframes sub-fade {
