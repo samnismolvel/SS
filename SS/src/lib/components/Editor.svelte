@@ -463,6 +463,7 @@
               <option value="none">None</option>
               <option value="fade">Fade</option>
               <option value="pop">Pop</option>
+              <option value="slide-up">Slide up</option>
             </select>
           </div>
 

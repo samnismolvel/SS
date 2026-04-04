@@ -46,7 +46,7 @@ export type Alignment =
 
 export type WordMode = 'highlight' | 'solo' | 'none'
 
-export type AnimationMode = 'none' | 'fade' | 'pop'
+export type AnimationMode = 'none' | 'fade' | 'pop' | 'slide-up'
 
 export type SubtitleStatus = 'pending' | 'processing' | 'done' | 'failed'
 

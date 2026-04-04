@@ -362,6 +362,8 @@ export function buildAss(subtitles: Subtitle[], template: Template): string {
   lines.push('ScriptType: v4.00+')
   lines.push('Collisions: Normal')
   lines.push('WrapStyle: 2')  // 2 = no wrapping — overflow clips, never wraps to a second line
+  lines.push('PlayResX: 1920') // libass scales coords to actual video resolution
+  lines.push('PlayResY: 1080')
   lines.push('')
   lines.push('[V4+ Styles]')
   lines.push(
@@ -401,21 +403,32 @@ function groupOptsFromTemplate(template: Template): GroupOptions {
 
 // ─── Animation tag builder ───────────────────────────────────────────────────
 //
-// Returns an ASS override tag string to prepend to each dialogue event's text.
-// All tags are self-contained per-event so they work cleanly with libass/FFmpeg.
+// Returns ASS override tag string(s) to prepend to each dialogue event's text.
+// All tags are self-contained per-event and work cleanly with libass/FFmpeg.
 //
-// fade: \fad(inMs, outMs)
-//   Fades the event in and out. Both values clamped to half the event duration.
+// fade:     \fad(inMs, outMs)  — cross-fade in/out, clamped to half event duration
 //
-// pop: \fscx\fscy + \t() scale transform
-//   Scales the subtitle from 50% → 100% over 150 ms (clamped to event length).
-//   Uses \fscx/\fscy (horizontal/vertical scale %) rather than \fs so it
-//   works relative to the style's base font size and doesn't fight other tags.
-//   A simultaneous short fade-in (\fad) smooths the leading edge.
+// pop:      \fscx50\fscy50 + \t(0,150,\fscx100\fscy100)
+//           Scale from 50%→100% over 150ms with a short fade-in to smooth the edge.
+//
+// slide-up: \move(x, yStart, x, yEnd, 0, slideMs)
+//           Moves the line from (yStart = natural Y + slideOffsetPx) to its natural
+//           Y position over slideMs. PlayResX/Y are set to 1920×1080 in the header;
+//           libass scales these coords to the actual video resolution automatically.
+//           X is fixed at the horizontal centre (960). Y is derived from alignment:
+//             bottom (an1-3): natural Y = 1080 - marginV, slides up from +slideOffset
+//             middle (an4-6): natural Y = 540,            slides up from +slideOffset
+//             top    (an7-9): natural Y = marginV,        slides down from -slideOffset
+//           A fade-in is added so the start frame isn't a hard cut.
+
+const PLAY_RES_X = 1920
+const PLAY_RES_Y = 1080
 
 function buildAnimationTag(
   animation: AnimationMode,
-  eventDurationMs: number
+  eventDurationMs: number,
+  alignment: number = 2,
+  marginV: number = 20
 ): string {
   if (animation === 'none' || !animation) return ''
 
@@ -427,22 +440,44 @@ function buildAnimationTag(
   }
 
   if (animation === 'pop') {
-    // Scale from 50% → 100% over popMs, clamped so it never exceeds the event.
     const popMs  = Math.min(150, eventDurationMs)
     const fadeIn = Math.min(60, Math.floor(eventDurationMs / 2))
-    // \fscx50\fscy50 sets the start scale; \t(0,popMs,...) animates to 100%.
-    // \fad(fadeIn,0) softens the very first frames so the pop doesn't feel harsh.
     return `{\\fad(${fadeIn},0)\\fscx50\\fscy50\\t(0,${popMs},\\fscx100\\fscy100)}`
+  }
+
+  if (animation === 'slide-up') {
+    const slideMs     = Math.min(180, eventDurationMs)
+    const fadeIn      = Math.min(80, Math.floor(eventDurationMs / 2))
+    const slideOffset = 30  // px in 1080p script coords — feels snappy without being jarring
+    const cx          = Math.round(PLAY_RES_X / 2)
+
+    // Determine the row (bottom / middle / top) from the ASS alignment numpad value
+    const row = alignment <= 3 ? 'bottom' : alignment <= 6 ? 'middle' : 'top'
+
+    let yEnd: number
+    let yStart: number
+    if (row === 'bottom') {
+      yEnd   = PLAY_RES_Y - marginV
+      yStart = yEnd + slideOffset   // comes from below
+    } else if (row === 'middle') {
+      yEnd   = Math.round(PLAY_RES_Y / 2)
+      yStart = yEnd + slideOffset
+    } else {
+      yEnd   = marginV
+      yStart = yEnd - slideOffset   // top-aligned slides down
+    }
+
+    return `{\\fad(${fadeIn},0)\\move(${cx},${yStart},${cx},${yEnd},0,${slideMs})}`
   }
 
   return ''
 }
 
-// ─── Plain events ─────────────────────────────────────────────────────────────
+// ─── Plain events─────────────────────────────────────────
 
 function buildPlainEvents(subtitles: Subtitle[], template: Template): string[] {
   const events: string[] = []
-  const syncOffset = template.syncOffset ?? 120
+  const syncOffset = template.syncOffset ?? 50
 
   const tokens  = buildTokens(subtitles)
   const grouped = applyTimingCorrection(
@@ -462,7 +497,12 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template): string[] {
     const end       = srtTimeToAss(line.endSrt)
     const tags      = buildInlineTags(style, template)
     const text      = line.text.replace(/\{/g, '\\{').replace(/\}/g, '\\}')
-    const animTag   = buildAnimationTag(template.animation, srtToMs(line.endSrt) - srtToMs(line.startSrt))
+    const animTag   = buildAnimationTag(
+      template.animation,
+      srtToMs(line.endSrt) - srtToMs(line.startSrt),
+      style.alignment ?? template.alignment,
+      style.marginV   ?? template.marginV
+    )
     events.push('Dialogue: 0,' + start + ',' + end + ',Default,,0,0,0,,' + animTag + tags + text)
   }
 
@@ -481,7 +521,7 @@ function buildWordByWordEvents(subtitles: Subtitle[], template: Template): strin
   const events: string[] = []
   const primaryColor   = '{\\c' + hexToAss(template.primaryColor) + '}'
   const highlightColor = '{\\c' + hexToAss(template.highlightColor) + '}'
-  const syncOffset     = template.syncOffset ?? 120
+  const syncOffset     = template.syncOffset ?? 50
   const wbwOpts: GroupOptions = {
     ...groupOptsFromTemplate(template),
     maxWords: 8,
@@ -564,7 +604,7 @@ function buildWordByWordEvents(subtitles: Subtitle[], template: Template): strin
           if (j < resolvedTokens.length - 1) text += ' '
         }
         const wordDur = endMs - startMs
-        const animTag = buildAnimationTag(template.animation, wordDur)
+        const animTag = buildAnimationTag(template.animation, wordDur, template.alignment, template.marginV)
         events.push(
           'Dialogue: 0,' + msToAssTime(startMs) + ',' + msToAssTime(endMs) +
           ',Default,,0,0,0,,' + animTag + primaryColor + text
@@ -573,7 +613,7 @@ function buildWordByWordEvents(subtitles: Subtitle[], template: Template): strin
     } else if (template.wordMode === 'solo') {
       for (const { word, startMs, endMs } of resolvedTokens) {
         const wordDur = endMs - startMs
-        const animTag = buildAnimationTag(template.animation, wordDur)
+        const animTag = buildAnimationTag(template.animation, wordDur, template.alignment, template.marginV)
         events.push(
           'Dialogue: 0,' + msToAssTime(startMs) + ',' + msToAssTime(endMs) +
           ',Default,,0,0,0,,' + animTag + highlightColor + word
