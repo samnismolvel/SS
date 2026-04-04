@@ -428,7 +428,8 @@ function buildAnimationTag(
   animation: AnimationMode,
   eventDurationMs: number,
   alignment: number = 2,
-  marginV: number = 20
+  marginV: number = 20,
+  fontSize: number = 24
 ): string {
   if (animation === 'none' || !animation) return ''
 
@@ -448,29 +449,70 @@ function buildAnimationTag(
   if (animation === 'slide-up') {
     const slideMs     = Math.min(180, eventDurationMs)
     const fadeIn      = Math.min(80, Math.floor(eventDurationMs / 2))
-    const slideOffset = 30  // px in 1080p script coords — feels snappy without being jarring
+    const slideOffset = 40  // script-coord px the text travels before settling
     const cx          = Math.round(PLAY_RES_X / 2)
 
-    // Determine the row (bottom / middle / top) from the ASS alignment numpad value
+    // ASS \move positions the alignment anchor point, not the text baseline.
+    // For bottom-aligned text (\an1-3) the anchor is at the bottom of the text box.
+    // Natural anchor Y = PLAY_RES_Y - marginV - lineHeight, where lineHeight ≈ fontSize*1.4.
+    // For middle/top rows we use the centre or top margin respectively.
+    const lineHeight = Math.round(fontSize * 1.4)
     const row = alignment <= 3 ? 'bottom' : alignment <= 6 ? 'middle' : 'top'
 
     let yEnd: number
     let yStart: number
     if (row === 'bottom') {
-      yEnd   = PLAY_RES_Y - marginV
-      yStart = yEnd + slideOffset   // comes from below
+      yEnd   = PLAY_RES_Y - marginV - lineHeight
+      yStart = yEnd + slideOffset
     } else if (row === 'middle') {
       yEnd   = Math.round(PLAY_RES_Y / 2)
       yStart = yEnd + slideOffset
     } else {
-      yEnd   = marginV
-      yStart = yEnd - slideOffset   // top-aligned slides down
+      yEnd   = marginV + lineHeight
+      yStart = yEnd - slideOffset  // top row slides downward into place
     }
 
     return `{\\fad(${fadeIn},0)\\move(${cx},${yStart},${cx},${yEnd},0,${slideMs})}`
   }
 
   return ''
+}
+
+// ─── Typewriter event builder ─────────────────────────────────────────────────
+//
+// Typewriter cannot be expressed as a single per-event tag — it requires one
+// dialogue event per character, each starting charDelayMs after the previous,
+// all ending at the line's natural end time. The result is a classic left-to-right
+// character reveal. charDelayMs is clamped so the full reveal fits within the
+// event duration (min 30ms, max 80ms per character).
+
+function buildTypewriterEvents(
+  text: string,
+  startAss: string,
+  endAss: string,
+  startMs: number,
+  endMs: number,
+  tags: string
+): string[] {
+  const chars = [...text]  // spread handles multi-byte / emoji correctly
+  if (chars.length === 0) return []
+
+  const totalMs      = endMs - startMs
+  const rawDelay     = Math.floor(totalMs / chars.length)
+  const charDelayMs  = Math.max(30, Math.min(80, rawDelay))
+  const events: string[] = []
+
+  for (let i = 0; i < chars.length; i++) {
+    const charStartMs  = Math.min(startMs + i * charDelayMs, endMs - 1)
+    const charStart    = msToAssTime(charStartMs)
+    const partial      = chars.slice(0, i + 1).join('')
+    // Each event shows all chars revealed so far, holding until the line ends
+    events.push(
+      'Dialogue: 0,' + charStart + ',' + endAss + ',Default,,0,0,0,,' + tags + partial
+    )
+  }
+
+  return events
 }
 
 // ─── Plain events─────────────────────────────────────────
@@ -501,9 +543,18 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template): string[] {
       template.animation,
       srtToMs(line.endSrt) - srtToMs(line.startSrt),
       style.alignment ?? template.alignment,
-      style.marginV   ?? template.marginV
+      style.marginV   ?? template.marginV,
+      style.fontSize  ?? template.fontSize
     )
-    events.push('Dialogue: 0,' + start + ',' + end + ',Default,,0,0,0,,' + animTag + tags + text)
+    if (template.animation === 'typewriter') {
+      events.push(...buildTypewriterEvents(
+        text, start, end,
+        srtToMs(line.startSrt), srtToMs(line.endSrt),
+        tags
+      ))
+    } else {
+      events.push('Dialogue: 0,' + start + ',' + end + ',Default,,0,0,0,,' + animTag + tags + text)
+    }
   }
 
   return events
@@ -604,7 +655,7 @@ function buildWordByWordEvents(subtitles: Subtitle[], template: Template): strin
           if (j < resolvedTokens.length - 1) text += ' '
         }
         const wordDur = endMs - startMs
-        const animTag = buildAnimationTag(template.animation, wordDur, template.alignment, template.marginV)
+        const animTag = buildAnimationTag(template.animation, wordDur, template.alignment, template.marginV, template.fontSize)
         events.push(
           'Dialogue: 0,' + msToAssTime(startMs) + ',' + msToAssTime(endMs) +
           ',Default,,0,0,0,,' + animTag + primaryColor + text
@@ -613,7 +664,7 @@ function buildWordByWordEvents(subtitles: Subtitle[], template: Template): strin
     } else if (template.wordMode === 'solo') {
       for (const { word, startMs, endMs } of resolvedTokens) {
         const wordDur = endMs - startMs
-        const animTag = buildAnimationTag(template.animation, wordDur, template.alignment, template.marginV)
+        const animTag = buildAnimationTag(template.animation, wordDur, template.alignment, template.marginV, template.fontSize)
         events.push(
           'Dialogue: 0,' + msToAssTime(startMs) + ',' + msToAssTime(endMs) +
           ',Default,,0,0,0,,' + animTag + highlightColor + word
