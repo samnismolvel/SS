@@ -149,9 +149,9 @@
   // Keyed on activeSub.start so the animation restarts on each new subtitle.
   function getAnimationStyle(animation: string | undefined): string {
     switch (animation) {
-      case 'fade':      return 'animation: sub-fade 0.08s ease-in both;'
-      case 'pop':       return 'animation: sub-pop 0.15s ease-out both;'
-      case 'slide-up':  return 'animation: sub-slide-up 0.18s ease-out both;'
+      case 'fade':      return 'animation: sub-fade 80ms ease-in forwards;'
+      case 'pop':       return 'animation: sub-pop 150ms cubic-bezier(0.34,1.56,0.64,1) forwards;'
+      case 'slide-up':  return 'animation: sub-slide-up 180ms ease-out forwards;'
       default:          return ''
     }
   }
@@ -331,10 +331,13 @@
                 position: absolute;
                 {getAlignmentStyle(displayEff?.alignment ?? 2)}
                 max-width: 90%;
-                pointer-events: none;
+                pointer-events: auto;
+                cursor: pointer;
               "
+              onclick={() => seekToSegment(displaySub)}
             ><span style="
                 display: inline-block;
+                transform-origin: center bottom;
                 font-family: {displayEff?.fontName ?? 'Arial'};
                 font-size: {(displayEff?.fontSize ?? 24) * 0.8}px;
                 font-weight: {displayEff?.bold ? 'bold' : 'normal'};
@@ -396,23 +399,6 @@
         {/if}
       </div>
 
-      <!-- Segment list -->
-      <div class="seg-list">
-        {#each items as sub, i}
-          <div
-            class="seg-item"
-            class:active={selIdx === i}
-            onclick={() => seekToSegment(sub)}
-            role="button"
-            tabindex="0"
-            onkeydown={(e) => e.key === 'Enter' && seekToSegment(sub)}
-          >
-            <span class="seg-num">#{sub.index}</span>
-            <span class="seg-time">{sub.start.slice(0, 8)}</span>
-            <span class="seg-text">{sub.text}</span>
-          </div>
-        {/each}
-      </div>
 
     </div>
 
@@ -887,21 +873,6 @@
   .align-btn.active::after { background: var(--color-accent); }
   .align-btn:hover:not(.active) { background: var(--color-surface-hover); }
 
-  /* Segment list */
-  .seg-list {
-    overflow-y: auto; flex-shrink: 0; max-height: 180px;
-    border-top: 1px solid var(--color-border);
-  }
-  .seg-item {
-    display: flex; align-items: baseline; gap: 0.4rem;
-    padding: 0.3rem 0.6rem; cursor: pointer; font-size: 0.78rem;
-    border-bottom: 1px solid var(--color-border);
-  }
-  .seg-item:hover { background: var(--color-surface-hover); }
-  .seg-item.active { background: var(--color-accent-subtle); }
-  .seg-num { font-size: 0.68rem; color: var(--color-accent); font-weight: 700; min-width: 24px; }
-  .seg-time { font-size: 0.68rem; color: var(--color-text-muted); font-family: monospace; min-width: 64px; }
-  .seg-text { color: var(--color-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
   /* ── Animation preview keyframes ── */
   @keyframes sub-fade {
@@ -909,11 +880,11 @@
     to   { opacity: 1; }
   }
   @keyframes sub-pop {
-    from { transform: scale(0.5); opacity: 0.6; }
+    from { transform: scale(0.5); opacity: 0; }
     to   { transform: scale(1);   opacity: 1; }
   }
   @keyframes sub-slide-up {
-    from { transform: translateY(30px); opacity: 0.4; }
+    from { transform: translateY(24px); opacity: 0; }
     to   { transform: translateY(0);    opacity: 1; }
   }
 </style>
