@@ -37,11 +37,11 @@
   let playing = $state(false)
   let videoSrc = $state('')
 
-  // Drag state for subtitle repositioning
-  let videoWrapEl = $state(null as HTMLDivElement | null)
-  let isDraggingOverlay = $state(false)
-  let dragOffsetX = $state(0)   // cursor offset within the overlay element on drag start
-  let dragOffsetY = $state(0)
+  // Drag-to-reposition state
+  let videoWrapEl  = $state(null as HTMLDivElement | null)
+  let isDragging   = $state(false)
+  let dragOffsetX  = $state(0)  // cursor offset within overlay on pointerdown
+  let dragOffsetY  = $state(0)
 
   $effect(() => {
     if (sessionVal?.videoPath) {
@@ -134,66 +134,49 @@
     }
   }
 
-  // ── Subtitle drag-to-reposition ───────────────────────────────────────────
-  // Converts pixel position within video-wrap to percentage coords (0–100),
-  // then writes posX/posY into the segment's overrides so it persists and
-  // burns as \pos() in the ASS output.
-
-  function onOverlayPointerDown(e: PointerEvent, sub: any) {
-    if (!videoWrapEl) return
-    e.preventDefault()
-    e.stopPropagation()
-
-    // Select this segment so its overrides are live
-    const idx = items.indexOf(sub)
-    if (idx !== -1) selectSegment(idx)
-
-    const overlayEl = e.currentTarget as HTMLElement
-    const overlayRect = overlayEl.getBoundingClientRect()
-
-    // Store where inside the overlay the user clicked so the text
-    // doesn't jump to centre-on-cursor on first move
-    dragOffsetX = e.clientX - overlayRect.left
-    dragOffsetY = e.clientY - overlayRect.top
-    isDraggingOverlay = true
-
-    overlayEl.setPointerCapture(e.pointerId)
-  }
-
-  function onOverlayPointerMove(e: PointerEvent, sub: any) {
-    if (!isDraggingOverlay || !videoWrapEl) return
-    e.preventDefault()
-
-    const wrapRect = videoWrapEl.getBoundingClientRect()
-
-    // Position of the overlay's top-left corner in wrap-relative px
-    const rawX = e.clientX - wrapRect.left - dragOffsetX
-    const rawY = e.clientY - wrapRect.top  - dragOffsetY
-
-    // Clamp so the subtitle can't be dragged fully out of frame
-    const clampedX = Math.max(0, Math.min(wrapRect.width  - 10, rawX))
-    const clampedY = Math.max(0, Math.min(wrapRect.height - 10, rawY))
-
-    // Convert to percentage of the video wrap area
-    const pctX = (clampedX / wrapRect.width)  * 100
-    const pctY = (clampedY / wrapRect.height) * 100
-
-    const idx = items.indexOf(sub)
-    if (idx !== -1) {
-      updateSubtitleOverrides(idx, { posX: pctX, posY: pctY })
+  // ── Letterbox-aware video frame rect ─────────────────────────────────────
+  // video-wrap uses object-fit:contain so there are black bars when the video
+  // aspect differs from the container. We need the rect of the *actual frame*
+  // (not the container) for accurate drag↔percentage mapping.
+  function getVideoFrameRect(): { left: number; top: number; width: number; height: number } | null {
+    if (!videoWrapEl || !videoEl || !videoEl.videoWidth) return null
+    const wrap    = videoWrapEl.getBoundingClientRect()
+    const vidAR   = videoEl.videoWidth / videoEl.videoHeight
+    const wrapAR  = wrap.width / wrap.height
+    let frameW: number, frameH: number
+    if (vidAR > wrapAR) {
+      // pillarboxed — full width, bars top/bottom
+      frameW = wrap.width
+      frameH = wrap.width / vidAR
+    } else {
+      // letterboxed — full height, bars left/right
+      frameH = wrap.height
+      frameW = wrap.height * vidAR
+    }
+    return {
+      left:   wrap.left + (wrap.width  - frameW) / 2,
+      top:    wrap.top  + (wrap.height - frameH) / 2,
+      width:  frameW,
+      height: frameH,
     }
   }
 
-  function onOverlayPointerUp(e: PointerEvent) {
-    isDraggingOverlay = false
-  }
-
-  // Subtitle overlay positioning — uses posX/posY if set by drag, else alignment grid
+  // ── Subtitle overlay positioning ──────────────────────────────────────────
+  // Uses posX/posY (% of video frame) when set by drag; falls back to
+  // the alignment-grid CSS otherwise.
   function getOverlayStyle(sub: any, alignment: number): string {
     const posX = sub?.overrides?.posX
     const posY = sub?.overrides?.posY
     if (posX != null && posY != null) {
-      return `left: ${posX}%; top: ${posY}%; text-align: left;`
+      // Convert from % of video frame → % of video-wrap container
+      const frame = getVideoFrameRect()
+      const wrap  = videoWrapEl?.getBoundingClientRect()
+      if (frame && wrap) {
+        const absX = frame.left - wrap.left + (posX / 100) * frame.width
+        const absY = frame.top  - wrap.top  + (posY / 100) * frame.height
+        return `left: ${absX}px; top: ${absY}px; text-align: left; transform: none;`
+      }
+      return `left: ${posX}%; top: ${posY}%; text-align: left; transform: none;`
     }
     return getAlignmentStyle(alignment)
   }
@@ -211,6 +194,42 @@
       9: 'top: 5%; right: 5%; text-align: right;',
     }
     return positions[alignment] ?? positions[2]
+  }
+
+  // ── Drag handlers ─────────────────────────────────────────────────────────
+  function onOverlayPointerDown(e: PointerEvent, sub: any) {
+    e.preventDefault()
+    e.stopPropagation()
+    const idx = items.indexOf(sub)
+    if (idx !== -1) selectSegment(idx)
+    const el = e.currentTarget as HTMLElement
+    const r  = el.getBoundingClientRect()
+    dragOffsetX = e.clientX - r.left
+    dragOffsetY = e.clientY - r.top
+    isDragging  = true
+    el.setPointerCapture(e.pointerId)
+  }
+
+  function onOverlayPointerMove(e: PointerEvent, sub: any) {
+    if (!isDragging) return
+    e.preventDefault()
+    const frame = getVideoFrameRect()
+    if (!frame) return
+    // Position of the overlay top-left in frame-relative px
+    const rawX = e.clientX - frame.left - dragOffsetX
+    const rawY = e.clientY - frame.top  - dragOffsetY
+    // Clamp inside frame
+    const clampedX = Math.max(0, Math.min(frame.width  - 4, rawX))
+    const clampedY = Math.max(0, Math.min(frame.height - 4, rawY))
+    // Store as % of video frame (matches PLAY_RES space in ass.ts)
+    const pctX = (clampedX / frame.width)  * 100
+    const pctY = (clampedY / frame.height) * 100
+    const idx = items.indexOf(sub)
+    if (idx !== -1) updateSubtitleOverrides(idx, { posX: pctX, posY: pctY })
+  }
+
+  function onOverlayPointerUp(e: PointerEvent) {
+    isDragging = false
   }
 
   function formatTime(s: number): string {
@@ -364,7 +383,7 @@
           {#if activeSub && templateVal}
             <div
               class="sub-overlay"
-              class:dragging={isDraggingOverlay}
+              class:is-dragging={isDragging}
               style="
                 position: absolute;
                 {getOverlayStyle(activeSub, effective?.alignment ?? 2)}
@@ -380,9 +399,10 @@
                   {effective?.outline ?? 2}px {effective?.outline ?? 2}px 0 {effective?.outlineColor ?? '#000'};
                 max-width: 90%;
                 pointer-events: auto;
-                cursor: {isDraggingOverlay ? 'grabbing' : 'grab'};
+                cursor: {isDragging ? 'grabbing' : 'grab'};
                 padding: 2px 8px;
                 user-select: none;
+                touch-action: none;
               "
               onpointerdown={(e) => onOverlayPointerDown(e, activeSub)}
               onpointermove={(e) => onOverlayPointerMove(e, activeSub)}
@@ -448,7 +468,7 @@
             {#if selectedSub?.overrides?.posX != null}
               <button class="clear-btn" onclick={() => {
                 if (selIdx !== null) updateSubtitleOverrides(selIdx, { posX: undefined, posY: undefined })
-              }}>↺ Reset pos</button>
+              }}>↺ pos</button>
             {/if}
             {#if hasOverrides}
               <button class="clear-btn" onclick={clearOverrides}>Clear overrides</button>
@@ -752,8 +772,8 @@
     border-radius: 3px;
     touch-action: none;
   }
-  .sub-overlay:hover { outline: 1px dashed rgba(255,255,255,0.4); }
-  .sub-overlay.dragging { outline: 1px dashed rgba(255,255,255,0.8); }
+  .sub-overlay:hover { outline: 1px dashed rgba(255,255,255,0.5); }
+  .sub-overlay.is-dragging { outline: 1px dashed rgba(255,255,255,0.9); opacity: 0.9; }
 
   .video-controls {
     position: absolute; bottom: 0; left: 0; right: 0;

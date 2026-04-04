@@ -61,8 +61,8 @@ export interface Subtitle {
   text: string
   originalText: string
   overrides?: Partial<Omit<Template, 'id' | 'name' | 'wordByWord' | 'wordMode' | 'highlightColor'>> & {
-    posX?: number   // manual position as % of video width  (0–100), set by drag
-    posY?: number   // manual position as % of video height (0–100), set by drag
+    posX?: number   // manual X as % of video frame width  (0–100), set by drag
+    posY?: number   // manual Y as % of video frame height (0–100), set by drag
   }
 }
 

@@ -533,18 +533,17 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template): string[] {
   }
 
   for (const line of grouped) {
-    const overrides = overrideMap.get(line.startSrt)
-    const style     = resolveStyle(template, overrides)
-    const start     = srtTimeToAss(line.startSrt)
-    const end       = srtTimeToAss(line.endSrt)
-    const text      = line.text.replace(/\{/g, '\\{').replace(/\}/g, '\\}')
+    const overrides  = overrideMap.get(line.startSrt)
+    const style      = resolveStyle(template, overrides)
+    const start      = srtTimeToAss(line.startSrt)
+    const end        = srtTimeToAss(line.endSrt)
+    const text       = line.text.replace(/\{/g, '\\{').replace(/\}/g, '\\}')
     const durationMs = srtToMs(line.endSrt) - srtToMs(line.startSrt)
 
-    // If the user dragged this segment, emit \pos() instead of alignment+margin.
-    // posX/posY are percentages (0–100) of the video frame stored in overrides.
-    // We convert to script coordinates (PlayResX=1920, PlayResY=1080).
-    const posX = overrides?.posX
-    const posY = overrides?.posY
+    // If the user dragged this segment, prepend \pos() in script coordinates.
+    // posX/posY are percentages of the actual video frame stored in overrides.
+    const posX = (overrides as any)?.posX as number | undefined
+    const posY = (overrides as any)?.posY as number | undefined
     const posTag = (posX != null && posY != null)
       ? `{\\pos(${Math.round(posX / 100 * PLAY_RES_X)},${Math.round(posY / 100 * PLAY_RES_Y)})}`
       : ''
@@ -557,7 +556,6 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template): string[] {
       style.marginV   ?? template.marginV,
       style.fontSize  ?? template.fontSize
     )
-
     if (template.animation === 'typewriter') {
       events.push(...buildTypewriterEvents(
         text, start, end,
