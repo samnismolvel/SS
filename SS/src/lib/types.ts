@@ -60,7 +60,10 @@ export interface Subtitle {
   end: string
   text: string
   originalText: string
-  overrides?: Partial<Omit<Template, 'id' | 'name' | 'wordByWord' | 'wordMode' | 'highlightColor'>>
+  overrides?: Partial<Omit<Template, 'id' | 'name' | 'wordByWord' | 'wordMode' | 'highlightColor'>> & {
+    posX?: number   // manual position as % of video width  (0–100), set by drag
+    posY?: number   // manual position as % of video height (0–100), set by drag
+  }
 }
 
 // ─── Queue ───────────────────────────────────────────────────────────────────

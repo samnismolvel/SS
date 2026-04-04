@@ -37,6 +37,12 @@
   let playing = $state(false)
   let videoSrc = $state('')
 
+  // Drag state for subtitle repositioning
+  let videoWrapEl = $state(null as HTMLDivElement | null)
+  let isDraggingOverlay = $state(false)
+  let dragOffsetX = $state(0)   // cursor offset within the overlay element on drag start
+  let dragOffsetY = $state(0)
+
   $effect(() => {
     if (sessionVal?.videoPath) {
       videoSrc = convertFileSrc(sessionVal.videoPath)
@@ -128,7 +134,70 @@
     }
   }
 
-  // Subtitle overlay positioning
+  // ── Subtitle drag-to-reposition ───────────────────────────────────────────
+  // Converts pixel position within video-wrap to percentage coords (0–100),
+  // then writes posX/posY into the segment's overrides so it persists and
+  // burns as \pos() in the ASS output.
+
+  function onOverlayPointerDown(e: PointerEvent, sub: any) {
+    if (!videoWrapEl) return
+    e.preventDefault()
+    e.stopPropagation()
+
+    // Select this segment so its overrides are live
+    const idx = items.indexOf(sub)
+    if (idx !== -1) selectSegment(idx)
+
+    const overlayEl = e.currentTarget as HTMLElement
+    const overlayRect = overlayEl.getBoundingClientRect()
+
+    // Store where inside the overlay the user clicked so the text
+    // doesn't jump to centre-on-cursor on first move
+    dragOffsetX = e.clientX - overlayRect.left
+    dragOffsetY = e.clientY - overlayRect.top
+    isDraggingOverlay = true
+
+    overlayEl.setPointerCapture(e.pointerId)
+  }
+
+  function onOverlayPointerMove(e: PointerEvent, sub: any) {
+    if (!isDraggingOverlay || !videoWrapEl) return
+    e.preventDefault()
+
+    const wrapRect = videoWrapEl.getBoundingClientRect()
+
+    // Position of the overlay's top-left corner in wrap-relative px
+    const rawX = e.clientX - wrapRect.left - dragOffsetX
+    const rawY = e.clientY - wrapRect.top  - dragOffsetY
+
+    // Clamp so the subtitle can't be dragged fully out of frame
+    const clampedX = Math.max(0, Math.min(wrapRect.width  - 10, rawX))
+    const clampedY = Math.max(0, Math.min(wrapRect.height - 10, rawY))
+
+    // Convert to percentage of the video wrap area
+    const pctX = (clampedX / wrapRect.width)  * 100
+    const pctY = (clampedY / wrapRect.height) * 100
+
+    const idx = items.indexOf(sub)
+    if (idx !== -1) {
+      updateSubtitleOverrides(idx, { posX: pctX, posY: pctY })
+    }
+  }
+
+  function onOverlayPointerUp(e: PointerEvent) {
+    isDraggingOverlay = false
+  }
+
+  // Subtitle overlay positioning — uses posX/posY if set by drag, else alignment grid
+  function getOverlayStyle(sub: any, alignment: number): string {
+    const posX = sub?.overrides?.posX
+    const posY = sub?.overrides?.posY
+    if (posX != null && posY != null) {
+      return `left: ${posX}%; top: ${posY}%; text-align: left;`
+    }
+    return getAlignmentStyle(alignment)
+  }
+
   function getAlignmentStyle(alignment: number): string {
     const positions: Record<number, string> = {
       1: 'bottom: 10%; left: 5%; text-align: left;',
@@ -279,7 +348,7 @@
     <div class="left-col">
 
       <!-- Video player -->
-      <div class="video-wrap">
+      <div class="video-wrap" bind:this={videoWrapEl}>
         {#if videoSrc}
           <video
             bind:this={videoEl}
@@ -295,9 +364,10 @@
           {#if activeSub && templateVal}
             <div
               class="sub-overlay"
+              class:dragging={isDraggingOverlay}
               style="
                 position: absolute;
-                {getAlignmentStyle(effective?.alignment ?? 2)}
+                {getOverlayStyle(activeSub, effective?.alignment ?? 2)}
                 font-family: {effective?.fontName ?? 'Arial'};
                 font-size: {(effective?.fontSize ?? 24) * 0.8}px;
                 font-weight: {effective?.bold ? 'bold' : 'normal'};
@@ -310,10 +380,14 @@
                   {effective?.outline ?? 2}px {effective?.outline ?? 2}px 0 {effective?.outlineColor ?? '#000'};
                 max-width: 90%;
                 pointer-events: auto;
-                cursor: pointer;
+                cursor: {isDraggingOverlay ? 'grabbing' : 'grab'};
                 padding: 2px 8px;
+                user-select: none;
               "
-              onclick={() => seekToSegment(activeSub)}
+              onpointerdown={(e) => onOverlayPointerDown(e, activeSub)}
+              onpointermove={(e) => onOverlayPointerMove(e, activeSub)}
+              onpointerup={onOverlayPointerUp}
+              onpointercancel={onOverlayPointerUp}
             >
               {#if templateVal.wordByWord && templateVal.wordMode !== 'none'}
                 {#if templateVal.wordMode === 'solo'}
@@ -371,6 +445,11 @@
           <div class="seg-editor-header">
             <span class="seg-ref">#{selectedSub.index}</span>
             <span class="seg-timing-small">{selectedSub.start} → {selectedSub.end}</span>
+            {#if selectedSub?.overrides?.posX != null}
+              <button class="clear-btn" onclick={() => {
+                if (selIdx !== null) updateSubtitleOverrides(selIdx, { posX: undefined, posY: undefined })
+              }}>↺ Reset pos</button>
+            {/if}
             {#if hasOverrides}
               <button class="clear-btn" onclick={clearOverrides}>Clear overrides</button>
             {/if}
@@ -671,8 +750,10 @@
     position: absolute;
     line-height: 1.3;
     border-radius: 3px;
+    touch-action: none;
   }
-  .sub-overlay:hover { opacity: 0.85; }
+  .sub-overlay:hover { outline: 1px dashed rgba(255,255,255,0.4); }
+  .sub-overlay.dragging { outline: 1px dashed rgba(255,255,255,0.8); }
 
   .video-controls {
     position: absolute; bottom: 0; left: 0; right: 0;
