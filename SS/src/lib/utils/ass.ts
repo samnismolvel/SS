@@ -240,9 +240,9 @@ interface GroupOptions {
 
 function groupTokens(tokens: Token[], opts: GroupOptions = {}): Line[] {
   const {
-    maxWords = 3,
-    maxMs    = 3000,
-    minMs    = 400,
+    maxWords = 6,
+    maxMs    = 4000,
+    minMs    = 600,
     breathMs = 250,
     clauseMs = 500,
     cutMs    = 800,
@@ -367,10 +367,10 @@ export function buildAss(
   lines.push('ScriptType: v4.00+')
   lines.push('Collisions: Normal')
   lines.push('WrapStyle: 2')
-  // Use actual video dimensions so margin/position values scale correctly.
-  // libass maps these script coords to real pixels at render time.
-  lines.push(`PlayResX: ${videoWidth}`)
-  lines.push(`PlayResY: ${videoHeight}`)
+  // Use libass native script resolution (384x288) so font sizes stay visually
+  // correct. All \pos/\move coords are scaled from video pixels to script space.
+  lines.push('PlayResX: 384')
+  lines.push('PlayResY: 288')
   lines.push('')
   lines.push('[V4+ Styles]')
   lines.push(
@@ -428,6 +428,14 @@ function groupOptsFromTemplate(template: Template): GroupOptions {
 //             top    (an7-9): natural Y = marginV,        slides down from -slideOffset
 //           A fade-in is added so the start frame isn't a hard cut.
 
+// Script resolution constants (libass native 384x288)
+// Font sizes defined by the user are relative to this resolution.
+// All \pos/\move coords must be converted from video pixels to script coords.
+const SCRIPT_W = 384
+const SCRIPT_H = 288
+function toScriptX(px: number, videoWidth:  number): number { return Math.round(px * SCRIPT_W / videoWidth)  }
+function toScriptY(px: number, videoHeight: number): number { return Math.round(px * SCRIPT_H / videoHeight) }
+
 function buildAnimationTag(
   animation: AnimationMode,
   eventDurationMs: number,
@@ -453,26 +461,28 @@ function buildAnimationTag(
   }
 
   if (animation === 'slide-up') {
-    const slideMs     = Math.min(180, eventDurationMs)
-    const fadeIn      = Math.min(80, Math.floor(eventDurationMs / 2))
-    const slideOffset = Math.round(videoHeight * 0.037)  // ~40px in 1080p, scales with res
-    const cx          = Math.round(videoWidth / 2)
-
-    const lineHeight = Math.round(fontSize * 1.4)
+    const slideMs       = Math.min(180, eventDurationMs)
+    const fadeIn        = Math.min(80, Math.floor(eventDurationMs / 2))
+    // Work in video pixels, then convert to script coords at the end
+    const slideOffsetPx = Math.round(videoHeight * 0.037)
+    const lineHeightPx  = Math.round(fontSize * (videoHeight / SCRIPT_H) * 1.4)
     const row = alignment <= 3 ? 'bottom' : alignment <= 6 ? 'middle' : 'top'
 
-    let yEnd: number
-    let yStart: number
+    let yEndPx: number, yStartPx: number
     if (row === 'bottom') {
-      yEnd   = videoHeight - marginV - lineHeight
-      yStart = yEnd + slideOffset
+      yEndPx   = videoHeight - marginV - lineHeightPx
+      yStartPx = yEndPx + slideOffsetPx
     } else if (row === 'middle') {
-      yEnd   = Math.round(videoHeight / 2)
-      yStart = yEnd + slideOffset
+      yEndPx   = Math.round(videoHeight / 2)
+      yStartPx = yEndPx + slideOffsetPx
     } else {
-      yEnd   = marginV + lineHeight
-      yStart = yEnd - slideOffset
+      yEndPx   = marginV + lineHeightPx
+      yStartPx = yEndPx - slideOffsetPx
     }
+
+    const cx     = toScriptX(videoWidth / 2, videoWidth)
+    const yEnd   = toScriptY(yEndPx,   videoHeight)
+    const yStart = toScriptY(yStartPx, videoHeight)
 
     return `{\\fad(${fadeIn},0)\\move(${cx},${yStart},${cx},${yEnd},0,${slideMs})}`
   }
@@ -552,7 +562,7 @@ function buildPlainEvents(
     const posX = (overrides as any)?.posX as number | undefined
     const posY = (overrides as any)?.posY as number | undefined
     const posTag = (posX != null && posY != null)
-      ? `{\\pos(${Math.round(posX / 100 * videoWidth)},${Math.round(posY / 100 * videoHeight)})}`
+      ? `{\\pos(${toScriptX(posX / 100 * videoWidth, videoWidth)},${toScriptY(posY / 100 * videoHeight, videoHeight)})}`
       : ''
 
     const tags    = posTag + buildInlineTags(style, template)
@@ -718,7 +728,7 @@ export function parseSRT(content: string): Subtitle[] {
   // Group raw word tokens into display lines using default opts.
   // No timing correction here — offsets applied at burn time only.
   const tokens  = buildTokens(rawSubs)
-  const grouped = groupTokens(tokens, { maxWords: 3, maxMs: 3000, minMs: 400 })
+  const grouped = groupTokens(tokens)
 
   return grouped.map((line, i) => ({
     index:        i + 1,

@@ -372,10 +372,11 @@
           ></video>
 
           <!-- Subtitle overlay -->
-          <!-- Show selectedSub while editing (persists during playback), fall back to activeSub -->
-          {#if (activeSub || selectedSub) && templateVal}
-            {@const displaySub = selectedSub ?? activeSub}
-            {@const displayEff = selectedSub ? effective : templateVal}
+          <!-- While paused: show selectedSub (so you can drag it).
+               While playing: always show activeSub so the overlay tracks the video. -->
+          {#if (activeSub || (selectedSub && !playing)) && templateVal}
+            {@const displaySub = (!playing && selectedSub) ? selectedSub : activeSub}
+            {@const displayEff = (!playing && selectedSub) ? effective : templateVal}
             <div
               class="sub-overlay"
               class:is-dragging={isDragging}
