@@ -38,10 +38,10 @@
   let videoSrc = $state('')
 
   // Drag-to-reposition state
-  let videoWrapEl  = $state(null as HTMLDivElement | null)
-  let isDragging   = $state(false)
-  let dragOffsetX  = $state(0)  // cursor offset within overlay on pointerdown
-  let dragOffsetY  = $state(0)
+  let videoWrapEl = $state(null as HTMLDivElement | null)
+  let isDragging  = $state(false)
+  let dragOffsetX = $state(0)
+  let dragOffsetY = $state(0)
 
   $effect(() => {
     if (sessionVal?.videoPath) {
@@ -134,24 +134,19 @@
     }
   }
 
-  // ── Letterbox-aware video frame rect ─────────────────────────────────────
-  // video-wrap uses object-fit:contain so there are black bars when the video
-  // aspect differs from the container. We need the rect of the *actual frame*
-  // (not the container) for accurate drag↔percentage mapping.
+  // ── Letterbox-aware video frame rect ──────────────────────────────────────
+  // video-wrap uses object-fit:contain — compute the rect of the actual rendered
+  // frame (excluding black bars) so drag coords map to real video pixels.
   function getVideoFrameRect(): { left: number; top: number; width: number; height: number } | null {
     if (!videoWrapEl || !videoEl || !videoEl.videoWidth) return null
-    const wrap    = videoWrapEl.getBoundingClientRect()
-    const vidAR   = videoEl.videoWidth / videoEl.videoHeight
-    const wrapAR  = wrap.width / wrap.height
+    const wrap   = videoWrapEl.getBoundingClientRect()
+    const vidAR  = videoEl.videoWidth / videoEl.videoHeight
+    const wrapAR = wrap.width / wrap.height
     let frameW: number, frameH: number
     if (vidAR > wrapAR) {
-      // pillarboxed — full width, bars top/bottom
-      frameW = wrap.width
-      frameH = wrap.width / vidAR
+      frameW = wrap.width;  frameH = wrap.width / vidAR
     } else {
-      // letterboxed — full height, bars left/right
-      frameH = wrap.height
-      frameW = wrap.height * vidAR
+      frameH = wrap.height; frameW = wrap.height * vidAR
     }
     return {
       left:   wrap.left + (wrap.width  - frameW) / 2,
@@ -161,14 +156,12 @@
     }
   }
 
-  // ── Subtitle overlay positioning ──────────────────────────────────────────
-  // Uses posX/posY (% of video frame) when set by drag; falls back to
-  // the alignment-grid CSS otherwise.
+  // Returns CSS positioning string for the overlay div.
+  // Uses posX/posY (% of video frame) when set by drag; falls back to alignment grid.
   function getOverlayStyle(sub: any, alignment: number): string {
     const posX = sub?.overrides?.posX
     const posY = sub?.overrides?.posY
     if (posX != null && posY != null) {
-      // Convert from % of video frame → % of video-wrap container
       const frame = getVideoFrameRect()
       const wrap  = videoWrapEl?.getBoundingClientRect()
       if (frame && wrap) {
@@ -196,7 +189,7 @@
     return positions[alignment] ?? positions[2]
   }
 
-  // ── Drag handlers ─────────────────────────────────────────────────────────
+  // ── Drag handlers ───────────────────────────────────────────────────────────
   function onOverlayPointerDown(e: PointerEvent, sub: any) {
     e.preventDefault()
     e.stopPropagation()
@@ -215,20 +208,17 @@
     e.preventDefault()
     const frame = getVideoFrameRect()
     if (!frame) return
-    // Position of the overlay top-left in frame-relative px
-    const rawX = e.clientX - frame.left - dragOffsetX
-    const rawY = e.clientY - frame.top  - dragOffsetY
-    // Clamp inside frame
+    const rawX     = e.clientX - frame.left - dragOffsetX
+    const rawY     = e.clientY - frame.top  - dragOffsetY
     const clampedX = Math.max(0, Math.min(frame.width  - 4, rawX))
     const clampedY = Math.max(0, Math.min(frame.height - 4, rawY))
-    // Store as % of video frame (matches PLAY_RES space in ass.ts)
     const pctX = (clampedX / frame.width)  * 100
     const pctY = (clampedY / frame.height) * 100
     const idx = items.indexOf(sub)
     if (idx !== -1) updateSubtitleOverrides(idx, { posX: pctX, posY: pctY })
   }
 
-  function onOverlayPointerUp(e: PointerEvent) {
+  function onOverlayPointerUp(_e: PointerEvent) {
     isDragging = false
   }
 
@@ -256,7 +246,9 @@
 
   function handleBurn() {
     if (!sessionVal || !templateVal) return
-    const assContent = buildAss(sessionVal.subtitles, templateVal)
+    const w = videoEl?.videoWidth  ?? 1920
+    const h = videoEl?.videoHeight ?? 1080
+    const assContent = buildAss(sessionVal.subtitles, templateVal, w, h)
     onburn({ videoPath: sessionVal.videoPath, outputPath: sessionVal.outputPath, assContent })
   }
 
@@ -380,23 +372,26 @@
           ></video>
 
           <!-- Subtitle overlay -->
-          {#if activeSub && templateVal}
+          <!-- Show selectedSub while editing (persists during playback), fall back to activeSub -->
+          {#if (activeSub || selectedSub) && templateVal}
+            {@const displaySub = selectedSub ?? activeSub}
+            {@const displayEff = selectedSub ? effective : templateVal}
             <div
               class="sub-overlay"
               class:is-dragging={isDragging}
               style="
                 position: absolute;
-                {getOverlayStyle(activeSub, effective?.alignment ?? 2)}
-                font-family: {effective?.fontName ?? 'Arial'};
-                font-size: {(effective?.fontSize ?? 24) * 0.8}px;
-                font-weight: {effective?.bold ? 'bold' : 'normal'};
-                font-style: {effective?.italic ? 'italic' : 'normal'};
-                color: {effective?.primaryColor ?? '#ffffff'};
+                {getOverlayStyle(displaySub, displayEff?.alignment ?? 2)}
+                font-family: {displayEff?.fontName ?? 'Arial'};
+                font-size: {(displayEff?.fontSize ?? 24) * 0.8}px;
+                font-weight: {displayEff?.bold ? 'bold' : 'normal'};
+                font-style: {displayEff?.italic ? 'italic' : 'normal'};
+                color: {displayEff?.primaryColor ?? '#ffffff'};
                 text-shadow:
-                  -{effective?.outline ?? 2}px -{effective?.outline ?? 2}px 0 {effective?.outlineColor ?? '#000'},
-                  {effective?.outline ?? 2}px -{effective?.outline ?? 2}px 0 {effective?.outlineColor ?? '#000'},
-                  -{effective?.outline ?? 2}px {effective?.outline ?? 2}px 0 {effective?.outlineColor ?? '#000'},
-                  {effective?.outline ?? 2}px {effective?.outline ?? 2}px 0 {effective?.outlineColor ?? '#000'};
+                  -{displayEff?.outline ?? 2}px -{displayEff?.outline ?? 2}px 0 {displayEff?.outlineColor ?? '#000'},
+                  {displayEff?.outline ?? 2}px -{displayEff?.outline ?? 2}px 0 {displayEff?.outlineColor ?? '#000'},
+                  -{displayEff?.outline ?? 2}px {displayEff?.outline ?? 2}px 0 {displayEff?.outlineColor ?? '#000'},
+                  {displayEff?.outline ?? 2}px {displayEff?.outline ?? 2}px 0 {displayEff?.outlineColor ?? '#000'};
                 max-width: 90%;
                 pointer-events: auto;
                 cursor: {isDragging ? 'grabbing' : 'grab'};
@@ -404,29 +399,27 @@
                 user-select: none;
                 touch-action: none;
               "
-              onpointerdown={(e) => onOverlayPointerDown(e, activeSub)}
-              onpointermove={(e) => onOverlayPointerMove(e, activeSub)}
+              onpointerdown={(e) => onOverlayPointerDown(e, displaySub)}
+              onpointermove={(e) => onOverlayPointerMove(e, displaySub)}
               onpointerup={onOverlayPointerUp}
               onpointercancel={onOverlayPointerUp}
             >
               {#if templateVal.wordByWord && templateVal.wordMode !== 'none'}
                 {#if templateVal.wordMode === 'solo'}
-                  <!-- Solo: only the active word is visible, matching burned ASS output -->
                   {#if activeWordIndex >= 0}
-                    {@const soloWords = activeSub.text.trim().split(' ').filter((w: string) => w.length > 0)}
+                    {@const soloWords = displaySub.text.trim().split(' ').filter((w: string) => w.length > 0)}
                     <span style="color: {templateVal.highlightColor}; white-space: pre;">
                       {soloWords[activeWordIndex] ?? ''}
                     </span>
                   {/if}
                 {:else}
-                  <!-- Highlight: full sentence visible, active word coloured differently -->
-                  {#each activeSub.text.trim().split(' ').filter((w: string) => w.length > 0) as word, wi}
-                    {@const allWords = activeSub.text.trim().split(' ').filter((w: string) => w.length > 0)}
-                    <span style="color: {wi === activeWordIndex ? templateVal.highlightColor : (effective?.primaryColor ?? '#fff')}; white-space: pre;">{word}{wi < allWords.length - 1 ? ' ' : ''}</span>
+                  {#each displaySub.text.trim().split(' ').filter((w: string) => w.length > 0) as word, wi}
+                    {@const allWords = displaySub.text.trim().split(' ').filter((w: string) => w.length > 0)}
+                    <span style="color: {wi === activeWordIndex ? templateVal.highlightColor : (displayEff?.primaryColor ?? '#fff')}; white-space: pre;">{word}{wi < allWords.length - 1 ? ' ' : ''}</span>
                   {/each}
                 {/if}
               {:else}
-                {activeSub.text}
+                {displaySub.text}
               {/if}
             </div>
           {/if}
@@ -772,8 +765,8 @@
     border-radius: 3px;
     touch-action: none;
   }
-  .sub-overlay:hover { outline: 1px dashed rgba(255,255,255,0.5); }
-  .sub-overlay.is-dragging { outline: 1px dashed rgba(255,255,255,0.9); opacity: 0.9; }
+  .sub-overlay:hover { outline: 1px dashed rgba(255,255,255,0.45); }
+  .sub-overlay.is-dragging { outline: 1px dashed rgba(255,255,255,0.9); }
 
   .video-controls {
     position: absolute; bottom: 0; left: 0; right: 0;
