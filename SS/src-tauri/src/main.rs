@@ -45,9 +45,9 @@ async fn process_video(
     let whisper_path = resource_path.join("whisper-cli");
 
     #[cfg(target_os = "windows")]
-    let model_path = resource_path.join("resources/ggml-tiny.bin");
+    let model_path = resource_path.join("resources/ggml-base.bin");
     #[cfg(not(target_os = "windows"))]
-    let model_path = resource_path.join("ggml-tiny.bin");
+    let model_path = resource_path.join("ggml-base.bin");
 
     let temp_dir = std::env::temp_dir();
     let audio_path = temp_dir.join("temp_audio.wav");
@@ -182,86 +182,40 @@ async fn burn_subtitles(
 
 // ─── json_to_srt ──────────────────────────────────────────────────────────────
 
-// ─── Word token: holds merged text + time range ───────────────────────────────
-
-struct WordToken {
-    text: String,
-    from_ms: i64,
-    to_ms: i64,
-}
-
 fn json_to_srt(json: &str) -> Result<String, String> {
     use serde_json::Value;
 
     let data: Value = serde_json::from_str(json)
         .map_err(|e| format!("Invalid JSON: {}", e))?;
 
-    // Collect raw tokens across all segments then merge BPE sub-word pieces.
-    // Whisper BPE continuations have no leading space (e.g. " ver" + "satility").
-    // We merge them into the previous token, extending its end time.
-    let mut raw: Vec<WordToken> = Vec::new();
+    let mut srt = String::new();
+    let mut index = 1;
 
     if let Some(transcription) = data.get("transcription").and_then(|t| t.as_array()) {
         for segment in transcription {
             if let Some(tokens) = segment.get("tokens").and_then(|t| t.as_array()) {
                 for token in tokens {
-                    let text = match token.get("text").and_then(|t| t.as_str()) {
-                        Some(t) => t,
-                        None => continue,
-                    };
-                    // Skip special tokens ([_BEG_], [_TT_…]) and silence
-                    if text.starts_with('[') || text.trim().is_empty() {
-                        continue;
-                    }
-                    let from_ms = match token
-                        .get("offsets").and_then(|o| o.get("from")).and_then(|f| f.as_i64()) {
-                        Some(v) => v,
-                        None => continue,
-                    };
-                    let to_ms = match token
-                        .get("offsets").and_then(|o| o.get("to")).and_then(|t| t.as_i64()) {
-                        Some(v) => v,
-                        None => continue,
-                    };
-
-                    // A BPE continuation token has no leading space and no
-                    // punctuation prefix. Merge into the previous word token.
-                    let is_continuation = !text.starts_with(' ')
-                        && !text.starts_with(',')
-                        && !text.starts_with('.')
-                        && !text.starts_with('!')
-                        && !text.starts_with('?')
-                        && !text.starts_with(';')
-                        && !text.starts_with(':')
-                        && !raw.is_empty();
-
-                    if is_continuation {
-                        if let Some(prev) = raw.last_mut() {
-                            prev.text.push_str(text);
-                            prev.to_ms = to_ms;
+                    if let Some(text) = token.get("text").and_then(|t| t.as_str()) {
+                        if text.starts_with('[') || text.trim().is_empty() {
                             continue;
                         }
+                        if let (Some(from_ms), Some(to_ms)) = (
+                            token.get("offsets").and_then(|o| o.get("from")).and_then(|f| f.as_i64()),
+                            token.get("offsets").and_then(|o| o.get("to")).and_then(|t| t.as_i64())
+                        ) {
+                            let start = format_timestamp_ms(from_ms);
+                            let end = format_timestamp_ms(to_ms);
+                            srt.push_str(&format!("{}\n{} --> {}\n{}\n\n", index, start, end, text.trim()));
+                            index += 1;
+                        }
                     }
-
-                    raw.push(WordToken { text: text.to_string(), from_ms, to_ms });
                 }
             }
         }
     }
 
-    if raw.is_empty() {
+    if srt.is_empty() {
         return Err("No word timestamps found in JSON".to_string());
-    }
-
-    // Serialise as one SRT block per merged word token
-    let mut srt = String::new();
-    for (i, word) in raw.iter().enumerate() {
-        let start = format_timestamp_ms(word.from_ms);
-        let end   = format_timestamp_ms(word.to_ms);
-        srt.push_str(&format!(
-            "{}\n{} --> {}\n{}\n\n",
-            i + 1, start, end, word.text.trim()
-        ));
     }
 
     Ok(srt)
