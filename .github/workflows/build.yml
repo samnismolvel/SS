@@ -36,13 +36,13 @@ jobs:
         uses: actions/cache@v4
         with:
           path: whisper.cpp/build
-          key: ${{ runner.os }}-whisper-${{ hashFiles('whisper.cpp/CMakeLists.txt') }}
-
+          key: ${{ runner.os }}-whisper-base-${{ hashFiles('whisper.cpp/CMakeLists.txt') }}
+          
       - name: Cache whisper model
         uses: actions/cache@v4
         with:
-          path: whisper.cpp/models/ggml-tiny.bin
-          key: whisper-model-tiny
+          path: whisper.cpp/models/ggml-base.bin
+          key: whisper-model-base
 
       - name: Clone whisper.cpp
         shell: pwsh
@@ -68,12 +68,12 @@ jobs:
             echo "whisper-cli.exe already exists, skipping build"
           }
 
-      - name: Download whisper tiny model
+      - name: Download whisper base model
         shell: pwsh
         run: |
-          if (!(Test-Path "whisper.cpp/models/ggml-tiny.bin")) {
+          if (!(Test-Path "whisper.cpp/models/ggml-base.bin")) {
             New-Item -ItemType Directory -Force -Path "whisper.cpp/models"
-            curl -L "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin" -o "whisper.cpp/models/ggml-tiny.bin"
+            curl -L "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin" -o "whisper.cpp/models/ggml-base.bin"
             echo "Model downloaded successfully"
           } else {
             echo "Model already exists, skipping download"
@@ -101,7 +101,7 @@ jobs:
           $config = Get-Content "src-tauri/tauri.conf.json" -Raw | ConvertFrom-Json
           $config.bundle.resources = @{
             "../../whisper.cpp/build/bin/Release/whisper-cli.exe" = "resources/whisper-cli.exe"
-            "../../whisper.cpp/models/ggml-tiny.bin" = "resources/ggml-tiny.bin"
+            "../../whisper.cpp/models/ggml-base.bin" = "resources/ggml-base.bin"
             "binaries/ffmpeg.exe" = "resources/binaries/ffmpeg.exe"
           }
           $config | ConvertTo-Json -Depth 10 | Set-Content "src-tauri/tauri.conf.json"
