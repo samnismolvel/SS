@@ -149,9 +149,9 @@
   // Keyed on activeSub.start so the animation restarts on each new subtitle.
   function getAnimationStyle(animation: string | undefined): string {
     switch (animation) {
-      case 'fade':      return 'animation: sub-fade 80ms ease-in forwards;'
-      case 'pop':       return 'animation: sub-pop 150ms cubic-bezier(0.34,1.56,0.64,1) forwards;'
-      case 'slide-up':  return 'animation: sub-slide-up 180ms ease-out forwards;'
+      case 'fade':      return 'animation: sub-fade 300ms ease-in-out forwards;'
+      case 'pop':       return 'animation: sub-pop 350ms cubic-bezier(0.34,1.56,0.64,1) forwards;'
+      case 'slide-up':  return 'animation: sub-slide-up 350ms ease-out forwards;'
       default:          return ''
     }
   }
@@ -278,6 +278,14 @@
     }
   }
 </script>
+
+<svelte:head>
+  <style>
+    @keyframes sub-fade     { from { opacity:0 } to { opacity:1 } }
+    @keyframes sub-pop      { from { transform:scale(0.5); opacity:0 } to { transform:scale(1); opacity:1 } }
+    @keyframes sub-slide-up { from { transform:translateY(40px); opacity:0 } to { transform:translateY(0); opacity:1 } }
+  </style>
+</svelte:head>
 
 <div class="editor">
   <!-- ── Topbar ── -->
@@ -875,16 +883,19 @@
 
 
   /* ── Animation preview keyframes ── */
-  @keyframes sub-fade {
-    from { opacity: 0; }
-    to   { opacity: 1; }
-  }
-  @keyframes sub-pop {
-    from { transform: scale(0.5); opacity: 0; }
-    to   { transform: scale(1);   opacity: 1; }
-  }
-  @keyframes sub-slide-up {
-    from { transform: translateY(24px); opacity: 0; }
-    to   { transform: translateY(0);    opacity: 1; }
+  /* @keyframes are global by spec — :global() wrapper makes this explicit */
+  :global {
+    @keyframes sub-fade {
+      from { opacity: 0; }
+      to   { opacity: 1; }
+    }
+    @keyframes sub-pop {
+      from { transform: scale(0.5); opacity: 0; }
+      to   { transform: scale(1);   opacity: 1; }
+    }
+    @keyframes sub-slide-up {
+      from { transform: translateY(40px); opacity: 0; }
+      to   { transform: translateY(0);    opacity: 1; }
+    }
   }
 </style>
