@@ -1,22 +1,36 @@
 <script lang="ts">
-  import StylesPanel   from './StylesPanel.svelte'
+  import VideoPanel     from './VideoPanel.svelte'
+  import StylesPanel    from './StylesPanel.svelte'
   import CustomizePanel from './CustomizePanel.svelte'
-  import CaptionsPanel from './CaptionsPanel.svelte'
+  import CaptionsPanel  from './CaptionsPanel.svelte'
+  import type { AspectRatio } from '$lib/types'
 
   interface Props {
-    onsrtexport?: () => void
-    onsrtimport?: () => void
+    ratio:          AspectRatio
+    offset:         number
+    onratiochange:  (r: AspectRatio) => void
+    onoffsetchange: (v: number) => void
+    onsrtexport?:   () => void
+    onsrtimport?:   () => void
   }
-  let { onsrtexport, onsrtimport }: Props = $props()
+  let { ratio, offset, onratiochange, onoffsetchange, onsrtexport, onsrtimport }: Props = $props()
 
-  type PanelId = 'styles' | 'customize' | 'captions'
+  type PanelId = 'video' | 'styles' | 'customize' | 'captions'
   let activePanel = $state<PanelId>('styles')
 </script>
 
 <div class="sidebar">
-
-  <!-- Icon strip -->
   <div class="icon-strip">
+
+    <button class="nav-btn {activePanel === 'video' ? 'active' : ''}"
+      onclick={() => activePanel = 'video'} title="Video">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
+        <rect x="2" y="4" width="20" height="16" rx="2"/>
+        <path d="M10 9l5 3-5 3V9z" fill="currentColor" stroke="none"/>
+      </svg>
+      <span class="nav-label">Video</span>
+    </button>
+
     <button class="nav-btn {activePanel === 'styles' ? 'active' : ''}"
       onclick={() => activePanel = 'styles'} title="Styles">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
@@ -43,11 +57,13 @@
       </svg>
       <span class="nav-label">Captions</span>
     </button>
+
   </div>
 
-  <!-- Panel -->
   <div class="panel">
-    {#if activePanel === 'styles'}
+    {#if activePanel === 'video'}
+      <VideoPanel {ratio} {offset} {onratiochange} {onoffsetchange} />
+    {:else if activePanel === 'styles'}
       <StylesPanel />
     {:else if activePanel === 'customize'}
       <CustomizePanel />
@@ -55,20 +71,16 @@
       <CaptionsPanel {onsrtexport} {onsrtimport} />
     {/if}
   </div>
-
 </div>
 
 <style>
   .sidebar {
     display: flex;
-    flex-direction: row;
     border-left: 1px solid var(--color-border);
     width: calc(var(--strip-w, 56px) + var(--panel-w, 300px));
     flex-shrink: 0;
     overflow: hidden;
   }
-
-  /* Icon strip */
   .icon-strip {
     display: flex;
     flex-direction: column;
@@ -80,7 +92,6 @@
     flex-shrink: 0;
     gap: 0.1rem;
   }
-
   .nav-btn {
     display: flex;
     flex-direction: column;
@@ -101,14 +112,7 @@
     color: var(--color-accent);
     background: var(--color-accent-subtle, rgba(99,102,241,0.12));
   }
-  .nav-label {
-    font-size: 0.58rem;
-    font-weight: 500;
-    letter-spacing: 0.04em;
-    line-height: 1;
-  }
-
-  /* Panel */
+  .nav-label { font-size: 0.58rem; font-weight: 500; letter-spacing: 0.04em; line-height: 1; }
   .panel {
     flex: 1;
     display: flex;

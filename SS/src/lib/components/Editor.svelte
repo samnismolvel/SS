@@ -2,7 +2,7 @@
   import { session, isDirty } from '$lib/stores/editor'
   import { activeTemplate }  from '$lib/stores/templates'
   import { buildAss }        from '$lib/utils/ass'
-  import type { Template }   from '$lib/types'
+  import type { Template, AspectRatio } from '$lib/types'
 
   import EditorTopbar  from './editor/EditorTopbar.svelte'
   import VideoPlayer   from './editor/VideoPlayer.svelte'
@@ -26,7 +26,11 @@
     return () => { u1(); u2(); u3() }
   })
 
-  // ── Derived helpers ────────────────────────────────────────────────────────
+  // ── Video panel state (owned here, shared to both sidebar and player) ──────
+  let ratio:  AspectRatio = $state('original')
+  let offset: number      = $state(50)
+
+  // ── Derived ────────────────────────────────────────────────────────────────
   let fileName = $derived(
     (sessionVal?.videoPath ?? '').split(/[\\/]/).pop() ?? ''
   )
@@ -38,9 +42,8 @@
     onburn({ videoPath: sessionVal.videoPath, outputPath: sessionVal.outputPath, assContent })
   }
 
-  // SRT export / import — wire up to your Tauri dialog calls here
-  function handleSrtExport() { /* TODO: invoke('export_srt', ...) */ }
-  function handleSrtImport() { /* TODO: invoke('import_srt', ...) */ }
+  function handleSrtExport() { /* TODO: invoke Tauri dialog */ }
+  function handleSrtImport() { /* TODO: invoke Tauri dialog */ }
 </script>
 
 <svelte:head>
@@ -65,8 +68,14 @@
       subtitles={sessionVal?.subtitles ?? []}
       selectedIndex={sessionVal?.selectedIndex ?? null}
       template={templateVal}
+      {ratio}
+      {offset}
     />
     <EditorSidebar
+      {ratio}
+      {offset}
+      onratiochange={(r) => ratio = r}
+      onoffsetchange={(v) => offset = v}
       onsrtexport={handleSrtExport}
       onsrtimport={handleSrtImport}
     />

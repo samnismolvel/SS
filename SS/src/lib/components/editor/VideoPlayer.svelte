@@ -2,15 +2,37 @@
   import { distributeWordTimings } from '$lib/utils/ass'
   import { convertFileSrc } from '@tauri-apps/api/core'
   import { selectSegment, updateSubtitleText, updateSubtitleOverrides, clearSubtitleOverrides } from '$lib/stores/editor'
-  import type { Subtitle, Template, Alignment } from '$lib/types'
+  import type { Subtitle, Template, Alignment, AspectRatio } from '$lib/types'
+  import { parseRatio } from '$lib/types'
 
   interface Props {
-    videoPath: string
-    subtitles: Subtitle[]
+    videoPath:     string
+    subtitles:     Subtitle[]
     selectedIndex: number | null
-    template: Template | null
+    template:      Template | null
+    ratio?:        AspectRatio
+    offset?:       number        // 0–100 vertical crop %
   }
-  let { videoPath, subtitles, selectedIndex, template }: Props = $props()
+  let { videoPath, subtitles, selectedIndex, template, ratio = 'original', offset = 50 }: Props = $props()
+
+  // ── Aspect ratio crop style ────────────────────────────────────────────────
+  // We show the video at its natural size inside a wrapper that clips to the
+  // chosen ratio. The video element itself keeps object-fit:cover so it fills
+  // the wrapper, and we shift it vertically with object-position.
+  let wrapStyle = $derived((() => {
+    const parsed = parseRatio(ratio)
+    if (!parsed) return ''           // 'original' — no constraint
+    const [w, h] = parsed
+    // padding-top trick: height = width × (h/w)
+    return `position:relative;width:100%;padding-top:${(h / w) * 100}%;max-height:100%;overflow:hidden;`
+  })())
+
+  // object-position maps offset 0→top, 50→center, 100→bottom
+  let videoStyle = $derived(
+    parseRatio(ratio)
+      ? `position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:center ${offset}%;`
+      : `width:100%;height:100%;object-fit:contain;display:block;`
+  )
 
   // ── Player state ───────────────────────────────────────────────────────────
   let videoEl     = $state(null as HTMLVideoElement | null)
@@ -151,17 +173,20 @@
   <!-- Video + overlay -->
   <div class="video-wrap">
     {#if videoSrc}
-      <video bind:this={videoEl} src={videoSrc}
-        ontimeupdate={onTimeUpdate} onloadedmetadata={onLoadedMetadata}
-        onplay={onVideoPlay} onpause={onVideoPause} class="video">
-      </video>
+      <!-- crop-frame constrains the video to the chosen aspect ratio -->
+      <div class="crop-frame" style={wrapStyle}>
+        <video bind:this={videoEl} src={videoSrc}
+          ontimeupdate={onTimeUpdate} onloadedmetadata={onLoadedMetadata}
+          onplay={onVideoPlay} onpause={onVideoPause}
+          style={videoStyle}>
+        </video>
 
-      <!-- Subtitle overlay -->
-      {#if activeSub && template}
-        {#key activeSub?.start}
-          <div class="sub-overlay"
-            style="position:absolute;{getAlignmentStyle(template.alignment ?? 2)}max-width:90%;pointer-events:auto;cursor:pointer;"
-            onclick={() => seekToSegment(activeSub!)}>
+        <!-- Subtitle overlay — inside crop-frame so it clips with the video -->
+        {#if activeSub && template}
+          {#key activeSub?.start}
+            <div class="sub-overlay"
+              style="position:absolute;{getAlignmentStyle(template.alignment ?? 2)}max-width:90%;pointer-events:auto;cursor:pointer;"
+              onclick={() => seekToSegment(activeSub!)}>
             <span style="display:inline-block;transform-origin:center bottom;
               font-family:{template.fontName ?? 'Arial'};
               font-size:{(template.fontSize ?? 24) * 0.8}px;
@@ -192,10 +217,11 @@
               {/if}
             </span>
           </div>
-        {/key}
-      {/if}
+          {/key}
+        {/if}
+      </div><!-- /crop-frame -->
 
-      <!-- Controls -->
+      <!-- Controls sit outside crop-frame, always full-width at bottom -->
       <div class="video-controls">
         <button class="play-btn" onclick={togglePlay}>
           {#if playing}
@@ -301,6 +327,15 @@
     justify-content: center;
     overflow: hidden;
   }
+  /* crop-frame: sized by wrapStyle (padding-top trick) or fills wrap when original */
+  .crop-frame {
+    /* when ratio=original, wrapStyle is empty so these take over */
+    width: 100%;
+    height: 100%;
+    position: relative;
+    overflow: hidden;
+  }
+  /* video style is now fully inline (videoStyle), this class is unused but kept as fallback */
   .video { width: 100%; height: 100%; object-fit: contain; display: block; }
 
   .no-video {
