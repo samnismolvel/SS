@@ -522,6 +522,23 @@ function buildTypewriterEvents(
 
 // ─── Plain events─────────────────────────────────────────
 
+// ─── posX/posY → \pos tag ────────────────────────────────────────────────────
+// posX/posY are stored as % (0–100) of the video frame.
+// ASS script space is 384×288 (SCRIPT_W × SCRIPT_H).
+// We convert directly: posX% → script X, posY% → script Y.
+// When set, emit \an5 (centre-anchor) + \pos so the subtitle is centred on
+// the dragged point. When not set, the style's alignment + margins apply.
+
+function buildPosTag(template: Template): string {
+  const px = (template as any).posX as number | undefined
+  const py = (template as any).posY as number | undefined
+  if (px == null || py == null) return ''
+  const x = Math.round((px / 100) * SCRIPT_W)
+  const y = Math.round((py / 100) * SCRIPT_H)
+  // \an5 = centre-anchor so the subtitle centres on the given point
+  return `{\an5\pos(${x},${y})}`
+}
+
 function buildPlainEvents(subtitles: Subtitle[], template: Template): string[] {
   const events: string[] = []
   const syncOffset = template.syncOffset ?? 50
@@ -544,7 +561,8 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template): string[] {
     const end        = srtTimeToAss(line.endSrt)
     const text       = line.text.replace(/\{/g, '\\{').replace(/\}/g, '\\}')
     const durationMs = srtToMs(line.endSrt) - srtToMs(line.startSrt)
-    const tags       = buildInlineTags(style, template)
+    const posTag     = buildPosTag(template)
+    const tags       = posTag + buildInlineTags(style, template)
     const animTag    = buildAnimationTag(
       template.animation,
       durationMs,
@@ -578,6 +596,7 @@ function buildWordByWordEvents(subtitles: Subtitle[], template: Template): strin
   const events: string[] = []
   const primaryColor   = '{\\c' + hexToAss(template.primaryColor) + '}'
   const highlightColor = '{\\c' + hexToAss(template.highlightColor) + '}'
+  const posTag         = buildPosTag(template)
   const syncOffset     = template.syncOffset ?? 50
   const wbwOpts: GroupOptions = {
     ...groupOptsFromTemplate(template),
@@ -664,7 +683,7 @@ function buildWordByWordEvents(subtitles: Subtitle[], template: Template): strin
         const animTag = buildAnimationTag(template.animation, wordDur, template.alignment, template.marginV, template.fontSize)
         events.push(
           'Dialogue: 0,' + msToAssTime(startMs) + ',' + msToAssTime(endMs) +
-          ',Default,,0,0,0,,' + animTag + primaryColor + text
+          ',Default,,0,0,0,,' + posTag + animTag + primaryColor + text
         )
       }
     } else if (template.wordMode === 'solo') {
@@ -673,7 +692,7 @@ function buildWordByWordEvents(subtitles: Subtitle[], template: Template): strin
         const animTag = buildAnimationTag(template.animation, wordDur, template.alignment, template.marginV, template.fontSize)
         events.push(
           'Dialogue: 0,' + msToAssTime(startMs) + ',' + msToAssTime(endMs) +
-          ',Default,,0,0,0,,' + animTag + highlightColor + word
+          ',Default,,0,0,0,,' + posTag + animTag + highlightColor + word
         )
       }
     }

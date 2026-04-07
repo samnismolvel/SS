@@ -328,9 +328,20 @@
           <div class="panel-body">
             {#if customSection==='layout'}
               <div class="s-lbl">Position</div>
-              <div class="align-grid">{#each [7,8,9,4,5,6,1,2,3] as pos}<button class="align-btn" class:active={templateVal.alignment===pos} onclick={()=>{updateActiveTemplate({alignment:pos as Alignment});resetPosition()}}></button>{/each}</div>
+              <div class="field-row">
+                <span style="font-size:.7rem;color:var(--color-text-muted);">Drag the subtitle in the preview to set position.</span>
+              </div>
               {#if (templateVal as any)?.posX != null}
-                <div class="field-row mt"><span style="font-size:.68rem;color:var(--color-text-muted);">Custom position active</span><button class="reset-pos-btn" onclick={resetPosition}>↺ Reset</button></div>
+                <div class="field-row" style="margin-top:.3rem">
+                  <span style="font-size:.68rem;color:var(--color-text-muted);">
+                    X: {Math.round((templateVal as any).posX)}% &nbsp; Y: {Math.round((templateVal as any).posY)}%
+                  </span>
+                  <button class="reset-pos-btn" onclick={resetPosition}>↺ Reset</button>
+                </div>
+              {:else}
+                <div class="field-row" style="margin-top:.3rem">
+                  <span style="font-size:.68rem;color:var(--color-text-muted);">Default: bottom centre</span>
+                </div>
               {/if}
               <div class="field-row mt"><label>Margin V</label><input type="range" min="0" max="100" value={templateVal.marginV} oninput={(e)=>updateActiveTemplate({marginV:Number(e.currentTarget.value)})} /><span class="rval">{templateVal.marginV}</span></div>
               <div class="s-lbl">Timing</div>
@@ -391,13 +402,7 @@
                 <div class="ov-row"><label>Color</label><input type="color" value={effective.primaryColor} oninput={(e)=>setOverride('primaryColor',e.currentTarget.value)} />{#if 'primaryColor' in overrides}<span class="ov-dot"></span>{/if}</div>
                 <div class="ov-row"><label>Outline</label><input type="color" value={effective.outlineColor} oninput={(e)=>setOverride('outlineColor',e.currentTarget.value)} />{#if 'outlineColor' in overrides}<span class="ov-dot"></span>{/if}</div>
                 <div class="ov-row"><label>Size</label><input type="number" min="8" max="120" value={effective.fontSize} onchange={(e)=>setOverride('fontSize',Number(e.currentTarget.value))} />{#if 'fontSize' in overrides}<span class="ov-dot"></span>{/if}</div>
-                <div class="ov-row"><label>Position</label>
-                  <select value={effective.alignment} onchange={(e)=>setOverride('alignment',Number(e.currentTarget.value))}>
-                    <option value={7}>Top Left</option><option value={8}>Top Center</option><option value={9}>Top Right</option>
-                    <option value={4}>Mid Left</option><option value={5}>Mid Center</option><option value={6}>Mid Right</option>
-                    <option value={1}>Bot Left</option><option value={2}>Bot Center</option><option value={3}>Bot Right</option>
-                  </select>{#if 'alignment' in overrides}<span class="ov-dot"></span>{/if}
-                </div>
+
               </div>
             </div>
           {/if}
@@ -472,11 +477,6 @@
   .rval{font-size:.68rem;color:var(--color-text-muted);min-width:30px;text-align:right}
   .tog{width:24px;height:24px;border-radius:4px;border:1px solid var(--color-border);background:var(--color-bg);color:var(--color-text-muted);cursor:pointer;font-size:.78rem}
   .tog.active{background:var(--color-accent);border-color:var(--color-accent);color:white}
-  .align-grid{display:grid;grid-template-columns:repeat(3,26px);gap:3px}
-  .align-btn{width:26px;height:26px;border-radius:4px;border:1px solid var(--color-border);background:var(--color-bg);cursor:pointer;position:relative}
-  .align-btn::after{content:'';position:absolute;width:5px;height:5px;border-radius:50%;background:var(--color-text-muted);top:50%;left:50%;transform:translate(-50%,-50%)}
-  .align-btn.active{background:var(--color-accent-subtle);border-color:var(--color-accent)}.align-btn.active::after{background:var(--color-accent)}
-  .align-btn:hover:not(.active){background:var(--color-surface-hover)}
   .anim-grid{display:grid;grid-template-columns:1fr 1fr;gap:.35rem;margin-top:.2rem}
   .anim-btn{padding:.45rem;border-radius:6px;border:2px solid var(--color-border);background:var(--color-bg);color:var(--color-text);font-size:.73rem;cursor:pointer;transition:border-color .15s,background .15s}
   .anim-btn:hover{border-color:var(--color-text-muted)}.anim-btn.active{border-color:var(--color-accent);background:var(--color-accent-subtle);color:var(--color-accent)}
@@ -520,3 +520,4 @@
   @keyframes sub-pop{from{transform:scale(0.5);opacity:0}to{transform:scale(1);opacity:1}}
   @keyframes sub-slide-up{from{transform:translateY(40px);opacity:0}to{transform:translateY(0);opacity:1}}
 </style>
+  
