@@ -60,15 +60,6 @@
     return ''
   }
 
-  function getAlignmentStyle(n: number): string {
-    const p: Record<number,string> = {
-      1:'bottom:10%;left:5%;text-align:left;', 2:'bottom:10%;left:50%;transform:translateX(-50%);text-align:center;',
-      3:'bottom:10%;right:5%;text-align:right;', 4:'top:50%;left:5%;transform:translateY(-50%);text-align:left;',
-      5:'top:50%;left:50%;transform:translate(-50%,-50%);text-align:center;', 6:'top:50%;right:5%;transform:translateY(-50%);text-align:right;',
-      7:'top:5%;left:5%;text-align:left;', 8:'top:5%;left:50%;transform:translateX(-50%);text-align:center;', 9:'top:5%;right:5%;text-align:right;'
-    }
-    return p[n]??p[2]
-  }
 
   function srtToSeconds(srt: string): number {
     if (!srt) return 0
@@ -172,17 +163,19 @@
   }
 
   function getOverlayPositionStyle(): string {
-    const px = (templateVal as any)?.posX, py = (templateVal as any)?.posY
-    if (px != null && py != null) {
-      const frame = getFrameRect()
-      const wrap  = videoWrapEl?.getBoundingClientRect()
-      if (frame && wrap) {
-        const ax = frame.left - wrap.left + (px / 100) * frame.width
-        const ay = frame.top  - wrap.top  + (py / 100) * frame.height
-        return `left:${ax}px;top:${ay}px;transform:translate(-50%,-50%);text-align:center;`
-      }
+    // posX/posY are always set (default 50/88). Convert from % of video frame
+    // to absolute px within video-wrap, accounting for letterbox bars.
+    const px: number = (templateVal as any)?.posX ?? 50
+    const py: number = (templateVal as any)?.posY ?? 88
+    const frame = getFrameRect()
+    const wrap  = videoWrapEl?.getBoundingClientRect()
+    if (frame && wrap) {
+      const ax = frame.left - wrap.left + (px / 100) * frame.width
+      const ay = frame.top  - wrap.top  + (py / 100) * frame.height
+      return `left:${ax}px;top:${ay}px;transform:translate(-50%,-50%);text-align:center;`
     }
-    return getAlignmentStyle((templateVal as any)?.alignment ?? 2)
+    // Fallback before video loads: bottom-centre
+    return 'bottom:10%;left:50%;transform:translateX(-50%);text-align:center;'
   }
 
   function onSubPointerDown(e: PointerEvent) {
@@ -402,7 +395,6 @@
                 <div class="ov-row"><label>Color</label><input type="color" value={effective.primaryColor} oninput={(e)=>setOverride('primaryColor',e.currentTarget.value)} />{#if 'primaryColor' in overrides}<span class="ov-dot"></span>{/if}</div>
                 <div class="ov-row"><label>Outline</label><input type="color" value={effective.outlineColor} oninput={(e)=>setOverride('outlineColor',e.currentTarget.value)} />{#if 'outlineColor' in overrides}<span class="ov-dot"></span>{/if}</div>
                 <div class="ov-row"><label>Size</label><input type="number" min="8" max="120" value={effective.fontSize} onchange={(e)=>setOverride('fontSize',Number(e.currentTarget.value))} />{#if 'fontSize' in overrides}<span class="ov-dot"></span>{/if}</div>
-
               </div>
             </div>
           {/if}
@@ -520,4 +512,3 @@
   @keyframes sub-pop{from{transform:scale(0.5);opacity:0}to{transform:scale(1);opacity:1}}
   @keyframes sub-slide-up{from{transform:translateY(40px);opacity:0}to{transform:translateY(0);opacity:1}}
 </style>
-  

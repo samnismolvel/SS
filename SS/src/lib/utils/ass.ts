@@ -334,7 +334,7 @@ function buildStyleLine(name: string, t: EffectiveStyle): string {
     primary, secondary, outline, back,
     bold, italic, 0, 0,
     t.scaleX, t.scaleY, t.spacing, 0,
-    1, t.outline, t.shadow, t.alignment,
+    1, t.outline, t.shadow, 5,
     t.marginL, t.marginR, t.marginV, 1,
   ].join(',')
 }
@@ -349,7 +349,6 @@ function buildInlineTags(style: EffectiveStyle, base: Template): string {
   if (style.outlineColor !== base.outlineColor) tags.push('\\3c' + hexToAss(style.outlineColor))
   if (style.outline      !== base.outline)      tags.push('\\bord' + style.outline)
   if (style.shadow       !== base.shadow)       tags.push('\\shad' + style.shadow)
-  if (style.alignment    !== base.alignment)    tags.push('\\an' + style.alignment)
   return tags.length > 0 ? '{' + tags.join('') + '}' : ''
 }
 
@@ -430,7 +429,7 @@ function toScriptY(px: number, videoHeight: number): number { return Math.round(
 function buildAnimationTag(
   animation: AnimationMode,
   eventDurationMs: number,
-  alignment: number = 2,
+  posYPct: number = 88,
   marginV: number = 20,
   fontSize: number = 24,
 ): string {
@@ -457,19 +456,9 @@ function buildAnimationTag(
     const slideOffset = 12  // ~40px at 1080p equivalent in 288p script space
     const lineHeight  = Math.round(fontSize * 1.4)
     const cx          = 192  // horizontal centre of 384px script width
-    const row = alignment <= 3 ? 'bottom' : alignment <= 6 ? 'middle' : 'top'
-
-    let yEnd: number, yStart: number
-    if (row === 'bottom') {
-      yEnd   = SCRIPT_H - marginV - lineHeight
-      yStart = yEnd + slideOffset
-    } else if (row === 'middle') {
-      yEnd   = Math.round(SCRIPT_H / 2)
-      yStart = yEnd + slideOffset
-    } else {
-      yEnd   = marginV + lineHeight
-      yStart = yEnd - slideOffset
-    }
+    // posYPct drives where the text lands; it slides up from slightly below.
+    const yEnd   = Math.round((posYPct / 100) * SCRIPT_H)
+    const yStart = yEnd + slideOffset
 
     return `{\\fad(${fadeIn},0)\\move(${cx},${yStart},${cx},${yEnd},0,${slideMs})}`
   }
@@ -530,12 +519,12 @@ function buildTypewriterEvents(
 // the dragged point. When not set, the style's alignment + margins apply.
 
 function buildPosTag(template: Template): string {
-  const px = (template as any).posX as number | undefined
-  const py = (template as any).posY as number | undefined
-  if (px == null || py == null) return ''
+  // Always emit \an5\pos so positioning is fully driven by posX/posY.
+  // Defaults: posX=50 (horizontal centre), posY=88 (near bottom).
+  const px: number = (template as any).posX ?? 50
+  const py: number = (template as any).posY ?? 88
   const x = Math.round((px / 100) * SCRIPT_W)
   const y = Math.round((py / 100) * SCRIPT_H)
-  // \an5 = centre-anchor so the subtitle centres on the given point
   return `{\an5\pos(${x},${y})}`
 }
 
@@ -566,7 +555,7 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template): string[] {
     const animTag    = buildAnimationTag(
       template.animation,
       durationMs,
-      style.alignment ?? template.alignment,
+      (template as any).posY ?? 88,
       style.marginV   ?? template.marginV,
       style.fontSize  ?? template.fontSize,
     )
@@ -680,7 +669,7 @@ function buildWordByWordEvents(subtitles: Subtitle[], template: Template): strin
           if (j < resolvedTokens.length - 1) text += ' '
         }
         const wordDur = endMs - startMs
-        const animTag = buildAnimationTag(template.animation, wordDur, template.alignment, template.marginV, template.fontSize)
+        const animTag = buildAnimationTag(template.animation, wordDur, (template as any).posY ?? 88, template.marginV, template.fontSize)
         events.push(
           'Dialogue: 0,' + msToAssTime(startMs) + ',' + msToAssTime(endMs) +
           ',Default,,0,0,0,,' + posTag + animTag + primaryColor + text
@@ -689,7 +678,7 @@ function buildWordByWordEvents(subtitles: Subtitle[], template: Template): strin
     } else if (template.wordMode === 'solo') {
       for (const { word, startMs, endMs } of resolvedTokens) {
         const wordDur = endMs - startMs
-        const animTag = buildAnimationTag(template.animation, wordDur, template.alignment, template.marginV, template.fontSize)
+        const animTag = buildAnimationTag(template.animation, wordDur, (template as any).posY ?? 88, template.marginV, template.fontSize)
         events.push(
           'Dialogue: 0,' + msToAssTime(startMs) + ',' + msToAssTime(endMs) +
           ',Default,,0,0,0,,' + posTag + animTag + highlightColor + word

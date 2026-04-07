@@ -15,6 +15,8 @@ export interface Template {
   scaleX: number
   scaleY: number
   spacing: number
+  posX: number        // subtitle centre X as % of video frame (0–100); default 50
+  posY: number        // subtitle centre Y as % of video frame (0–100); default 88
   marginV: number
   marginL: number
   marginR: number
@@ -56,7 +58,7 @@ export interface Subtitle {
   end: string
   text: string
   originalText: string
-  overrides?: Partial<Omit<Template, 'id' | 'name' | 'wordByWord' | 'wordMode' | 'highlightColor'>> & {
+  overrides?: Partial<Omit<Template, 'id' | 'name' | 'wordByWord' | 'wordMode' | 'highlightColor' | 'posX' | 'posY'>> & {
     posX?: number
     posY?: number
   }
