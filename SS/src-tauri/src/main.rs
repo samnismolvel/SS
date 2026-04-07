@@ -23,9 +23,91 @@ fn get_ffmpeg_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String>
     return Ok(resource_path.join("binaries/ffmpeg"));
 }
 
+// ─── crop_filter ─────────────────────────────────────────────────────────────
+// Builds the FFmpeg crop+scale filter string for a given ratio and offset.
+//
+// Strategy:
+//   1. crop=  — cuts the input to the target W:H ratio, panning vertically
+//              with `offset` (0 = top, 50 = center, 100 = bottom).
+//   2. scale= — resizes the crop to a canonical pixel size so the output has
+//              clean, standard dimensions regardless of source resolution.
+//
+// We use FFmpeg expression variables so this works on any input size:
+//   iw / ih  = input width / height
+//   ow / oh  = output (crop) width / height (computed from ratio)
+//
+// For a portrait ratio (h > w) the crop width = ih * (rw/rh), full height.
+// For a landscape ratio (w > h) the crop height = iw * (rh/rw), full width.
+// For 1:1 the crop = min(iw,ih).
+
+fn crop_filter(ratio: &str, offset: u32) -> Option<String> {
+    // Parse "W:H" string into integers
+    let parts: Vec<u32> = ratio.split(':')
+        .filter_map(|s| s.parse().ok())
+        .collect();
+
+    if parts.len() != 2 {
+        return None; // "original" or anything unparseable → no crop
+    }
+
+    let (rw, rh) = (parts[0], parts[1]);
+
+    // Clamp offset 0–100
+    let off = offset.min(100);
+
+    // Build FFmpeg crop expression.
+    // We want the crop to have the exact aspect ratio rw:rh.
+    // If rw/rh < iw/ih  (target narrower than source, e.g. 9:16 from 16:9):
+    //   crop width  = ih * rw / rh   (fit to full height)
+    //   crop height = ih
+    //   x offset    = (iw - ow) / 2  (center horizontally)
+    //   y offset    = 0              (no vertical crop needed)
+    //
+    // If rw/rh > iw/ih  (target wider, e.g. 16:9 from 9:16):
+    //   crop width  = iw
+    //   crop height = iw * rh / rw
+    //   x offset    = 0
+    //   y offset    = (ih - oh) * offset/100
+    //
+    // We express this purely in FFmpeg filter expressions so it adapts to
+    // any input resolution at runtime.
+    //
+    // ow = if(gt(iw/ih\,{rw}/{rh})\, ih*{rw}/{rh}\, iw)
+    // oh = if(gt(iw/ih\,{rw}/{rh})\, ih\, iw*{rh}/{rw})
+    // x  = (iw-ow)/2
+    // y  = (ih-oh)*{off}/100
+    //
+    // (backslash-comma escapes the comma inside if() for the vf argument)
+
+    let ow_expr = format!("if(gt(iw/ih\\,{rw}/{rh})\\,ih*{rw}/{rh}\\,iw)");
+    let oh_expr = format!("if(gt(iw/ih\\,{rw}/{rh})\\,ih\\,iw*{rh}/{rw})");
+    let x_expr  = "(iw-ow)/2".to_string();
+    let y_expr  = format!("(ih-oh)*{off}/100");
+
+    // Canonical output scale: choose a standard size for the ratio.
+    // These match common social media export sizes.
+    let (scale_w, scale_h) = canonical_size(rw, rh);
+
+    let crop  = format!("crop={ow_expr}:{oh_expr}:{x_expr}:{y_expr}");
+    let scale = format!("scale={scale_w}:{scale_h}");
+
+    Some(format!("{crop},{scale}"))
+}
+
+/// Returns a canonical pixel size for a ratio, rounding to even numbers.
+/// Falls back to -2 (FFmpeg auto-even) on the height when ratio is unusual.
+fn canonical_size(rw: u32, rh: u32) -> (i32, i32) {
+    match (rw, rh) {
+        (9, 16)  => (1080, 1920),
+        (16, 9)  => (1920, 1080),
+        (1, 1)   => (1080, 1080),
+        (4, 3)   => (1440, 1080),
+        (3, 4)   => (1080, 1440),
+        _        => (-2, -2),   // let FFmpeg pick even dimensions
+    }
+}
+
 // ─── process_video ────────────────────────────────────────────────────────────
-// Extracts audio, runs whisper, returns raw SRT string to the frontend.
-// All styling decisions happen in the frontend after this.
 
 #[tauri::command]
 async fn process_video(
@@ -122,8 +204,9 @@ async fn process_video(
 }
 
 // ─── burn_subtitles ───────────────────────────────────────────────────────────
-// Accepts a pre-built ASS string from the frontend.
-// All styling logic lives in src/lib/utils/ass.ts now.
+// Accepts a pre-built ASS string plus optional crop parameters.
+// crop_ratio: "9:16" | "16:9" | "1:1" | "4:3" | "3:4" | "" (original)
+// crop_offset: 0–100, vertical pan position within the crop (50 = center)
 
 #[tauri::command]
 async fn burn_subtitles(
@@ -131,6 +214,8 @@ async fn burn_subtitles(
     video_path: String,
     output_path: String,
     ass_content: String,
+    crop_ratio: Option<String>,
+    crop_offset: Option<u32>,
 ) -> Result<(), String> {
     let ffmpeg_path = get_ffmpeg_path(&app)?;
     let temp_dir = std::env::temp_dir();
@@ -149,6 +234,7 @@ async fn burn_subtitles(
 
     emit_progress(&app, "burning", "Burning subtitles into video...");
 
+    // ── Escape the ASS path for FFmpeg -vf ───────────────────────────────────
     #[cfg(target_os = "windows")]
     let ass_escaped = ass_path.to_str().unwrap()
         .replace("\\", "/")
@@ -156,11 +242,31 @@ async fn burn_subtitles(
     #[cfg(not(target_os = "windows"))]
     let ass_escaped = ass_path.to_str().unwrap().to_string();
 
+    // ── Build the -vf filter chain ────────────────────────────────────────────
+    // If a valid ratio was provided, prepend crop+scale before ass=.
+    // Order matters: crop/scale must come BEFORE ass so the subtitle renderer
+    // works with the final frame dimensions, not the original video dimensions.
+    let vf = {
+        let ratio_str = crop_ratio.as_deref().unwrap_or("original");
+        let offset    = crop_offset.unwrap_or(50);
+
+        let ass_filter = format!("ass='{}'", ass_escaped);
+
+        match crop_filter(ratio_str, offset) {
+            Some(crop) => format!("{},{}", crop, ass_filter),
+            None       => ass_filter,   // "original" — no crop, just ass
+        }
+    };
+
+    #[cfg(debug_assertions)]
+    eprintln!("FFmpeg -vf: {}", vf);
+
+    // ── Run FFmpeg ────────────────────────────────────────────────────────────
     #[cfg_attr(not(target_os = "windows"), allow(unused_mut))]
     let mut burn_cmd = Command::new(&ffmpeg_path);
     burn_cmd.args([
         "-i", &video_path,
-        "-vf", &format!("ass='{}'", ass_escaped),
+        "-vf", &vf,
         "-c:v", "libx264",
         "-c:a", "copy",
         "-y",
@@ -168,6 +274,7 @@ async fn burn_subtitles(
     ]);
     #[cfg(target_os = "windows")]
     burn_cmd.creation_flags(CREATE_NO_WINDOW);
+
     let burn_status = burn_cmd.status()
         .map_err(|_| "FFmpeg not found. Please reinstall the app.".to_string())?;
 

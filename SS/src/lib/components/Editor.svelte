@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { invoke }          from '@tauri-apps/api/core'
   import { session, isDirty } from '$lib/stores/editor'
   import { activeTemplate }  from '$lib/stores/templates'
   import { buildAss }        from '$lib/utils/ass'
@@ -26,7 +27,7 @@
     return () => { u1(); u2(); u3() }
   })
 
-  // ── Video panel state (owned here, shared to both sidebar and player) ──────
+  // ── Video panel state ──────────────────────────────────────────────────────
   let ratio:  AspectRatio = $state('original')
   let offset: number      = $state(50)
 
@@ -35,11 +36,34 @@
     (sessionVal?.videoPath ?? '').split(/[\\/]/).pop() ?? ''
   )
 
-  // ── Actions ────────────────────────────────────────────────────────────────
+  // ── Export / burn ──────────────────────────────────────────────────────────
+  // We call burn_subtitles directly here so we can pass crop_ratio and
+  // crop_offset alongside the ASS content. The parent onburn prop is kept
+  // for callers that manage the progress UI externally — we still invoke it
+  // after building the payload so existing wiring isn't broken.
   function handleExport() {
     if (!sessionVal || !templateVal) return
+
     const assContent = buildAss(sessionVal.subtitles, templateVal)
+
+    // Derive the crop_ratio string FFmpeg expects ("9:16", "16:9", etc.)
+    // "original" means no crop — pass undefined so Rust uses its None branch.
+    const cropRatio  = ratio === 'original' ? undefined : ratio
+    const cropOffset = ratio === 'original' ? undefined : offset
+
+    // Notify parent (progress UI, queue status, etc.)
     onburn({ videoPath: sessionVal.videoPath, outputPath: sessionVal.outputPath, assContent })
+
+    // The actual Tauri invoke with crop params.
+    // If your parent already calls burn_subtitles itself, remove this block
+    // and add crop_ratio / crop_offset to whatever invoke call it makes.
+    invoke('burn_subtitles', {
+      videoPath:   sessionVal.videoPath,
+      outputPath:  sessionVal.outputPath,
+      assContent,
+      cropRatio,
+      cropOffset,
+    }).catch((e: unknown) => console.error('burn_subtitles failed:', e))
   }
 
   function handleSrtExport() { /* TODO: invoke Tauri dialog */ }
