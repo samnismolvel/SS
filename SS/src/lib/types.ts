@@ -15,7 +15,6 @@ export interface Template {
   scaleX: number
   scaleY: number
   spacing: number
-  alignment: Alignment
   marginV: number
   marginL: number
   marginR: number
@@ -28,11 +27,6 @@ export interface Template {
 }
 
 // ─── Enums / Literals ────────────────────────────────────────────────────────
-
-export type Alignment =
-  | 1 | 2 | 3
-  | 4 | 5 | 6
-  | 7 | 8 | 9
 
 export type WordMode = 'highlight' | 'solo' | 'none'
 

@@ -3,7 +3,7 @@
   import { activeTemplate, updateActiveTemplate, allTemplates, setActiveTemplate, saveActiveAsTemplate } from '$lib/stores/templates'
   import { buildAss, distributeWordTimings, parseSRT } from '$lib/utils/ass'
   import { convertFileSrc } from '@tauri-apps/api/core'
-  import type { WordMode, Alignment, AnimationMode } from '$lib/types'
+  import type { WordMode, AnimationMode } from '$lib/types'
 
   interface Props {
     onburn: (detail: { videoPath: string; outputPath: string; assContent: string }) => void
