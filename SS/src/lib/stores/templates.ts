@@ -3,6 +3,9 @@ import type { Template, AnimationMode } from '../types'
 import { PRESET_IDS } from '../types'
 
 // ─── Built-in presets ─────────────────────────────────────────────────────────
+// Note: posX / posY are NOT here. Position is a separate dragged value in the
+// editor — keeping it out of presets means switching styles never resets where
+// the user put their subtitles.
 
 export const PRESETS: Template[] = [
   {
@@ -21,8 +24,6 @@ export const PRESETS: Template[] = [
     scaleX: 100,
     scaleY: 100,
     spacing: 0,
-    posX: 50,
-    posY: 88,
     marginV: 20,
     marginL: 10,
     marginR: 10,
@@ -49,8 +50,6 @@ export const PRESETS: Template[] = [
     scaleX: 100,
     scaleY: 100,
     spacing: 0,
-    posX: 50,
-    posY: 50,
     marginV: 0,
     marginL: 10,
     marginR: 10,
@@ -77,8 +76,6 @@ export const PRESETS: Template[] = [
     scaleX: 100,
     scaleY: 100,
     spacing: 1,
-    posX: 50,
-    posY: 80,
     marginV: 40,
     marginL: 10,
     marginR: 10,
@@ -105,8 +102,6 @@ export const PRESETS: Template[] = [
     scaleX: 100,
     scaleY: 100,
     spacing: 0,
-    posX: 50,
-    posY: 85,
     marginV: 30,
     marginL: 10,
     marginR: 10,
@@ -133,8 +128,6 @@ export const PRESETS: Template[] = [
     scaleX: 100,
     scaleY: 100,
     spacing: 0,
-    posX: 50,
-    posY: 88,
     marginV: 20,
     marginL: 10,
     marginR: 10,
@@ -149,16 +142,13 @@ export const PRESETS: Template[] = [
 
 // ─── Store ────────────────────────────────────────────────────────────────────
 
-// User-created templates (loaded from / saved to disk via Tauri)
 export const userTemplates = writable<Template[]>([])
 
-// All templates combined
 export const allTemplates = derived(
   userTemplates,
   $user => [...PRESETS, ...$user]
 )
 
-// The currently active template
 export const activeTemplate = writable<Template>({ ...PRESETS[0] })
 
 // ─── Actions ──────────────────────────────────────────────────────────────────
@@ -190,7 +180,6 @@ export function deleteUserTemplate(id: string) {
   userTemplates.update($t => $t.filter(t => t.id !== id))
 }
 
-/** Save the current active template as a new user template */
 export function saveActiveAsTemplate(name: string) {
   activeTemplate.update($t => {
     addUserTemplate({ ...$t, name })

@@ -1,4 +1,9 @@
 // ─── Template ────────────────────────────────────────────────────────────────
+// posX / posY are intentionally NOT part of Template.
+// Position is a separate, optional, dragged value stored outside the template
+// so that presets never override user drag, and undragged subtitles fall back
+// to the ASS alignment + margin system automatically.
+
 export interface Template {
   id: string
   name: string
@@ -15,8 +20,6 @@ export interface Template {
   scaleX: number
   scaleY: number
   spacing: number
-  posX: number        // subtitle centre X as % of video frame (0–100); default 50
-  posY: number        // subtitle centre Y as % of video frame (0–100); default 88
   marginV: number
   marginL: number
   marginR: number
@@ -28,7 +31,21 @@ export interface Template {
   animation: AnimationMode
 }
 
+// ─── Drag position ────────────────────────────────────────────────────────────
+// Stored as % of the video frame (0–100). Kept separate from Template so it is
+// never serialised into a preset and never interferes with ASS alignment when
+// no drag has occurred.
+export interface DragPosition {
+  posX: number  // 0–100, horizontal %
+  posY: number  // 0–100, vertical %
+}
+
 // ─── Enums / Literals ────────────────────────────────────────────────────────
+
+export type Alignment =
+  | 1 | 2 | 3
+  | 4 | 5 | 6
+  | 7 | 8 | 9
 
 export type WordMode = 'highlight' | 'solo' | 'none'
 
@@ -36,10 +53,9 @@ export type AnimationMode = 'none' | 'fade' | 'pop' | 'slide-up' | 'typewriter'
 
 export type SubtitleStatus = 'pending' | 'processing' | 'done' | 'failed'
 
-// ─── Aspect ratio for the video panel ────────────────────────────────────────
+// ─── Aspect ratio ─────────────────────────────────────────────────────────────
 export type AspectRatio = 'original' | '1:1' | '9:16' | '16:9' | '4:3' | '3:4'
 
-/** Numeric [w, h] pair for a ratio — null means "use the video's native size" */
 export function parseRatio(r: AspectRatio): [number, number] | null {
   switch (r) {
     case '1:1':  return [1, 1]
@@ -58,10 +74,7 @@ export interface Subtitle {
   end: string
   text: string
   originalText: string
-  overrides?: Partial<Omit<Template, 'id' | 'name' | 'wordByWord' | 'wordMode' | 'highlightColor' | 'posX' | 'posY'>> & {
-    posX?: number
-    posY?: number
-  }
+  overrides?: Partial<Omit<Template, 'id' | 'name' | 'wordByWord' | 'wordMode' | 'highlightColor'>>
 }
 
 // ─── Queue ───────────────────────────────────────────────────────────────────

@@ -3,7 +3,9 @@
   import { activeTemplate, updateActiveTemplate, allTemplates, setActiveTemplate, saveActiveAsTemplate } from '$lib/stores/templates'
   import { buildAss, distributeWordTimings, parseSRT } from '$lib/utils/ass'
   import { convertFileSrc } from '@tauri-apps/api/core'
-  import type { WordMode, AnimationMode } from '$lib/types'
+  import type { WordMode, AnimationMode, DragPosition } from '$lib/types'
+
+  let dragPos = $state<DragPosition | undefined>(undefined)
 
   interface Props {
     onburn: (detail: { videoPath: string; outputPath: string; assContent: string }) => void
@@ -135,8 +137,12 @@
     input.click()
   }
   function handleBurn() {
-    if (!sessionVal||!templateVal) return
-    onburn({videoPath:sessionVal.videoPath,outputPath:sessionVal.outputPath,assContent:buildAss(sessionVal.subtitles,templateVal)})
+    if (!sessionVal || !templateVal) return
+    onburn({
+      videoPath: sessionVal.videoPath,
+      outputPath: sessionVal.outputPath,
+      assContent: buildAss(sessionVal.subtitles, templateVal, dragPos)
+    })
   }
   function getFileName(p:string) { return p.split(/[\\/]/).pop()??p }
 
@@ -163,20 +169,15 @@
   }
 
   function getOverlayPositionStyle(): string {
-    // posX/posY are always set (default 50/88). Convert from % of video frame
-    // to absolute px within video-wrap, accounting for letterbox bars.
-    const px: number = (templateVal as any)?.posX ?? 50
-    const py: number = (templateVal as any)?.posY ?? 88
-    const frame = getFrameRect()
-    const wrap  = videoWrapEl?.getBoundingClientRect()
-    if (frame && wrap) {
-      const ax = frame.left - wrap.left + (px / 100) * frame.width
-      const ay = frame.top  - wrap.top  + (py / 100) * frame.height
-      return `left:${ax}px;top:${ay}px;transform:translate(-50%,-50%);text-align:center;`
-    }
-    // Fallback before video loads: bottom-centre
-    return 'bottom:10%;left:50%;transform:translateX(-50%);text-align:center;'
+  const frame = getFrameRect()
+  const wrap  = videoWrapEl?.getBoundingClientRect()
+  if (dragPos && frame && wrap) {
+    const ax = frame.left - wrap.left + (dragPos.posX / 100) * frame.width
+    const ay = frame.top  - wrap.top  + (dragPos.posY / 100) * frame.height
+    return `left:${ax}px;top:${ay}px;transform:translate(-50%,-50%);text-align:center;`
   }
+  return 'bottom:10%;left:50%;transform:translateX(-50%);text-align:center;'
+}
 
   function onSubPointerDown(e: PointerEvent) {
     e.preventDefault(); e.stopPropagation()
@@ -199,12 +200,13 @@
     let py = Math.max(2, Math.min(98, (rawY / frame.height) * 100))
     snapH = Math.abs(px - 50) < SNAP_PCT; if (snapH) px = 50
     snapV = Math.abs(py - 50) < SNAP_PCT; if (snapV) py = 50
-    updateActiveTemplate({ posX: px, posY: py } as any)
+    dragPos = { posX: px, posY: py }
+
   }
 
   function onSubPointerUp() { isDragging = false; snapH = false; snapV = false }
 
-  function resetPosition() { updateActiveTemplate({ posX: undefined, posY: undefined } as any) }
+  function resetPosition() { dragPos = undefined }
 </script>
 
 <svelte:head>

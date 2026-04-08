@@ -1,4 +1,4 @@
-import type { Template, Subtitle, AnimationMode } from '../types'
+import type { Template, Subtitle, AnimationMode, DragPosition } from '../types'
 
 // ─── Color helpers ────────────────────────────────────────────────────────────
 
@@ -354,7 +354,7 @@ function buildInlineTags(style: EffectiveStyle, base: Template): string {
 
 // ─── Main ASS builder ─────────────────────────────────────────────────────────
 
-export function buildAss(subtitles: Subtitle[], template: Template): string {
+export function buildAss(subtitles: Subtitle[], template: Template, dragPos?: DragPosition): string {
   const lines: string[] = []
   lines.push('[Script Info]')
   lines.push('Title: Subtitles')
@@ -375,9 +375,9 @@ export function buildAss(subtitles: Subtitle[], template: Template): string {
   lines.push('Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text')
 
   if (template.wordByWord && template.wordMode !== 'none') {
-    lines.push(...buildWordByWordEvents(subtitles, template))
+    lines.push(...buildWordByWordEvents(subtitles, template, dragPos))
   } else {
-    lines.push(...buildPlainEvents(subtitles, template))
+    lines.push(...buildPlainEvents(subtitles, template, dragPos))
   }
 
   return lines.join('\n')
@@ -511,24 +511,22 @@ function buildTypewriterEvents(
 
 // ─── Plain events─────────────────────────────────────────
 
-// ─── posX/posY → \pos tag ────────────────────────────────────────────────────
-// posX/posY are stored as % (0–100) of the video frame.
-// ASS script space is 384×288 (SCRIPT_W × SCRIPT_H).
-// We convert directly: posX% → script X, posY% → script Y.
-// When set, emit \an5 (centre-anchor) + \pos so the subtitle is centred on
-// the dragged point. When not set, the style's alignment + margins apply.
+// ─── buildPosTag ──────────────────────────────────────────────────────────────
+// Only emits \an5\pos(x,y) when the user has explicitly dragged the subtitle.
+// When pos is undefined the tag is empty and ASS uses the style's Alignment +
+// MarginV / MarginL / MarginR — which is exactly what we want for undragged subs.
+//
+// posX/posY are % of the video frame (0–100).
+// Script space is 384×288 (SCRIPT_W × SCRIPT_H).
 
-function buildPosTag(template: Template): string {
-  // Always emit \an5\pos so positioning is fully driven by posX/posY.
-  // Defaults: posX=50 (horizontal centre), posY=88 (near bottom).
-  const px: number = (template as any).posX ?? 50
-  const py: number = (template as any).posY ?? 88
-  const x = Math.round((px / 100) * SCRIPT_W)
-  const y = Math.round((py / 100) * SCRIPT_H)
-  return `{\an5\pos(${x},${y})}`
+function buildPosTag(pos: DragPosition | undefined): string {
+  if (!pos) return ''
+  const x = Math.round((pos.posX / 100) * SCRIPT_W)
+  const y = Math.round((pos.posY / 100) * SCRIPT_H)
+  return `{\\an5\\pos(${x},${y})}`
 }
 
-function buildPlainEvents(subtitles: Subtitle[], template: Template): string[] {
+function buildPlainEvents(subtitles: Subtitle[], template: Template, dragPos?: DragPosition): string[] {
   const events: string[] = []
   const syncOffset = template.syncOffset ?? 50
 
@@ -550,12 +548,12 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template): string[] {
     const end        = srtTimeToAss(line.endSrt)
     const text       = line.text.replace(/\{/g, '\\{').replace(/\}/g, '\\}')
     const durationMs = srtToMs(line.endSrt) - srtToMs(line.startSrt)
-    const posTag     = buildPosTag(template)
+    const posTag     = buildPosTag(dragPos)
     const tags       = posTag + buildInlineTags(style, template)
     const animTag    = buildAnimationTag(
       template.animation,
       durationMs,
-      (template as any).posY ?? 88,
+      dragPos?.posY ?? 88,
       style.marginV   ?? template.marginV,
       style.fontSize  ?? template.fontSize,
     )
@@ -581,11 +579,11 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template): string[] {
 // Plain mode (buildPlainEvents) is the one that needs frame-accurate per-word
 // timestamps — it gets them via buildTokens on the raw single-word SRT blocks.
 
-function buildWordByWordEvents(subtitles: Subtitle[], template: Template): string[] {
+function buildWordByWordEvents(subtitles: Subtitle[], template: Template, dragPos?: DragPosition): string[] {
   const events: string[] = []
   const primaryColor   = '{\\c' + hexToAss(template.primaryColor) + '}'
   const highlightColor = '{\\c' + hexToAss(template.highlightColor) + '}'
-  const posTag         = buildPosTag(template)
+  const posTag         = buildPosTag(dragPos)
   const syncOffset     = template.syncOffset ?? 50
   const wbwOpts: GroupOptions = {
     ...groupOptsFromTemplate(template),
@@ -669,7 +667,7 @@ function buildWordByWordEvents(subtitles: Subtitle[], template: Template): strin
           if (j < resolvedTokens.length - 1) text += ' '
         }
         const wordDur = endMs - startMs
-        const animTag = buildAnimationTag(template.animation, wordDur, (template as any).posY ?? 88, template.marginV, template.fontSize)
+        const animTag = buildAnimationTag(template.animation, wordDur, dragPos?.posY ?? 88, template.marginV, template.fontSize)
         events.push(
           'Dialogue: 0,' + msToAssTime(startMs) + ',' + msToAssTime(endMs) +
           ',Default,,0,0,0,,' + posTag + animTag + primaryColor + text
@@ -678,7 +676,7 @@ function buildWordByWordEvents(subtitles: Subtitle[], template: Template): strin
     } else if (template.wordMode === 'solo') {
       for (const { word, startMs, endMs } of resolvedTokens) {
         const wordDur = endMs - startMs
-        const animTag = buildAnimationTag(template.animation, wordDur, (template as any).posY ?? 88, template.marginV, template.fontSize)
+        const animTag = buildAnimationTag(template.animation, wordDur, dragPos?.posY ?? 88, template.marginV, template.fontSize)
         events.push(
           'Dialogue: 0,' + msToAssTime(startMs) + ',' + msToAssTime(endMs) +
           ',Default,,0,0,0,,' + posTag + animTag + highlightColor + word
