@@ -595,7 +595,7 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template): string[] {
 function buildWordByWordEvents(subtitles: Subtitle[], template: Template): string[] {
   const events: string[] = []
   const primaryColor   = '{\\c' + hexToAss(template.primaryColor) + '}'
-  //const highlightColor = '{\\c' + hexToAss(template.highlightColor) + '}'
+  const highlightColor = '{\\c' + hexToAss(template.highlightColor) + '}'
   const posTag         = buildPosTag(template)
   const syncOffset     = template.syncOffset ?? 50
   const wbwOpts: GroupOptions = {
@@ -669,7 +669,7 @@ function buildWordByWordEvents(subtitles: Subtitle[], template: Template): strin
       }
     })
 
-    /*if (template.wordMode === 'highlight') {
+    if (template.wordMode === 'highlight') {
       for (let wi = 0; wi < resolvedTokens.length; wi++) {
         const { startMs, endMs } = resolvedTokens[wi]
         let text = ''
@@ -695,7 +695,7 @@ function buildWordByWordEvents(subtitles: Subtitle[], template: Template): strin
           ',Default,,0,0,0,,' + posTag + animTag + highlightColor + word
         )
       }
-    }*/
+    }
   }
 
   return events
