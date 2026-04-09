@@ -1,83 +1,65 @@
 // ─── Template ────────────────────────────────────────────────────────────────
-// posX / posY are intentionally NOT part of Template.
-// Position is a separate, optional, dragged value stored outside the template
-// so that presets never override user drag, and undragged subtitles fall back
-// to the ASS alignment + margin system automatically.
+// A full style definition. All fields required at the template level,
+// but Partial<Template> is used for per-segment overrides.
 
 export interface Template {
   id: string
   name: string
+  // Typography
   fontName: string
   fontSize: number
   bold: boolean
   italic: boolean
+  // Colors (hex strings e.g. "#FFFFFF")
   primaryColor: string
   secondaryColor: string
   outlineColor: string
   backColor: string
-  outline: number
-  shadow: number
-  scaleX: number
-  scaleY: number
-  spacing: number
-  marginV: number
+  // Geometry
+  outline: number        // outline thickness 0–4
+  shadow: number         // shadow depth 0–4
+  scaleX: number         // horizontal scale % (100 = normal)
+  scaleY: number         // vertical scale % (100 = normal)
+  spacing: number        // extra letter spacing
+  // Layout
+  alignment: Alignment
+  marginV: number        // vertical margin in pixels
   marginL: number
   marginR: number
-  wordByWord: boolean
-  wordMode: WordMode
-  highlightColor: string
-  syncOffset: number
-  pauseThreshold: number
-  animation: AnimationMode
-}
-
-// ─── Drag position ────────────────────────────────────────────────────────────
-// Stored as % of the video frame (0–100). Kept separate from Template so it is
-// never serialised into a preset and never interferes with ASS alignment when
-// no drag has occurred.
-export interface DragPosition {
-  posX: number  // 0–100, horizontal %
-  posY: number  // 0–100, vertical %
+  // Timing tuning (user-adjustable in Advanced panel)
+  syncOffset: number      // ms to shift subtitle starts forward (whisper early-onset correction)
+  pauseThreshold: number  // inter-word gap ms that triggers a line break (clause boundary)
+  animation: AnimationMode  // entrance/transition animation applied at burn time
 }
 
 // ─── Enums / Literals ────────────────────────────────────────────────────────
 
+// ASS alignment grid (numpad layout)
 export type Alignment =
-  | 1 | 2 | 3
-  | 4 | 5 | 6
-  | 7 | 8 | 9
+  | 1 | 2 | 3   // bottom-left, bottom-center, bottom-right
+  | 4 | 5 | 6   // middle-left, middle-center, middle-right
+  | 7 | 8 | 9   // top-left,    top-center,    top-right
 
-export type WordMode = 'highlight' | 'solo' | 'none'
 
 export type AnimationMode = 'none' | 'fade' | 'pop' | 'slide-up' | 'typewriter'
 
 export type SubtitleStatus = 'pending' | 'processing' | 'done' | 'failed'
 
-// ─── Aspect ratio ─────────────────────────────────────────────────────────────
-export type AspectRatio = 'original' | '1:1' | '9:16' | '16:9' | '4:3' | '3:4'
-
-export function parseRatio(r: AspectRatio): [number, number] | null {
-  switch (r) {
-    case '1:1':  return [1, 1]
-    case '9:16': return [9, 16]
-    case '16:9': return [16, 9]
-    case '4:3':  return [4, 3]
-    case '3:4':  return [3, 4]
-    default:     return null
-  }
-}
-
 // ─── Subtitle Segment ────────────────────────────────────────────────────────
+// One SRT block. overrides is a sparse partial — only fields the user
+// has explicitly changed from the active template are stored here.
+
 export interface Subtitle {
   index: number
-  start: string
+  start: string           // SRT format: "00:00:01,000"
   end: string
   text: string
   originalText: string
-  overrides?: Partial<Omit<Template, 'id' | 'name' | 'wordByWord' | 'wordMode' | 'highlightColor'>>
+  overrides?: Partial<Omit<Template, 'id' | 'name'>>
 }
 
 // ─── Queue ───────────────────────────────────────────────────────────────────
+
 export type QueueItemMode = 'template' | 'manual'
 
 export interface QueueItem {
@@ -86,22 +68,28 @@ export interface QueueItem {
   outputPath: string
   status: SubtitleStatus
   error: string | null
-  mode: QueueItemMode
-  templateId?: string
-  srtContent?: string
+  mode: QueueItemMode       // template = auto-burn, manual = open editor
+  templateId?: string       // which template to use if mode === 'template'
+  srtContent?: string       // stored after transcription, before burn/edit
 }
 
 // ─── Editor Session ──────────────────────────────────────────────────────────
+// Transient state while the user is editing subtitles for one video.
+
 export interface EditorSession {
   queueItemId: string
   videoPath: string
   outputPath: string
+  rawSubs: Subtitle[]            // original one-word-per-block whisper output
+  pauseGroups: unknown[][]       // Token[][] — typed as unknown to avoid circular dep
+  densityRatio: number           // 0 = one word per seg, 1 = one seg per pause group
   subtitles: Subtitle[]
-  selectedIndex: number | null
-  isDirty: boolean
+  selectedIndex: number | null   // which segment is open in the inspector
+  isDirty: boolean               // any unsaved changes
 }
 
 // ─── Progress ────────────────────────────────────────────────────────────────
+
 export type ProgressStep = 'extracting' | 'transcribing' | 'editing' | 'burning' | 'done'
 
 export interface ProgressEvent {
@@ -109,13 +97,14 @@ export interface ProgressEvent {
   message: string
 }
 
-// ─── Built-in template presets ────────────────────────────────────────────────
+// ─── Built-in template presets (ids are stable constants) ────────────────────
+
 export const PRESET_IDS = {
-  DEFAULT:   'preset-default',
-  TIKTOK:    'preset-tiktok',
-  CINEMATIC: 'preset-cinematic',
-  MINIMAL:   'preset-minimal',
-  KARAOKE:   'preset-karaoke',
+  DEFAULT:    'preset-default',
+  TIKTOK:     'preset-tiktok',
+  CINEMATIC:  'preset-cinematic',
+  MINIMAL:    'preset-minimal',
+  KARAOKE:    'preset-karaoke',
 } as const
 
 export type PresetId = typeof PRESET_IDS[keyof typeof PRESET_IDS]

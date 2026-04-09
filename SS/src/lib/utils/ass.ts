@@ -1,4 +1,4 @@
-import type { Template, Subtitle, AnimationMode, DragPosition } from '../types'
+import type { Template, Subtitle, AnimationMode } from '../types'
 
 // ─── Color helpers ────────────────────────────────────────────────────────────
 
@@ -91,7 +91,7 @@ function applyTimingCorrection(lines: Line[], syncOffsetMs: number): Line[] {
 
 // ─── Token type ───────────────────────────────────────────────────────────────
 
-interface Token {
+export interface Token {
   word: string
   rawWord: string
   startSrt: string
@@ -334,7 +334,7 @@ function buildStyleLine(name: string, t: EffectiveStyle): string {
     primary, secondary, outline, back,
     bold, italic, 0, 0,
     t.scaleX, t.scaleY, t.spacing, 0,
-    1, t.outline, t.shadow, 5,
+    1, t.outline, t.shadow, t.alignment,
     t.marginL, t.marginR, t.marginV, 1,
   ].join(',')
 }
@@ -349,12 +349,13 @@ function buildInlineTags(style: EffectiveStyle, base: Template): string {
   if (style.outlineColor !== base.outlineColor) tags.push('\\3c' + hexToAss(style.outlineColor))
   if (style.outline      !== base.outline)      tags.push('\\bord' + style.outline)
   if (style.shadow       !== base.shadow)       tags.push('\\shad' + style.shadow)
+  if (style.alignment    !== base.alignment)    tags.push('\\an' + style.alignment)
   return tags.length > 0 ? '{' + tags.join('') + '}' : ''
 }
 
 // ─── Main ASS builder ─────────────────────────────────────────────────────────
 
-export function buildAss(subtitles: Subtitle[], template: Template, dragPos?: DragPosition): string {
+export function buildAss(subtitles: Subtitle[], template: Template): string {
   const lines: string[] = []
   lines.push('[Script Info]')
   lines.push('Title: Subtitles')
@@ -374,11 +375,11 @@ export function buildAss(subtitles: Subtitle[], template: Template, dragPos?: Dr
   lines.push('[Events]')
   lines.push('Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text')
 
-  if (template.wordByWord && template.wordMode !== 'none') {
-    lines.push(...buildWordByWordEvents(subtitles, template, dragPos))
+  /*if (template.wordByWord && template.wordMode !== 'none') {
+    lines.push(...buildWordByWordEvents(subtitles, template))
   } else {
-    lines.push(...buildPlainEvents(subtitles, template, dragPos))
-  }
+    lines.push(...buildPlainEvents(subtitles, template))
+  }*/
 
   return lines.join('\n')
 }
@@ -429,7 +430,7 @@ function toScriptY(px: number, videoHeight: number): number { return Math.round(
 function buildAnimationTag(
   animation: AnimationMode,
   eventDurationMs: number,
-  posYPct: number = 88,
+  alignment: number = 2,
   marginV: number = 20,
   fontSize: number = 24,
 ): string {
@@ -456,9 +457,19 @@ function buildAnimationTag(
     const slideOffset = 12  // ~40px at 1080p equivalent in 288p script space
     const lineHeight  = Math.round(fontSize * 1.4)
     const cx          = 192  // horizontal centre of 384px script width
-    // posYPct drives where the text lands; it slides up from slightly below.
-    const yEnd   = Math.round((posYPct / 100) * SCRIPT_H)
-    const yStart = yEnd + slideOffset
+    const row = alignment <= 3 ? 'bottom' : alignment <= 6 ? 'middle' : 'top'
+
+    let yEnd: number, yStart: number
+    if (row === 'bottom') {
+      yEnd   = SCRIPT_H - marginV - lineHeight
+      yStart = yEnd + slideOffset
+    } else if (row === 'middle') {
+      yEnd   = Math.round(SCRIPT_H / 2)
+      yStart = yEnd + slideOffset
+    } else {
+      yEnd   = marginV + lineHeight
+      yStart = yEnd - slideOffset
+    }
 
     return `{\\fad(${fadeIn},0)\\move(${cx},${yStart},${cx},${yEnd},0,${slideMs})}`
   }
@@ -511,22 +522,24 @@ function buildTypewriterEvents(
 
 // ─── Plain events─────────────────────────────────────────
 
-// ─── buildPosTag ──────────────────────────────────────────────────────────────
-// Only emits \an5\pos(x,y) when the user has explicitly dragged the subtitle.
-// When pos is undefined the tag is empty and ASS uses the style's Alignment +
-// MarginV / MarginL / MarginR — which is exactly what we want for undragged subs.
-//
-// posX/posY are % of the video frame (0–100).
-// Script space is 384×288 (SCRIPT_W × SCRIPT_H).
+// ─── posX/posY → \pos tag ────────────────────────────────────────────────────
+// posX/posY are stored as % (0–100) of the video frame.
+// ASS script space is 384×288 (SCRIPT_W × SCRIPT_H).
+// We convert directly: posX% → script X, posY% → script Y.
+// When set, emit \an5 (centre-anchor) + \pos so the subtitle is centred on
+// the dragged point. When not set, the style's alignment + margins apply.
 
-function buildPosTag(pos: DragPosition | undefined): string {
-  if (!pos) return ''
-  const x = Math.round((pos.posX / 100) * SCRIPT_W)
-  const y = Math.round((pos.posY / 100) * SCRIPT_H)
-  return `{\\an5\\pos(${x},${y})}`
+function buildPosTag(template: Template): string {
+  const px = (template as any).posX as number | undefined
+  const py = (template as any).posY as number | undefined
+  if (px == null || py == null) return ''
+  const x = Math.round((px / 100) * SCRIPT_W)
+  const y = Math.round((py / 100) * SCRIPT_H)
+  // \an5 = centre-anchor so the subtitle centres on the given point
+  return `{\an5\pos(${x},${y})}`
 }
 
-function buildPlainEvents(subtitles: Subtitle[], template: Template, dragPos?: DragPosition): string[] {
+function buildPlainEvents(subtitles: Subtitle[], template: Template): string[] {
   const events: string[] = []
   const syncOffset = template.syncOffset ?? 50
 
@@ -548,12 +561,12 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template, dragPos?: D
     const end        = srtTimeToAss(line.endSrt)
     const text       = line.text.replace(/\{/g, '\\{').replace(/\}/g, '\\}')
     const durationMs = srtToMs(line.endSrt) - srtToMs(line.startSrt)
-    const posTag     = buildPosTag(dragPos)
+    const posTag     = buildPosTag(template)
     const tags       = posTag + buildInlineTags(style, template)
     const animTag    = buildAnimationTag(
       template.animation,
       durationMs,
-      dragPos?.posY ?? 88,
+      style.alignment ?? template.alignment,
       style.marginV   ?? template.marginV,
       style.fontSize  ?? template.fontSize,
     )
@@ -579,11 +592,11 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template, dragPos?: D
 // Plain mode (buildPlainEvents) is the one that needs frame-accurate per-word
 // timestamps — it gets them via buildTokens on the raw single-word SRT blocks.
 
-function buildWordByWordEvents(subtitles: Subtitle[], template: Template, dragPos?: DragPosition): string[] {
+function buildWordByWordEvents(subtitles: Subtitle[], template: Template): string[] {
   const events: string[] = []
   const primaryColor   = '{\\c' + hexToAss(template.primaryColor) + '}'
-  const highlightColor = '{\\c' + hexToAss(template.highlightColor) + '}'
-  const posTag         = buildPosTag(dragPos)
+  //const highlightColor = '{\\c' + hexToAss(template.highlightColor) + '}'
+  const posTag         = buildPosTag(template)
   const syncOffset     = template.syncOffset ?? 50
   const wbwOpts: GroupOptions = {
     ...groupOptsFromTemplate(template),
@@ -656,7 +669,7 @@ function buildWordByWordEvents(subtitles: Subtitle[], template: Template, dragPo
       }
     })
 
-    if (template.wordMode === 'highlight') {
+    /*if (template.wordMode === 'highlight') {
       for (let wi = 0; wi < resolvedTokens.length; wi++) {
         const { startMs, endMs } = resolvedTokens[wi]
         let text = ''
@@ -667,7 +680,7 @@ function buildWordByWordEvents(subtitles: Subtitle[], template: Template, dragPo
           if (j < resolvedTokens.length - 1) text += ' '
         }
         const wordDur = endMs - startMs
-        const animTag = buildAnimationTag(template.animation, wordDur, dragPos?.posY ?? 88, template.marginV, template.fontSize)
+        const animTag = buildAnimationTag(template.animation, wordDur, template.alignment, template.marginV, template.fontSize)
         events.push(
           'Dialogue: 0,' + msToAssTime(startMs) + ',' + msToAssTime(endMs) +
           ',Default,,0,0,0,,' + posTag + animTag + primaryColor + text
@@ -676,50 +689,139 @@ function buildWordByWordEvents(subtitles: Subtitle[], template: Template, dragPo
     } else if (template.wordMode === 'solo') {
       for (const { word, startMs, endMs } of resolvedTokens) {
         const wordDur = endMs - startMs
-        const animTag = buildAnimationTag(template.animation, wordDur, dragPos?.posY ?? 88, template.marginV, template.fontSize)
+        const animTag = buildAnimationTag(template.animation, wordDur, template.alignment, template.marginV, template.fontSize)
         events.push(
           'Dialogue: 0,' + msToAssTime(startMs) + ',' + msToAssTime(endMs) +
           ',Default,,0,0,0,,' + posTag + animTag + highlightColor + word
         )
       }
-    }
+    }*/
   }
 
   return events
 }
 
 
-// ─── SRT parser ───────────────────────────────────────────────────────────────
-// Timing correction is NOT applied here — it's burn-time only (buildAss).
-// This keeps stored SRT timestamps clean so re-burning never double-shifts.
+// ─── SRT parser (raw — word per block) ───────────────────────────────────────
+// Parses the raw whisper SRT into one Subtitle per word-token.
+// Does NOT group. Used to store the original tokens for re-processing.
 
 export function parseSRT(content: string): Subtitle[] {
   const blocks = content.trim().split(/\n\n+/)
-  const rawSubs: Subtitle[] = blocks
-    .map(block => {
+  return blocks
+    .map((block, i) => {
       const lines = block.trim().split('\n')
       if (lines.length < 3) return null
-      const index       = parseInt(lines[0], 10)
       const timingParts = lines[1].split(' --> ')
       if (timingParts.length !== 2) return null
       const [start, end] = timingParts
-      const text = lines.slice(2).join('\n')
-      return { index, start: start.trim(), end: end.trim(), text, originalText: text } as Subtitle
+      const text = lines.slice(2).join(' ').trim()
+      if (!text) return null
+      return { index: i + 1, start: start.trim(), end: end.trim(), text, originalText: text } as Subtitle
     })
     .filter((s): s is Subtitle => s !== null)
+}
 
-  // Group raw word tokens into display lines using default opts.
-  // No timing correction here — offsets applied at burn time only.
-  const tokens  = buildTokens(rawSubs)
-  const grouped = groupTokens(tokens)
+// ─── Pause group extraction ───────────────────────────────────────────────────
+// Groups raw word-tokens (one per whisper block) into pause groups.
+// A pause group is a sequence of words with no gap >= cutMs between them.
+// Capital letters and punctuation are NOT used as break signals here —
+// those are presentation concerns handled by density grouping.
 
-  return grouped.map((line, i) => ({
-    index:        i + 1,
-    start:        line.startSrt,
-    end:          line.endSrt,
-    text:         line.text,
-    originalText: line.text,
-  }))
+export function extractPauseGroups(rawSubs: Subtitle[], cutMs = 800): Token[][] {
+  const tokens = buildTokens(rawSubs)
+  if (tokens.length === 0) return []
+
+  const groups: Token[][] = []
+  let current: Token[] = [tokens[0]]
+
+  for (let i = 1; i < tokens.length; i++) {
+    const gap = tokens[i].startMs - tokens[i - 1].endMs
+    if (gap >= cutMs) {
+      groups.push(current)
+      current = [tokens[i]]
+    } else {
+      current.push(tokens[i])
+    }
+  }
+  if (current.length > 0) groups.push(current)
+  return groups
+}
+
+// ─── Density-based grouping ───────────────────────────────────────────────────
+// Takes pause groups and a density ratio (0–1).
+//   ratio = 0 → one word per segment (maximum granularity)
+//   ratio = 1 → one segment per pause group (minimum granularity)
+// In between, each pause group is subdivided proportionally.
+// Default ratio 0.4 gives roughly 2–3 words per segment.
+
+export function applyDensityRatio(pauseGroups: Token[][], ratio: number): Subtitle[] {
+  const r = Math.max(0, Math.min(1, ratio))
+  const subtitles: Subtitle[] = []
+  let idx = 1
+
+  for (const group of pauseGroups) {
+    if (group.length === 0) continue
+
+    // Compute words per segment for this group.
+    // At ratio=0: 1 word. At ratio=1: all words.
+    // Use ceil so we always include all words.
+    const wordsPerSeg = Math.max(1, Math.ceil(r * group.length))
+
+    for (let i = 0; i < group.length; i += wordsPerSeg) {
+      const slice = group.slice(i, i + wordsPerSeg)
+      const text  = slice.map(t => t.word).join(' ')
+      subtitles.push({
+        index:        idx++,
+        start:        slice[0].startSrt,
+        end:          slice[slice.length - 1].endSrt,
+        text,
+        originalText: text,
+      })
+    }
+  }
+
+  return subtitles
+}
+
+// ─── Merge two adjacent segments ─────────────────────────────────────────────
+// Returns a new subtitles array with segment at index i merged into i+1.
+
+export function mergeSegments(subtitles: Subtitle[], i: number): Subtitle[] {
+  if (i < 0 || i >= subtitles.length - 1) return subtitles
+  const a = subtitles[i], b = subtitles[i + 1]
+  const merged: Subtitle = {
+    index:        a.index,
+    start:        a.start,
+    end:          b.end,
+    text:         (a.text + ' ' + b.text).trim(),
+    originalText: (a.originalText + ' ' + b.originalText).trim(),
+  }
+  const result = [...subtitles.slice(0, i), merged, ...subtitles.slice(i + 2)]
+  return result.map((s, j) => ({ ...s, index: j + 1 }))
+}
+
+// ─── Insert empty segment after index i ──────────────────────────────────────
+// Inserts a blank segment after i, inheriting the boundary time of the next segment.
+
+export function insertSegmentAfter(subtitles: Subtitle[], i: number): Subtitle[] {
+  const prev = subtitles[i]
+  const next = subtitles[i + 1]
+  // New segment occupies a thin slice of time right after prev
+  const prevEndMs  = assTimeToMs(srtTimeToAss(prev.end))
+  const nextStartMs = next ? assTimeToMs(srtTimeToAss(next.start)) : prevEndMs + 2000
+  // Give it a 500ms window, or half the gap, whichever is smaller
+  const gapMs      = nextStartMs - prevEndMs
+  const newEndMs   = prevEndMs + Math.min(500, Math.max(100, Math.floor(gapMs / 2)))
+  const newSub: Subtitle = {
+    index:        0,
+    start:        msToSrt(prevEndMs),
+    end:          msToSrt(newEndMs),
+    text:         '',
+    originalText: '',
+  }
+  const result = [...subtitles.slice(0, i + 1), newSub, ...subtitles.slice(i + 1)]
+  return result.map((s, j) => ({ ...s, index: j + 1 }))
 }
 
 export function serializeSRT(subtitles: Subtitle[]): string {

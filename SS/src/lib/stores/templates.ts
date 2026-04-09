@@ -3,9 +3,6 @@ import type { Template, AnimationMode } from '../types'
 import { PRESET_IDS } from '../types'
 
 // ─── Built-in presets ─────────────────────────────────────────────────────────
-// Note: posX / posY are NOT here. Position is a separate dragged value in the
-// editor — keeping it out of presets means switching styles never resets where
-// the user put their subtitles.
 
 export const PRESETS: Template[] = [
   {
@@ -24,12 +21,10 @@ export const PRESETS: Template[] = [
     scaleX: 100,
     scaleY: 100,
     spacing: 0,
+    alignment: 2,
     marginV: 20,
     marginL: 10,
     marginR: 10,
-    wordByWord: false,
-    wordMode: 'none',
-    highlightColor: '#FFFF00',
     syncOffset: 50,
     pauseThreshold: 500,
     animation: 'none' as AnimationMode,
@@ -50,12 +45,10 @@ export const PRESETS: Template[] = [
     scaleX: 100,
     scaleY: 100,
     spacing: 0,
+    alignment: 5,
     marginV: 0,
     marginL: 10,
     marginR: 10,
-    wordByWord: true,
-    wordMode: 'highlight',
-    highlightColor: '#FF2D55',
     syncOffset: 50,
     pauseThreshold: 500,
     animation: 'none' as AnimationMode,
@@ -76,12 +69,10 @@ export const PRESETS: Template[] = [
     scaleX: 100,
     scaleY: 100,
     spacing: 1,
+    alignment: 2,
     marginV: 40,
     marginL: 10,
     marginR: 10,
-    wordByWord: false,
-    wordMode: 'none',
-    highlightColor: '#F5F5DC',
     syncOffset: 50,
     pauseThreshold: 500,
     animation: 'none' as AnimationMode,
@@ -102,12 +93,10 @@ export const PRESETS: Template[] = [
     scaleX: 100,
     scaleY: 100,
     spacing: 0,
+    alignment: 2,
     marginV: 30,
     marginL: 10,
     marginR: 10,
-    wordByWord: false,
-    wordMode: 'none',
-    highlightColor: '#FFFFFF',
     syncOffset: 50,
     pauseThreshold: 500,
     animation: 'none' as AnimationMode,
@@ -128,12 +117,10 @@ export const PRESETS: Template[] = [
     scaleX: 100,
     scaleY: 100,
     spacing: 0,
+    alignment: 2,
     marginV: 20,
     marginL: 10,
     marginR: 10,
-    wordByWord: true,
-    wordMode: 'highlight',
-    highlightColor: '#00BFFF',
     syncOffset: 50,
     pauseThreshold: 500,
     animation: 'none' as AnimationMode,
@@ -142,13 +129,16 @@ export const PRESETS: Template[] = [
 
 // ─── Store ────────────────────────────────────────────────────────────────────
 
+// User-created templates (loaded from / saved to disk via Tauri)
 export const userTemplates = writable<Template[]>([])
 
+// All templates combined
 export const allTemplates = derived(
   userTemplates,
   $user => [...PRESETS, ...$user]
 )
 
+// The currently active template
 export const activeTemplate = writable<Template>({ ...PRESETS[0] })
 
 // ─── Actions ──────────────────────────────────────────────────────────────────
@@ -180,6 +170,7 @@ export function deleteUserTemplate(id: string) {
   userTemplates.update($t => $t.filter(t => t.id !== id))
 }
 
+/** Save the current active template as a new user template */
 export function saveActiveAsTemplate(name: string) {
   activeTemplate.update($t => {
     addUserTemplate({ ...$t, name })

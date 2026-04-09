@@ -1,11 +1,9 @@
 <script lang="ts">
-  import { session, isDirty, findAndReplace, selectSegment, updateSubtitleText, updateSubtitleOverrides, clearSubtitleOverrides } from '$lib/stores/editor'
+  import { session, isDirty, findAndReplace, selectSegment, updateSubtitleText, updateSubtitleOverrides, clearSubtitleOverrides, setDensityRatio, mergeWithNext, insertAfter, densityRatio as densityRatioStore } from '$lib/stores/editor'
   import { activeTemplate, updateActiveTemplate, allTemplates, setActiveTemplate, saveActiveAsTemplate } from '$lib/stores/templates'
-  import { buildAss, distributeWordTimings, parseSRT } from '$lib/utils/ass'
+  import { buildAss, parseSRT } from '$lib/utils/ass'
   import { convertFileSrc } from '@tauri-apps/api/core'
-  import type { WordMode, AnimationMode, DragPosition } from '$lib/types'
-
-  let dragPos = $state<DragPosition | undefined>(undefined)
+  import type { Alignment, AnimationMode } from '$lib/types'
 
   interface Props {
     onburn: (detail: { videoPath: string; outputPath: string; assContent: string }) => void
@@ -31,26 +29,14 @@
     return items.find((sub: any) => { const s = srtToSeconds(sub.start), e = srtToSeconds(sub.end); return currentTime >= s && currentTime <= e }) ?? null
   })())
 
-  let activeWordIndex = $derived((() => {
-    if (!activeSub || !templateVal?.wordByWord) return -1
-    const words = activeSub.text.trim().split(' ').filter((w: string) => w.length > 0)
-    if (!words.length) return -1
-    if (words.length === 1) return 0
-    const sMs = srtToSeconds(activeSub.start)*1000, eMs = srtToSeconds(activeSub.end)*1000, now = currentTime*1000
-    const timings = distributeWordTimings(words, sMs, eMs)
-    const idx = timings.findIndex(t => now >= t.startMs && now <= t.endMs)
-    if (idx !== -1) return idx
-    if (now < timings[0].startMs) return 0
-    if (now >= timings[timings.length-1].endMs) return words.length-1
-    for (let i = timings.length-1; i >= 0; i--) { if (now >= timings[i].startMs) return i }
-    return 0
-  })())
 
-  let typewriterText = $derived((() => {
+
+  // Typewriter preview — compute revealed chars from currentTime
+  let typewriterTextDerived = $derived((() => {
     if (!activeSub || templateVal?.animation !== 'typewriter') return null
     const chars = [...activeSub.text]
     const sMs = srtToSeconds(activeSub.start)*1000, eMs = srtToSeconds(activeSub.end)*1000
-    const delay = Math.max(30, Math.min(80, Math.floor((eMs-sMs)/chars.length)))
+    const delay = Math.max(30, Math.min(80, Math.floor((eMs-sMs)/Math.max(1,chars.length))))
     const revealed = Math.min(chars.length, Math.max(0, Math.ceil((currentTime*1000-sMs)/delay)))
     return chars.slice(0, revealed).join('')
   })())
@@ -62,6 +48,15 @@
     return ''
   }
 
+  function getAlignmentStyle(n: number): string {
+    const p: Record<number,string> = {
+      1:'bottom:10%;left:5%;text-align:left;', 2:'bottom:10%;left:50%;transform:translateX(-50%);text-align:center;',
+      3:'bottom:10%;right:5%;text-align:right;', 4:'top:50%;left:5%;transform:translateY(-50%);text-align:left;',
+      5:'top:50%;left:50%;transform:translate(-50%,-50%);text-align:center;', 6:'top:50%;right:5%;transform:translateY(-50%);text-align:right;',
+      7:'top:5%;left:5%;text-align:left;', 8:'top:5%;left:50%;transform:translateX(-50%);text-align:center;', 9:'top:5%;right:5%;text-align:right;'
+    }
+    return p[n]??p[2]
+  }
 
   function srtToSeconds(srt: string): number {
     if (!srt) return 0
@@ -86,6 +81,14 @@
 
   let templatesVal = $state([] as any[]), showSaveDialog = $state(false), saveTemplateName = $state('')
   $effect(() => { const u = allTemplates.subscribe(v => { templatesVal = v }); return u })
+
+  // Density ratio
+  let densityVal = $state(0.4)
+  $effect(() => { const u = densityRatioStore.subscribe(v => { densityVal = v }); return u })
+  function handleDensityChange(e: Event) {
+    const ratio = Number((e.currentTarget as HTMLInputElement).value)
+    setDensityRatio(ratio)
+  }
   function handleSaveTemplate() {
     if (!saveTemplateName.trim()) return
     saveActiveAsTemplate(saveTemplateName.trim()); saveTemplateName = ''; showSaveDialog = false
@@ -137,12 +140,8 @@
     input.click()
   }
   function handleBurn() {
-    if (!sessionVal || !templateVal) return
-    onburn({
-      videoPath: sessionVal.videoPath,
-      outputPath: sessionVal.outputPath,
-      assContent: buildAss(sessionVal.subtitles, templateVal, dragPos)
-    })
+    if (!sessionVal||!templateVal) return
+    onburn({videoPath:sessionVal.videoPath,outputPath:sessionVal.outputPath,assContent:buildAss(sessionVal.subtitles,templateVal)})
   }
   function getFileName(p:string) { return p.split(/[\\/]/).pop()??p }
 
@@ -169,15 +168,18 @@
   }
 
   function getOverlayPositionStyle(): string {
-  const frame = getFrameRect()
-  const wrap  = videoWrapEl?.getBoundingClientRect()
-  if (dragPos && frame && wrap) {
-    const ax = frame.left - wrap.left + (dragPos.posX / 100) * frame.width
-    const ay = frame.top  - wrap.top  + (dragPos.posY / 100) * frame.height
-    return `left:${ax}px;top:${ay}px;transform:translate(-50%,-50%);text-align:center;`
+    const px = (templateVal as any)?.posX, py = (templateVal as any)?.posY
+    if (px != null && py != null) {
+      const frame = getFrameRect()
+      const wrap  = videoWrapEl?.getBoundingClientRect()
+      if (frame && wrap) {
+        const ax = frame.left - wrap.left + (px / 100) * frame.width
+        const ay = frame.top  - wrap.top  + (py / 100) * frame.height
+        return `left:${ax}px;top:${ay}px;transform:translate(-50%,-50%);text-align:center;`
+      }
+    }
+    return getAlignmentStyle((templateVal as any)?.alignment ?? 2)
   }
-  return 'bottom:10%;left:50%;transform:translateX(-50%);text-align:center;'
-}
 
   function onSubPointerDown(e: PointerEvent) {
     e.preventDefault(); e.stopPropagation()
@@ -200,13 +202,12 @@
     let py = Math.max(2, Math.min(98, (rawY / frame.height) * 100))
     snapH = Math.abs(px - 50) < SNAP_PCT; if (snapH) px = 50
     snapV = Math.abs(py - 50) < SNAP_PCT; if (snapV) py = 50
-    dragPos = { posX: px, posY: py }
-
+    updateActiveTemplate({ posX: px, posY: py } as any)
   }
 
   function onSubPointerUp() { isDragging = false; snapH = false; snapV = false }
 
-  function resetPosition() { dragPos = undefined }
+  function resetPosition() { updateActiveTemplate({ posX: undefined, posY: undefined } as any) }
 </script>
 
 <svelte:head>
@@ -247,15 +248,7 @@
               onpointerup={onSubPointerUp}
               onpointercancel={onSubPointerUp}>
               <span style="display:inline-block;transform-origin:center bottom;font-family:{ef?.fontName??'Arial'};font-size:{(ef?.fontSize??24)*0.8}px;font-weight:{ef?.bold?'bold':'normal'};font-style:{ef?.italic?'italic':'normal'};color:{ef?.primaryColor??'#fff'};text-shadow:-{ef?.outline??2}px -{ef?.outline??2}px 0 {ef?.outlineColor??'#000'},{ef?.outline??2}px -{ef?.outline??2}px 0 {ef?.outlineColor??'#000'},-{ef?.outline??2}px {ef?.outline??2}px 0 {ef?.outlineColor??'#000'},{ef?.outline??2}px {ef?.outline??2}px 0 {ef?.outlineColor??'#000'};padding:2px 8px;{getAnimationStyle(templateVal?.animation)}">
-                {#if templateVal.wordByWord && templateVal.wordMode!=='none'}
-                  {#if templateVal.wordMode==='solo'}
-                    {#if activeWordIndex>=0}{@const sw=d.text.trim().split(' ').filter((w:string)=>w.length>0)}<span style="color:{templateVal.highlightColor};white-space:pre;">{sw[activeWordIndex]??''}</span>{/if}
-                  {:else}
-                    {#each d.text.trim().split(' ').filter((w:string)=>w.length>0) as word,wi}{@const aw=d.text.trim().split(' ').filter((w:string)=>w.length>0)}<span style="color:{wi===activeWordIndex?templateVal.highlightColor:(ef?.primaryColor??'#fff')};white-space:pre;">{word}{wi<aw.length-1?' ':''}</span>{/each}
-                  {/if}
-                {:else}
-                  {templateVal?.animation==='typewriter'?(typewriterText??''):d.text}
-                {/if}
+                {templateVal?.animation==='typewriter' ? (typewriterTextDerived??'') : d.text}
               </span>
             </div>
             {/key}
@@ -354,12 +347,7 @@
               <div class="field-row"><label>Outline W</label><input type="range" min="0" max="4" step="0.5" value={templateVal.outline} oninput={(e)=>updateActiveTemplate({outline:Number(e.currentTarget.value)})} /><span class="rval">{templateVal.outline}</span></div>
               <div class="field-row"><label>Shadow</label><input type="range" min="0" max="4" step="0.5" value={templateVal.shadow} oninput={(e)=>updateActiveTemplate({shadow:Number(e.currentTarget.value)})} /><span class="rval">{templateVal.shadow}</span></div>
               <div class="field-row"><label>Spacing</label><input type="range" min="0" max="10" step="0.5" value={templateVal.spacing} oninput={(e)=>updateActiveTemplate({spacing:Number(e.currentTarget.value)})} /><span class="rval">{templateVal.spacing}</span></div>
-              <div class="s-lbl">Word-by-word</div>
-              <div class="field-row"><label class="checkbox-label"><input type="checkbox" checked={templateVal.wordByWord} onchange={(e)=>updateActiveTemplate({wordByWord:e.currentTarget.checked})} />Enabled</label></div>
-              {#if templateVal.wordByWord}
-                <div class="field-row"><label>Mode</label><select value={templateVal.wordMode} onchange={(e)=>updateActiveTemplate({wordMode:e.currentTarget.value as WordMode})}><option value="highlight">Highlight</option><option value="solo">Solo</option></select></div>
-                <div class="field-row"><label>Color</label><input type="color" value={templateVal.highlightColor} oninput={(e)=>updateActiveTemplate({highlightColor:e.currentTarget.value})} /><span class="hex">{templateVal.highlightColor}</span></div>
-              {/if}
+
             {/if}
             {#if customSection==='animation'}
               <div class="s-lbl">Caption transition</div>
@@ -376,6 +364,15 @@
           <div class="panel-hdr">
             <span class="panel-title">Captions</span>
             <div class="cap-acts"><button class="hdr-btn" onclick={handleExportSRT}>↓ SRT</button><button class="hdr-btn" onclick={handleImportSRT}>↑ SRT</button></div>
+          </div>
+          <!-- Density slider -->
+          <div class="density-row">
+            <span class="density-lbl">Segment length</span>
+            <div class="density-track">
+              <span class="density-hint">1 word</span>
+              <input type="range" min="0" max="1" step="0.01" value={densityVal} oninput={handleDensityChange} class="density-slider" />
+              <span class="density-hint">Full pause</span>
+            </div>
           </div>
           <div class="find-row">
             <input type="text" bind:value={searchTerm} placeholder="Find..." class="fr-in" />
@@ -397,6 +394,7 @@
                 <div class="ov-row"><label>Color</label><input type="color" value={effective.primaryColor} oninput={(e)=>setOverride('primaryColor',e.currentTarget.value)} />{#if 'primaryColor' in overrides}<span class="ov-dot"></span>{/if}</div>
                 <div class="ov-row"><label>Outline</label><input type="color" value={effective.outlineColor} oninput={(e)=>setOverride('outlineColor',e.currentTarget.value)} />{#if 'outlineColor' in overrides}<span class="ov-dot"></span>{/if}</div>
                 <div class="ov-row"><label>Size</label><input type="number" min="8" max="120" value={effective.fontSize} onchange={(e)=>setOverride('fontSize',Number(e.currentTarget.value))} />{#if 'fontSize' in overrides}<span class="ov-dot"></span>{/if}</div>
+
               </div>
             </div>
           {/if}
@@ -407,7 +405,29 @@
                 <span class="cap-time">{sub.start.slice(0,8)}</span>
                 <span class="cap-text">{sub.text}</span>
               </div>
+              <!-- Between-segment actions -->
+              {#if i < items.length - 1}
+                <div class="cap-between">
+                  <button class="cap-action-btn merge-btn" title="Merge with next segment" onclick={()=>mergeWithNext(i)}>
+                    <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M1 4h6v2H3.5l4.5 4 4.5-4H10V4h5l-7 7.5L1 4z"/></svg>
+                    merge
+                  </button>
+                  <button class="cap-action-btn insert-btn" title="Insert new segment after" onclick={()=>insertAfter(i)}>
+                    <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1v6H2v2h6v6h2V9h6V7H10V1H8z"/></svg>
+                    +
+                  </button>
+                </div>
+              {/if}
             {/each}
+            <!-- Insert after last -->
+            {#if items.length > 0}
+              <div class="cap-between cap-between-last">
+                <button class="cap-action-btn insert-btn" onclick={()=>insertAfter(items.length-1)}>
+                  <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1v6H2v2h6v6h2V9h6V7H10V1H8z"/></svg>
+                  + Add segment
+                </button>
+              </div>
+            {/if}
           </div>
         {/if}
 
@@ -510,7 +530,20 @@
   /* Reset position button */
   .reset-pos-btn{padding:.15rem .4rem;border-radius:4px;border:1px solid var(--color-border);background:transparent;color:var(--color-text-muted);font-size:.65rem;cursor:pointer;margin-left:auto}
   .reset-pos-btn:hover{background:var(--color-surface-hover);color:var(--color-text)}
+  /* Density slider */
+  .density-row{padding:.45rem .6rem;border-bottom:1px solid var(--color-border);flex-shrink:0}
+  .density-lbl{font-size:.62rem;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:var(--color-text-muted);display:block;margin-bottom:.3rem}
+  .density-track{display:flex;align-items:center;gap:.4rem}
+  .density-hint{font-size:.6rem;color:var(--color-text-muted);white-space:nowrap}
+  .density-slider{flex:1;accent-color:var(--color-accent);height:4px}
+  /* Between-segment actions */
+  .cap-between{display:flex;align-items:center;gap:.3rem;padding:.1rem .6rem;background:var(--color-bg);border-bottom:1px solid var(--color-border)}
+  .cap-between-last{padding:.3rem .6rem;border-bottom:none}
+  .cap-action-btn{display:flex;align-items:center;gap:.25rem;padding:.15rem .35rem;border-radius:4px;border:1px solid transparent;background:transparent;font-size:.62rem;cursor:pointer;color:var(--color-text-muted);transition:all .12s}
+  .merge-btn:hover{background:var(--color-accent-subtle);border-color:var(--color-accent);color:var(--color-accent)}
+  .insert-btn:hover{background:var(--color-surface-hover);border-color:var(--color-border);color:var(--color-text)}
   @keyframes sub-fade{from{opacity:0}to{opacity:1}}
   @keyframes sub-pop{from{transform:scale(0.5);opacity:0}to{transform:scale(1);opacity:1}}
   @keyframes sub-slide-up{from{transform:translateY(40px);opacity:0}to{transform:translateY(0);opacity:1}}
+
 </style>
