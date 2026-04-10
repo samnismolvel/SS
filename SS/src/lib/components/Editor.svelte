@@ -175,10 +175,33 @@
       if (frame && wrap) {
         const ax = frame.left - wrap.left + (px / 100) * frame.width
         const ay = frame.top  - wrap.top  + (py / 100) * frame.height
-        return `left:${ax}px;top:${ay}px;transform:translate(-50%,-50%);text-align:center;`
+        return `left:${ax}px;top:${ay}px;transform:translate(-50%,-50%);`
       }
     }
-    return getAlignmentStyle((templateVal as any)?.alignment ?? 2)
+    // No drag position — use ASS alignment mapping.
+    // We strip text-align from here; the sub-box sets it directly.
+    const al = (templateVal as any)?.alignment ?? 2
+    const p: Record<number,string> = {
+      1:'bottom:10%;left:5%;',  2:'bottom:10%;left:50%;transform:translateX(-50%);',
+      3:'bottom:10%;right:5%;', 4:'top:50%;left:5%;transform:translateY(-50%);',
+      5:'top:50%;left:50%;transform:translate(-50%,-50%);',
+      6:'top:50%;right:5%;transform:translateY(-50%);',
+      7:'top:5%;left:5%;',  8:'top:5%;left:50%;transform:translateX(-50%);', 9:'top:5%;right:5%;'
+    }
+    return p[al] ?? p[2]
+  }
+
+  // Separate drag and resize pointer routing — drag only fires when not resizing
+  function onOuterPointerDown(e: PointerEvent) {
+    if (isResizing) return
+    onSubPointerDown(e)
+  }
+  function onOuterPointerMove(e: PointerEvent) {
+    if (isResizing) { onHandlePointerMove(e); return }
+    onSubPointerMove(e)
+  }
+  function onOuterPointerUp(e: PointerEvent) {
+    onSubPointerUp(); onHandlePointerUp()
   }
 
   function onSubPointerDown(e: PointerEvent) {
@@ -208,6 +231,94 @@
   function onSubPointerUp() { isDragging = false; snapH = false; snapV = false }
 
   function resetPosition() { updateActiveTemplate({ posX: undefined, posY: undefined } as any) }
+
+  // ── Overlay toolbar ───────────────────────────────────────────────────────
+  // Visible on hover over the subtitle overlay.
+  // applyToAll: true → change template (all segments); false → override current only.
+
+  let overlayHovered  = $state(false)
+  let toolbarHovered  = $state(false)
+  let applyToAll      = $state(true)
+
+  // Overlay max-width as % of the video frame. Stored on template via posX/posY
+  // pattern (as any) so we don't need a types.ts change right now.
+  // Default: 80%.
+  let overlayWidthPct = $derived<number>((templateVal as any)?.overlayWidthPct ?? 80)
+
+  // Show toolbar when sub or toolbar itself is hovered (keeps it visible while clicking buttons).
+  let showToolbar = $derived(overlayHovered || toolbarHovered)
+
+  // Side-handle drag state
+  let isResizing      = $state(false)
+  let resizeSide      = $state<'left'|'right'>('right')
+  let resizeStartX    = $state(0)
+  let resizeStartPct  = $state(80)
+
+  function onHandlePointerDown(e: PointerEvent, side: 'left'|'right') {
+    e.preventDefault(); e.stopPropagation()
+    isResizing     = true
+    resizeSide     = side
+    resizeStartX   = e.clientX
+    resizeStartPct = (templateVal as any)?.overlayWidthPct ?? 80
+    ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+  }
+
+  function onHandlePointerMove(e: PointerEvent) {
+    if (!isResizing) return
+    e.preventDefault()
+    const frame = getFrameRect(); if (!frame) return
+    // Moving left handle left = wider, right handle right = wider (symmetrical box).
+    // Direction: rightward movement always increases width regardless of which handle.
+    const sign  = resizeSide === 'right' ? 1 : -1
+    const deltaPx  = (e.clientX - resizeStartX) * sign
+    const deltaPct = (deltaPx / frame.width) * 100 * 2  // *2 because box expands both sides
+    const next  = Math.max(20, Math.min(100, resizeStartPct + deltaPct))
+    updateActiveTemplate({ overlayWidthPct: next } as any)
+  }
+
+  function onHandlePointerUp() { isResizing = false }
+
+  // Alignment helpers
+  // ASS numpad: 1=BL 2=BC 3=BR  4=ML 5=MC 6=MR  7=TL 8=TC 9=TR
+  function getTextAlign(al: number): 'left'|'center'|'right' {
+    if ([1,4,7].includes(al)) return 'left'
+    if ([3,6,9].includes(al)) return 'right'
+    return 'center'
+  }
+  function getBlockAlign(al: number): 'bottom'|'middle'|'top' {
+    if (al <= 3) return 'bottom'
+    if (al <= 6) return 'middle'
+    return 'top'
+  }
+  function makeAlignment(textAlign: 'left'|'center'|'right', blockAlign: 'bottom'|'middle'|'top'): number {
+    const col = textAlign === 'left' ? 0 : textAlign === 'center' ? 1 : 2
+    const row = blockAlign === 'bottom' ? 0 : blockAlign === 'middle' ? 3 : 6
+    return row + col + 1
+  }
+
+  function setTextAlign(ta: 'left'|'center'|'right') {
+    const cur = (templateVal as any)?.alignment ?? 2
+    const next = makeAlignment(ta, getBlockAlign(cur))
+    if (applyToAll) {
+      updateActiveTemplate({ alignment: next } as any)
+    } else if (selIdx !== null) {
+      setOverride('alignment', next)
+    }
+  }
+  function setBlockAlign(ba: 'bottom'|'middle'|'top') {
+    const cur = (templateVal as any)?.alignment ?? 2
+    const next = makeAlignment(getTextAlign(cur), ba)
+    if (applyToAll) {
+      updateActiveTemplate({ alignment: next } as any)
+    } else if (selIdx !== null) {
+      setOverride('alignment', next)
+    }
+  }
+
+  // Effective alignment for the active sub (template + optional override)
+  let effectiveAlignment = $derived<number>(
+    (effective as any)?.alignment ?? (templateVal as any)?.alignment ?? 2
+  )
 </script>
 
 <svelte:head>
@@ -240,16 +351,96 @@
           {/if}
 
           {#if activeSub && templateVal}
-            {@const d = activeSub}{@const ef = templateVal}
+            {@const d = activeSub}{@const ef = { ...templateVal, ...(activeSub?.overrides ?? {}) }}
             {#key activeSub?.start}
-            <div class="sub-overlay" style="position:absolute;{getOverlayPositionStyle()}max-width:90%;pointer-events:auto;cursor:{isDragging?'grabbing':'grab'};"
-              onpointerdown={onSubPointerDown}
-              onpointermove={onSubPointerMove}
-              onpointerup={onSubPointerUp}
-              onpointercancel={onSubPointerUp}>
-              <span style="display:inline-block;transform-origin:center bottom;font-family:{ef?.fontName??'Arial'};font-size:{(ef?.fontSize??24)*0.8}px;font-weight:{ef?.bold?'bold':'normal'};font-style:{ef?.italic?'italic':'normal'};color:{ef?.primaryColor??'#fff'};text-shadow:-{ef?.outline??2}px -{ef?.outline??2}px 0 {ef?.outlineColor??'#000'},{ef?.outline??2}px -{ef?.outline??2}px 0 {ef?.outlineColor??'#000'},-{ef?.outline??2}px {ef?.outline??2}px 0 {ef?.outlineColor??'#000'},{ef?.outline??2}px {ef?.outline??2}px 0 {ef?.outlineColor??'#000'};padding:2px 8px;{getAnimationStyle(templateVal?.animation)}">
-                {templateVal?.animation==='typewriter' ? (typewriterTextDerived??'') : d.text}
-              </span>
+
+            <!-- Outer positioner — handles drag-to-position -->
+            <div class="sub-outer"
+              style="position:absolute;{getOverlayPositionStyle()}"
+              onpointerdown={onOuterPointerDown}
+              onpointermove={onOuterPointerMove}
+              onpointerup={onOuterPointerUp}
+              onpointercancel={onOuterPointerUp}
+              onmouseenter={() => overlayHovered = true}
+              onmouseleave={() => overlayHovered = false}>
+
+              <!-- Constrained text box with side handles -->
+              <div class="sub-box"
+                style="width:{overlayWidthPct}%;text-align:{getTextAlign(effectiveAlignment)};cursor:{isDragging?'grabbing':'grab'};">
+
+                <!-- Left resize handle -->
+                <div class="resize-handle resize-left"
+                  class:visible={showToolbar}
+                  onpointerdown={(e) => { e.stopPropagation(); onHandlePointerDown(e,'left') }}
+                  role="separator" aria-label="Resize left"></div>
+
+                <!-- Subtitle text -->
+                <span class="sub-text" style="font-family:{ef?.fontName??'Arial'};font-size:{(ef?.fontSize??24)*0.8}px;font-weight:{ef?.bold?'bold':'normal'};font-style:{ef?.italic?'italic':'normal'};color:{ef?.primaryColor??'#fff'};text-shadow:-{ef?.outline??2}px -{ef?.outline??2}px 0 {ef?.outlineColor??'#000'},{ef?.outline??2}px -{ef?.outline??2}px 0 {ef?.outlineColor??'#000'},-{ef?.outline??2}px {ef?.outline??2}px 0 {ef?.outlineColor??'#000'},{ef?.outline??2}px {ef?.outline??2}px 0 {ef?.outlineColor??'#000'};{getAnimationStyle(templateVal?.animation)}">
+                  {templateVal?.animation==='typewriter' ? (typewriterTextDerived??'') : d.text}
+                </span>
+
+                <!-- Right resize handle -->
+                <div class="resize-handle resize-right"
+                  class:visible={showToolbar}
+                  onpointerdown={(e) => { e.stopPropagation(); onHandlePointerDown(e,'right') }}
+                  role="separator" aria-label="Resize right"></div>
+
+              </div>
+
+              <!-- Hover toolbar — below the text box -->
+              {#if showToolbar}
+                <div class="overlay-toolbar"
+                  onmouseenter={() => toolbarHovered = true}
+                  onmouseleave={() => toolbarHovered = false}
+                  onpointerdown={(e) => e.stopPropagation()}>
+
+                  <!-- Text alignment group -->
+                  <div class="tb-group">
+                    {#each [['left','left'],['center','center'],['right','right']] as [ta, label]}
+                      <button class="tb-btn" class:tb-active={getTextAlign(effectiveAlignment)===ta}
+                        title="Align text {label}"
+                        onclick={() => setTextAlign(ta as any)}>
+                        {#if ta === 'left'}
+                          <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="2" width="14" height="2"/><rect x="1" y="6" width="10" height="2"/><rect x="1" y="10" width="12" height="2"/><rect x="1" y="14" width="8" height="2"/></svg>
+                        {:else if ta === 'center'}
+                          <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="2" width="14" height="2"/><rect x="3" y="6" width="10" height="2"/><rect x="2" y="10" width="12" height="2"/><rect x="4" y="14" width="8" height="2"/></svg>
+                        {:else}
+                          <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="2" width="14" height="2"/><rect x="5" y="6" width="10" height="2"/><rect x="3" y="10" width="12" height="2"/><rect x="7" y="14" width="8" height="2"/></svg>
+                        {/if}
+                      </button>
+                    {/each}
+                  </div>
+
+                  <div class="tb-sep"></div>
+
+                  <!-- Block (vertical) alignment group -->
+                  <div class="tb-group">
+                    {#each [['top','top'],['middle','middle'],['bottom','bottom']] as [ba, label]}
+                      <button class="tb-btn" class:tb-active={getBlockAlign(effectiveAlignment)===ba}
+                        title="Position {label}"
+                        onclick={() => setBlockAlign(ba as any)}>
+                        {#if ba === 'top'}
+                          <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="1" width="14" height="2"/><rect x="4" y="5" width="8" height="8" rx="1" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="6" y="5" width="4" height="5" fill="currentColor" opacity=".4"/></svg>
+                        {:else if ba === 'middle'}
+                          <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="7" width="14" height="2"/><rect x="4" y="3" width="8" height="10" rx="1" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>
+                        {:else}
+                          <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="13" width="14" height="2"/><rect x="4" y="3" width="8" height="8" rx="1" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="6" y="6" width="4" height="5" fill="currentColor" opacity=".4"/></svg>
+                        {/if}
+                      </button>
+                    {/each}
+                  </div>
+
+                  <div class="tb-sep"></div>
+
+                  <!-- Apply scope toggle -->
+                  <label class="tb-scope" title="Apply to all segments or just this one">
+                    <input type="checkbox" bind:checked={applyToAll} />
+                    <span>{applyToAll ? 'All segments' : 'This segment'}</span>
+                  </label>
+
+                </div>
+              {/if}
+
             </div>
             {/key}
           {/if}
@@ -450,7 +641,27 @@
   .video-area{flex:1;display:flex;flex-direction:column;overflow:hidden}
   .video-wrap{flex:1;position:relative;background:#000;display:flex;align-items:center;justify-content:center;overflow:hidden}
   .video{width:100%;height:100%;object-fit:contain;display:block}.no-video{color:#666;font-size:.9rem}
-  .sub-overlay{position:absolute;line-height:1.3}.sub-overlay:hover{outline:1px dashed rgba(255,255,255,.4)}
+  /* ── Subtitle overlay ── */
+  .sub-outer{pointer-events:auto;display:inline-flex;flex-direction:column;align-items:center;gap:0}
+  .sub-box{position:relative;display:inline-block;min-width:60px;box-sizing:border-box;padding:0 18px}
+  .sub-box:hover .resize-handle{opacity:1}
+  .sub-text{display:block;line-height:1.35;white-space:pre-wrap;word-break:break-word;padding:2px 0}
+
+  /* Resize handles */
+  .resize-handle{position:absolute;top:50%;transform:translateY(-50%);width:12px;height:12px;border-radius:50%;background:white;box-shadow:0 0 4px rgba(0,0,0,.6);cursor:ew-resize;opacity:0;transition:opacity .15s;z-index:10}
+  .resize-handle.visible{opacity:1}
+  .resize-left{left:-6px}
+  .resize-right{right:-6px}
+
+  /* Overlay toolbar */
+  .overlay-toolbar{display:flex;align-items:center;gap:3px;padding:4px 6px;border-radius:8px;background:rgba(20,20,30,.88);backdrop-filter:blur(6px);margin-top:6px;white-space:nowrap;pointer-events:auto;user-select:none;flex-wrap:nowrap}
+  .tb-group{display:flex;gap:1px}
+  .tb-btn{display:flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:5px;border:none;background:transparent;color:rgba(255,255,255,.7);cursor:pointer;transition:background .1s,color .1s;flex-shrink:0}
+  .tb-btn:hover{background:rgba(255,255,255,.15);color:white}
+  .tb-btn.tb-active{background:rgba(255,255,255,.22);color:white}
+  .tb-sep{width:1px;height:18px;background:rgba(255,255,255,.2);margin:0 3px;flex-shrink:0}
+  .tb-scope{display:flex;align-items:center;gap:4px;font-size:.62rem;color:rgba(255,255,255,.75);cursor:pointer;padding:0 2px;flex-shrink:0}
+  .tb-scope input[type=checkbox]{width:12px;height:12px;cursor:pointer;accent-color:var(--color-accent)}
   .video-controls{position:absolute;bottom:0;left:0;right:0;display:flex;align-items:center;gap:.5rem;padding:.5rem .75rem;background:linear-gradient(transparent,rgba(0,0,0,.7))}
   .play-btn{background:none;border:none;color:white;font-size:1rem;cursor:pointer;padding:0;width:28px}
   .time{color:white;font-size:.75rem;white-space:nowrap;font-family:monospace}
@@ -546,6 +757,7 @@
   @keyframes sub-fade{from{opacity:0}to{opacity:1}}
   @keyframes sub-pop{from{transform:scale(0.5);opacity:0}to{transform:scale(1);opacity:1}}
   @keyframes sub-slide-up{from{transform:translateY(40px);opacity:0}to{transform:translateY(0);opacity:1}}
+
 
 </style>
 
