@@ -120,69 +120,10 @@ function isValidWord(w: string): boolean {
   return w.length > 0 && /\w/.test(w)
 }
 
-// ─── Length-weighted word timing ──────────────────────────────────────────────
-// Used only by the preview (activeWordIndex in Editor.svelte).
-// At burn time, every subtitle coming from parseSRT is already a single word
-// with its own real timestamp, so distributeWordTimings is a no-op there.
-// For the preview we still need it because the stored subtitle spans the whole
-// grouped line and we must estimate which word is current.
-
-const MIN_WORD_MS = 250   // >= browser timeupdate interval so no word is missed
-const MAX_WORD_MS = 1500
-
-export function distributeWordTimings(
-  words: string[],
-  startMs: number,
-  endMs: number
-): Array<{ startMs: number; endMs: number }> {
-  if (words.length === 0) return []
-  if (words.length === 1) return [{ startMs, endMs }]
-
-  const totalMs  = endMs - startMs
-  const lengths  = words.map(w => Math.max(w.length, 1))
-  const totalLen = lengths.reduce((a, b) => a + b, 0)
-
-  const durations = lengths.map(len => (len / totalLen) * totalMs)
-
-  let surplus = 0
-  const clamped = durations.map(d => {
-    const c = Math.max(MIN_WORD_MS, Math.min(MAX_WORD_MS, d))
-    surplus += d - c
-    return c
-  })
-
-  let iterations = 0
-  while (Math.abs(surplus) > 1 && iterations++ < 5) {
-    const unclamped = clamped
-      .map((c, i) =>
-        (surplus > 0 && c < MAX_WORD_MS) || (surplus < 0 && c > MIN_WORD_MS) ? i : -1
-      )
-      .filter(i => i >= 0)
-    if (unclamped.length === 0) break
-    const share = surplus / unclamped.length
-    surplus = 0
-    for (const i of unclamped) {
-      const next = Math.max(MIN_WORD_MS, Math.min(MAX_WORD_MS, clamped[i] + share))
-      surplus += clamped[i] + share - next
-      clamped[i] = next
-    }
-  }
-
-  const result: Array<{ startMs: number; endMs: number }> = []
-  let cursor = startMs
-  for (let i = 0; i < words.length; i++) {
-    const wStart = Math.round(cursor)
-    const wEnd   = i === words.length - 1 ? endMs : Math.round(cursor + clamped[i])
-    result.push({ startMs: wStart, endMs: wEnd })
-    cursor += clamped[i]
-  }
-  return result
-}
-
 // ─── Build token list from raw subtitles ──────────────────────────────────────
-// buildTokens treats each subtitle's text as a single token.
-// When called from buildPlainEvents, each subtitle IS a single word (raw SRT).
+// Treats each subtitle's text as a single token.
 // Contraction merging handles "'s", "'t", "'re" etc.
+// Used by extractPauseGroups to split raw whisper output into typed tokens.
 
 function buildTokens(subtitles: Subtitle[]): Token[] {
   const raw: Token[] = subtitles.map(sub => ({
@@ -214,102 +155,6 @@ function buildTokens(subtitles: Subtitle[]): Token[] {
   return merged
     .map(t => ({ ...t, rawWord: t.word, word: cleanWord(t.word) }))
     .filter(t => isValidWord(t.word))
-}
-
-// ─── Grouping options ─────────────────────────────────────────────────────────
-
-interface GroupOptions {
-  maxWords?:   number   // hard cap on words per line           (default 6)
-  maxMs?:      number   // hard cap on line duration ms         (default 4000)
-  minMs?:      number   // merge forward if shorter             (default 600)
-  breathMs?:   number   // gap: ignore (mid-thought breath)     (default 250)
-  clauseMs?:   number   // gap: soft break if line long enough  (default 500)
-  cutMs?:      number   // gap: always hard break               (default 800)
-}
-
-// ─── Core grouping ────────────────────────────────────────────────────────────
-//
-// Break rules, in priority order:
-//   1. Gap >= cutMs      → hard break (speaker pause / edit cut)
-//   2. Gap >= clauseMs   → soft break when we already have ≥3 words banked
-//   3. Sentence-ending punctuation  . ! ?
-//   4. Capital letter when group is non-empty (whisper capitalises after cuts)
-//   5. Clause punctuation  , ; :  after ≥4 words  (skip numeric commas)
-//   6. Duration cap  (only after ≥3 words to avoid 1-word flash lines)
-//   7. Word-count cap
-
-function groupTokens(tokens: Token[], opts: GroupOptions = {}): Line[] {
-  const {
-    maxWords = 6,
-    maxMs    = 4000,
-    minMs    = 600,
-    breathMs = 250,
-    clauseMs = 500,
-    cutMs    = 800,
-  } = opts
-
-  const lines: Line[] = []
-  let i = 0
-
-  while (i < tokens.length) {
-    const group: Token[] = []
-
-    while (i < tokens.length && group.length < maxWords) {
-      const token     = tokens[i]
-      const lastEndMs = group.length > 0 ? group[group.length - 1].endMs : -Infinity
-      const gap       = token.startMs - lastEndMs
-      const lastRaw   = group.length > 0 ? group[group.length - 1].rawWord : ''
-
-      // Rule 1 — hard cut pause
-      if (group.length > 0 && gap >= cutMs) break
-
-      // Rule 2 — clause pause with enough words already banked
-      if (group.length >= 3 && gap >= clauseMs) break
-
-      // Rule 4 — capital letter (any non-empty group)
-      if (group.length > 0 && /^[A-Z]/.test(token.word)) break
-
-      group.push(token)
-      i++
-
-      const currentRaw = group[group.length - 1].rawWord
-
-      // Rule 3 — sentence-ending punctuation
-      if (/[.!?]$/.test(currentRaw)) break
-
-      // Rule 5 — clause punctuation after ≥4 words (skip numeric commas)
-      const isNumericComma = /\d,\d/.test(currentRaw)
-      if (!isNumericComma && group.length >= 4 && /[,;:]$/.test(currentRaw)) break
-
-      // Rule 6 — duration cap (only once we have ≥3 words)
-      if (group.length >= 3) {
-        const dur = group[group.length - 1].endMs - group[0].startMs
-        if (dur > maxMs) break
-      }
-    }
-
-    // Safety: stalled → force-consume one token
-    if (group.length === 0 && i < tokens.length) group.push(tokens[i++])
-    if (group.length === 0) continue
-
-    // Minimum duration guard: absorb one more token when line is very short
-    // and the next follows without a hard pause — prevents flash subtitles.
-    const lineDur = group[group.length - 1].endMs - group[0].startMs
-    const nextGap = i < tokens.length ? tokens[i].startMs - group[group.length - 1].endMs : Infinity
-    if (lineDur < minMs && group.length < maxWords && nextGap < cutMs) {
-      if (i < tokens.length) group.push(tokens[i++])
-    }
-
-    lines.push({
-      text:     group.map(t => t.word).join(' '),
-      startSrt: group[0].startSrt,
-      endSrt:   group[group.length - 1].endSrt,
-      startMs:  group[0].startMs,
-      endMs:    group[group.length - 1].endMs,
-    })
-  }
-
-  return lines
 }
 
 // ─── Style helpers ────────────────────────────────────────────────────────────
@@ -403,8 +248,6 @@ export function buildAss(subtitles: Subtitle[], template: Template): string {
 // All \pos/\move coords must be converted from video pixels to script coords.
 const SCRIPT_W = 384
 const SCRIPT_H = 288
-function toScriptX(px: number, videoWidth:  number): number { return Math.round(px * SCRIPT_W / videoWidth)  }
-function toScriptY(px: number, videoHeight: number): number { return Math.round(px * SCRIPT_H / videoHeight) }
 
 function buildAnimationTag(
   animation: AnimationMode,
@@ -515,7 +358,7 @@ function buildPosTag(template: Template): string {
   const x = Math.round((px / 100) * SCRIPT_W)
   const y = Math.round((py / 100) * SCRIPT_H)
   // \an5 = centre-anchor so the subtitle centres on the given point
-  return `{\an5\pos(${x},${y})}`
+  return `{\\an5\\pos(${x},${y})}`
 }
 
 // ─── Plain events ────────────────────────────────────────────────────────────
