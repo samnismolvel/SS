@@ -31,6 +31,20 @@
 
 
 
+  // ── Preview font scale ───────────────────────────────────────────────────
+  // ASS fontsize is in 384×288 script-space units. libass scales to video res.
+  // We replicate that scale in the preview: fontSize * (frameWidthPx / 384).
+  // frameWidthPx is the rendered width of the video within the preview wrap.
+  // We derive it from currentTime so it updates after the video loads/resizes.
+  const ASS_SCRIPT_W = 384
+  let previewFontScale = $derived((() => {
+    // Touch currentTime so this re-evaluates after video metadata loads
+    void currentTime
+    const frame = getFrameRect()
+    if (!frame || frame.width === 0) return 1
+    return frame.width / ASS_SCRIPT_W
+  })())
+
   // Typewriter preview — compute revealed chars from currentTime
   let typewriterTextDerived = $derived((() => {
     if (!activeSub || templateVal?.animation !== 'typewriter') return null
@@ -375,7 +389,7 @@
                   role="separator" aria-label="Resize left"></div>
 
                 <!-- Subtitle text -->
-                <span class="sub-text" style="font-family:{ef?.fontName??'Arial'};font-size:{(ef?.fontSize??24)*0.8}px;font-weight:{ef?.bold?'bold':'normal'};font-style:{ef?.italic?'italic':'normal'};color:{ef?.primaryColor??'#fff'};text-shadow:-{ef?.outline??2}px -{ef?.outline??2}px 0 {ef?.outlineColor??'#000'},{ef?.outline??2}px -{ef?.outline??2}px 0 {ef?.outlineColor??'#000'},-{ef?.outline??2}px {ef?.outline??2}px 0 {ef?.outlineColor??'#000'},{ef?.outline??2}px {ef?.outline??2}px 0 {ef?.outlineColor??'#000'};{getAnimationStyle(templateVal?.animation)}">
+                <span class="sub-text" style="font-family:{ef?.fontName??'Arial'};font-size:{(ef?.fontSize??24)*previewFontScale}px;font-weight:{ef?.bold?'bold':'normal'};font-style:{ef?.italic?'italic':'normal'};color:{ef?.primaryColor??'#fff'};text-shadow:-{ef?.outline??2}px -{ef?.outline??2}px 0 {ef?.outlineColor??'#000'},{ef?.outline??2}px -{ef?.outline??2}px 0 {ef?.outlineColor??'#000'},-{ef?.outline??2}px {ef?.outline??2}px 0 {ef?.outlineColor??'#000'},{ef?.outline??2}px {ef?.outline??2}px 0 {ef?.outlineColor??'#000'};{getAnimationStyle(templateVal?.animation)}">
                   {templateVal?.animation==='typewriter' ? (typewriterTextDerived??'') : d.text}
                 </span>
 
