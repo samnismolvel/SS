@@ -30,8 +30,6 @@ export interface Template {
   syncOffset: number      // ms to shift subtitle starts forward (whisper early-onset correction)
   pauseThreshold: number  // inter-word gap ms that triggers a line break (clause boundary)
   animation: AnimationMode  // entrance/transition animation applied at burn time
-  wordMode: 'normal' | 'highlight' | 'solo'  // how to handle intra-line word timings
-  highlightColor: string   // for wordMode 'highlight', the color of the currently highlighted word
 }
 
 // ─── Enums / Literals ────────────────────────────────────────────────────────

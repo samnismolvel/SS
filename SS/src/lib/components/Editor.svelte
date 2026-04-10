@@ -542,8 +542,10 @@
   .cap-action-btn{display:flex;align-items:center;gap:.25rem;padding:.15rem .35rem;border-radius:4px;border:1px solid transparent;background:transparent;font-size:.62rem;cursor:pointer;color:var(--color-text-muted);transition:all .12s}
   .merge-btn:hover{background:var(--color-accent-subtle);border-color:var(--color-accent);color:var(--color-accent)}
   .insert-btn:hover{background:var(--color-surface-hover);border-color:var(--color-border);color:var(--color-text)}
+  
   @keyframes sub-fade{from{opacity:0}to{opacity:1}}
   @keyframes sub-pop{from{transform:scale(0.5);opacity:0}to{transform:scale(1);opacity:1}}
   @keyframes sub-slide-up{from{transform:translateY(40px);opacity:0}to{transform:translateY(0);opacity:1}}
 
 </style>
+

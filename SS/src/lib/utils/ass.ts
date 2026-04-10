@@ -374,29 +374,8 @@ export function buildAss(subtitles: Subtitle[], template: Template): string {
   lines.push('')
   lines.push('[Events]')
   lines.push('Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text')
-
-  /*if (template.wordByWord && template.wordMode !== 'none') {
-    lines.push(...buildWordByWordEvents(subtitles, template))
-  } else {
-    lines.push(...buildPlainEvents(subtitles, template))
-  }*/
-
+  lines.push(...buildPlainEvents(subtitles, template))
   return lines.join('\n')
-}
-
-// ─── Grouping options from template ──────────────────────────────────────────
-
-function groupOptsFromTemplate(template: Template): GroupOptions {
-  return {
-    maxWords: 3,     // 3 words guarantees a single line at typical font sizes
-    maxMs:    3000,
-    minMs:    400,
-    breathMs: 250,
-    // clauseMs and cutMs come from the user-tunable pauseThreshold.
-    // pauseThreshold is the "clause" boundary; cutMs is 1.6× that.
-    clauseMs: template.pauseThreshold ?? 500,
-    cutMs:    Math.round((template.pauseThreshold ?? 500) * 1.6),
-  }
 }
 
 // ─── Animation tag builder ───────────────────────────────────────────────────
@@ -539,28 +518,43 @@ function buildPosTag(template: Template): string {
   return `{\an5\pos(${x},${y})}`
 }
 
+// ─── Plain events ────────────────────────────────────────────────────────────
+// Iterates the already-grouped display subtitles directly.
+// Grouping is done upstream (applyDensityRatio / manual merge), NOT here.
+// Timing correction (syncOffset) is the only transformation applied at burn time.
+
 function buildPlainEvents(subtitles: Subtitle[], template: Template): string[] {
   const events: string[] = []
   const syncOffset = template.syncOffset ?? 50
 
-  const tokens  = buildTokens(subtitles)
-  const grouped = applyTimingCorrection(
-    groupTokens(tokens, groupOptsFromTemplate(template)),
-    syncOffset
-  )
+  // Convert each display subtitle into a Line for timing correction.
+  const lines: Line[] = subtitles
+    .filter(sub => sub.text.trim().length > 0)
+    .map(sub => ({
+      text:     sub.text.trim(),
+      startSrt: sub.start,
+      endSrt:   sub.end,
+      startMs:  srtToMs(sub.start),
+      endMs:    srtToMs(sub.end),
+    }))
 
+  const corrected = applyTimingCorrection(lines, syncOffset)
+
+  // Build override lookup keyed by original (pre-correction) start timestamp.
   const overrideMap = new Map<string, Subtitle['overrides']>()
   for (const sub of subtitles) {
     if (sub.overrides) overrideMap.set(sub.start, sub.overrides)
   }
 
-  for (const line of grouped) {
-    const overrides  = overrideMap.get(line.startSrt)
+  for (let i = 0; i < corrected.length; i++) {
+    const line       = corrected[i]
+    const origStart  = subtitles.filter(s => s.text.trim().length > 0)[i]?.start ?? line.startSrt
+    const overrides  = overrideMap.get(origStart)
     const style      = resolveStyle(template, overrides)
     const start      = srtTimeToAss(line.startSrt)
     const end        = srtTimeToAss(line.endSrt)
     const text       = line.text.replace(/\{/g, '\\{').replace(/\}/g, '\\}')
-    const durationMs = srtToMs(line.endSrt) - srtToMs(line.startSrt)
+    const durationMs = line.endMs - line.startMs
     const posTag     = buildPosTag(template)
     const tags       = posTag + buildInlineTags(style, template)
     const animTag    = buildAnimationTag(
@@ -573,128 +567,11 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template): string[] {
     if (template.animation === 'typewriter') {
       events.push(...buildTypewriterEvents(
         text, start, end,
-        srtToMs(line.startSrt), srtToMs(line.endSrt),
+        line.startMs, line.endMs,
         tags
       ))
     } else {
       events.push('Dialogue: 0,' + start + ',' + end + ',Default,,0,0,0,,' + animTag + tags + text)
-    }
-  }
-
-  return events
-}
-
-// ─── Word-by-word events ──────────────────────────────────────────────────────
-//
-// Receives the GROUPED subtitles from parseSRT (one Subtitle = one display line,
-// potentially multiple words). Per-word timing is derived via distributeWordTimings
-// which is accurate enough for the highlight/solo display effect.
-// Plain mode (buildPlainEvents) is the one that needs frame-accurate per-word
-// timestamps — it gets them via buildTokens on the raw single-word SRT blocks.
-
-function buildWordByWordEvents(subtitles: Subtitle[], template: Template): string[] {
-  const events: string[] = []
-  const primaryColor   = '{\\c' + hexToAss(template.primaryColor) + '}'
-  const highlightColor = '{\\c' + hexToAss(template.highlightColor) + '}'
-  const posTag         = buildPosTag(template)
-  const syncOffset     = template.syncOffset ?? 50
-  const wbwOpts: GroupOptions = {
-    ...groupOptsFromTemplate(template),
-    maxWords: 8,
-    maxMs:    5000,
-  }
-
-  // Build word-level tokens from the grouped subtitles.
-  // Each grouped subtitle may contain multiple words — we split them and assign
-  // timing via distributeWordTimings over the subtitle's real time span.
-  const wordTokens: Token[] = []
-  for (const sub of subtitles) {
-    const words = sub.text.trim().split(' ').map(cleanWord).filter(isValidWord)
-    if (words.length === 0) continue
-    const startMs = srtToMs(sub.start)
-    const endMs   = srtToMs(sub.end)
-    const timings = distributeWordTimings(words, startMs, endMs)
-    words.forEach((word, wi) => {
-      wordTokens.push({
-        word,
-        rawWord:  word,
-        startSrt: sub.start,
-        endSrt:   sub.end,
-        startMs:  timings[wi].startMs,
-        endMs:    timings[wi].endMs,
-      })
-    })
-  }
-
-  const validTokens = wordTokens.filter(t => isValidWord(t.word))
-
-  // Group into display sentences using the shared groupTokens logic,
-  // then apply timing correction.
-  const sentences = applyTimingCorrection(
-    groupTokens(validTokens, wbwOpts),
-    syncOffset
-  )
-
-  for (const sentence of sentences) {
-    const sentenceWords = sentence.text.split(' ')
-
-    // Recover the per-word tokens for this sentence.
-    // Token lookup uses the uncorrected time range (before syncOffset was added).
-    const uncorrectedStart = sentence.startMs - syncOffset
-    const uncorrectedEnd   = sentence.endMs   - syncOffset
-    const sentenceTokens   = validTokens.filter(
-      t => t.startMs >= uncorrectedStart - 50 && t.endMs <= uncorrectedEnd + 50
-    )
-
-    const resolvedTokens: Token[] = sentenceWords.map((word, wi) => {
-      const found = sentenceTokens[wi]
-      if (found) {
-        return {
-          ...found,
-          startMs:  found.startMs + syncOffset,
-          endMs:    found.endMs   + syncOffset,
-          startSrt: msToSrt(found.startMs + syncOffset),
-          endSrt:   msToSrt(found.endMs   + syncOffset),
-        }
-      }
-      // Fallback: even distribution across sentence span
-      const span = (sentence.endMs - sentence.startMs) / Math.max(sentenceWords.length, 1)
-      return {
-        word,
-        rawWord:  word,
-        startSrt: sentence.startSrt,
-        endSrt:   sentence.endSrt,
-        startMs:  Math.round(sentence.startMs + wi * span),
-        endMs:    Math.round(sentence.startMs + (wi + 1) * span),
-      }
-    })
-
-    if (template.wordMode === 'highlight') {
-      for (let wi = 0; wi < resolvedTokens.length; wi++) {
-        const { startMs, endMs } = resolvedTokens[wi]
-        let text = ''
-        for (let j = 0; j < resolvedTokens.length; j++) {
-          text += j === wi
-            ? highlightColor + resolvedTokens[j].word + primaryColor
-            : resolvedTokens[j].word
-          if (j < resolvedTokens.length - 1) text += ' '
-        }
-        const wordDur = endMs - startMs
-        const animTag = buildAnimationTag(template.animation, wordDur, template.alignment, template.marginV, template.fontSize)
-        events.push(
-          'Dialogue: 0,' + msToAssTime(startMs) + ',' + msToAssTime(endMs) +
-          ',Default,,0,0,0,,' + posTag + animTag + primaryColor + text
-        )
-      }
-    } else if (template.wordMode === 'solo') {
-      for (const { word, startMs, endMs } of resolvedTokens) {
-        const wordDur = endMs - startMs
-        const animTag = buildAnimationTag(template.animation, wordDur, template.alignment, template.marginV, template.fontSize)
-        events.push(
-          'Dialogue: 0,' + msToAssTime(startMs) + ',' + msToAssTime(endMs) +
-          ',Default,,0,0,0,,' + posTag + animTag + highlightColor + word
-        )
-      }
     }
   }
 
