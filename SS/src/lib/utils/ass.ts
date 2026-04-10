@@ -442,66 +442,170 @@ export function parseSRT(content: string): Subtitle[] {
     .filter((s): s is Subtitle => s !== null)
 }
 
-// ─── Pause group extraction ───────────────────────────────────────────────────
-// Groups raw word-tokens (one per whisper block) into pause groups.
-// A pause group is a sequence of words with no gap >= cutMs between them.
-// Capital letters and punctuation are NOT used as break signals here —
-// those are presentation concerns handled by density grouping.
+// ─── Clause / micro-pause extraction ─────────────────────────────────────────
+//
+// Three-level hierarchy that drives the density slider:
+//
+//   Clause      — words bounded by sentence-ending punctuation (. ! ? , ; :).
+//                 A clause always ends at most ONE punctuation mark, always at
+//                 the very last word. This is the maximum segment size (ratio=1).
+//
+//   Micro-pause — timing gaps ≥ microMs within a clause, used to subdivide it
+//                 when the slider is between 0.5 and 1.
+//
+//   Word        — single token, used when the slider is at 0.
+//
+// Slider mapping:
+//   ratio = 0.0  → 1 word per segment
+//   ratio = 0.5  → 1 micro-pause group per segment (within each clause)
+//   ratio = 1.0  → 1 full clause per segment
+//
+// Between 0 and 0.5 the micro-pause groups are further subdivided proportionally.
+// Between 0.5 and 1 clauses are subdivided into micro-pause groups proportionally.
 
-export function extractPauseGroups(rawSubs: Subtitle[], cutMs = 800): Token[][] {
+// A "clause" is a maximal run of tokens ending in (or at) sentence punctuation.
+// clauseCutMs: hard timing gap that also forces a clause break even without punctuation.
+const CLAUSE_PUNCT   = /[.!?,;:]$/   // last char of rawWord
+const CLAUSE_CUT_MS  = 800           // hard gap → always a new clause
+
+// microCutMs: gap that splits a clause into micro-pause sub-groups.
+// Smaller than clauseCut so micro-pauses are real brief hesitations within a phrase.
+const MICRO_CUT_MS   = 300
+
+export interface PauseGroups {
+  clauses: Token[][]        // top level — one entry per clause
+  micros:  Token[][][]      // micros[i] = micro-pause sub-groups within clause i
+}
+
+export function extractPauseGroups(rawSubs: Subtitle[]): PauseGroups {
   const tokens = buildTokens(rawSubs)
-  if (tokens.length === 0) return []
+  if (tokens.length === 0) return { clauses: [], micros: [] }
 
-  const groups: Token[][] = []
-  let current: Token[] = [tokens[0]]
+  const clauses: Token[][] = []
+  const micros:  Token[][][] = []
 
-  for (let i = 1; i < tokens.length; i++) {
-    const gap = tokens[i].startMs - tokens[i - 1].endMs
-    if (gap >= cutMs) {
-      groups.push(current)
-      current = [tokens[i]]
-    } else {
-      current.push(tokens[i])
+  let clauseBuf: Token[] = []
+
+  const flushClause = () => {
+    if (clauseBuf.length === 0) return
+    clauses.push([...clauseBuf])
+
+    // Split this clause into micro-pause groups
+    const mGroups: Token[][] = []
+    let mBuf: Token[] = [clauseBuf[0]]
+    for (let j = 1; j < clauseBuf.length; j++) {
+      const gap = clauseBuf[j].startMs - clauseBuf[j - 1].endMs
+      if (gap >= MICRO_CUT_MS) {
+        mGroups.push([...mBuf])
+        mBuf = [clauseBuf[j]]
+      } else {
+        mBuf.push(clauseBuf[j])
+      }
     }
+    if (mBuf.length > 0) mGroups.push(mBuf)
+    micros.push(mGroups)
+
+    clauseBuf = []
   }
-  if (current.length > 0) groups.push(current)
-  return groups
+
+  for (let i = 0; i < tokens.length; i++) {
+    // Hard timing gap → flush current clause and start a new one
+    if (clauseBuf.length > 0) {
+      const gap = tokens[i].startMs - clauseBuf[clauseBuf.length - 1].endMs
+      if (gap >= CLAUSE_CUT_MS) flushClause()
+    }
+
+    clauseBuf.push(tokens[i])
+
+    // Punctuation at the end of this token → flush after adding it
+    if (CLAUSE_PUNCT.test(tokens[i].rawWord)) flushClause()
+  }
+  flushClause()
+
+  return { clauses, micros }
 }
 
 // ─── Density-based grouping ───────────────────────────────────────────────────
-// Takes pause groups and a density ratio (0–1).
-//   ratio = 0 → one word per segment (maximum granularity)
-//   ratio = 1 → one segment per pause group (minimum granularity)
-// In between, each pause group is subdivided proportionally.
-// Default ratio 0.4 gives roughly 2–3 words per segment.
+//
+// ratio = 0.0 → one word per segment
+// ratio = 0.5 → one micro-pause group per segment
+// ratio = 1.0 → one full clause per segment
+//
+// The lower half (0–0.5) subdivides micro-pause groups proportionally.
+// The upper half (0.5–1.0) merges micro-pause groups up toward full clauses.
 
-export function applyDensityRatio(pauseGroups: Token[][], ratio: number): Subtitle[] {
+function tokensToSubtitle(tokens: Token[], idx: number): Subtitle {
+  const text = tokens.map(t => t.word).join(' ')
+  return {
+    index:        idx,
+    start:        tokens[0].startSrt,
+    end:          tokens[tokens.length - 1].endSrt,
+    text,
+    originalText: text,
+  }
+}
+
+export function applyDensityRatio(groups: PauseGroups, ratio: number): Subtitle[] {
   const r = Math.max(0, Math.min(1, ratio))
   const subtitles: Subtitle[] = []
   let idx = 1
 
-  for (const group of pauseGroups) {
-    if (group.length === 0) continue
+  for (let ci = 0; ci < groups.clauses.length; ci++) {
+    const microGroups = groups.micros[ci]  // micro-pause sub-groups within this clause
 
-    // Compute words per segment for this group.
-    // At ratio=0: 1 word. At ratio=1: all words.
-    // Use ceil so we always include all words.
-    const wordsPerSeg = Math.max(1, Math.ceil(r * group.length))
+    if (r >= 0.5) {
+      // Upper half: merge micro-groups toward the full clause.
+      // r=0.5 → each micro-group is one segment
+      // r=1.0 → entire clause is one segment
+      //
+      // Scale r from [0.5,1] → [0,1] for this range.
+      const t = (r - 0.5) * 2  // 0 at r=0.5, 1 at r=1.0
 
-    for (let i = 0; i < group.length; i += wordsPerSeg) {
-      const slice = group.slice(i, i + wordsPerSeg)
-      const text  = slice.map(t => t.word).join(' ')
-      subtitles.push({
-        index:        idx++,
-        start:        slice[0].startSrt,
-        end:          slice[slice.length - 1].endSrt,
-        text,
-        originalText: text,
-      })
+      // Number of output segments = lerp from microGroups.length (t=0) to 1 (t=1)
+      const targetSegs = Math.max(1, Math.round(microGroups.length * (1 - t) + 1 * t))
+      // Distribute micro-groups into targetSegs buckets as evenly as possible
+      const buckets = distributeBuckets(microGroups, targetSegs)
+      for (const bucket of buckets) {
+        const tokens = bucket.flat()
+        if (tokens.length > 0) subtitles.push(tokensToSubtitle(tokens, idx++))
+      }
+    } else {
+      // Lower half: subdivide each micro-group toward single words.
+      // r=0.0 → each word is one segment
+      // r=0.5 → each micro-group is one segment
+      //
+      // Scale r from [0,0.5] → [0,1] for this range.
+      const t = r * 2  // 0 at r=0, 1 at r=0.5
+
+      for (const mg of microGroups) {
+        // Number of output segments = lerp from mg.length (t=0) to 1 (t=1)
+        const targetSegs = Math.max(1, Math.round(mg.length * (1 - t) + 1 * t))
+        const buckets = distributeBuckets(mg.map(tok => [tok]), targetSegs)
+        for (const bucket of buckets) {
+          const tokens = bucket.flat()
+          if (tokens.length > 0) subtitles.push(tokensToSubtitle(tokens, idx++))
+        }
+      }
     }
   }
 
   return subtitles
+}
+
+// Distribute `items` into exactly `n` contiguous buckets as evenly as possible.
+// Contiguous (not round-robin) so that word order within each segment is preserved.
+function distributeBuckets<T>(items: T[], n: number): T[][] {
+  const count = Math.min(n, items.length)
+  const buckets: T[][] = []
+  const base  = Math.floor(items.length / count)
+  const extra = items.length % count
+  let start = 0
+  for (let i = 0; i < count; i++) {
+    const size = base + (i < extra ? 1 : 0)
+    buckets.push(items.slice(start, start + size))
+    start += size
+  }
+  return buckets
 }
 
 // ─── Merge two adjacent segments ─────────────────────────────────────────────

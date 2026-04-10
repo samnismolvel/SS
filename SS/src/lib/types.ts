@@ -81,7 +81,7 @@ export interface EditorSession {
   videoPath: string
   outputPath: string
   rawSubs: Subtitle[]            // original one-word-per-block whisper output
-  pauseGroups: unknown[][]       // Token[][] — typed as unknown to avoid circular dep
+  pauseGroups: unknown         // PauseGroups — typed as unknown to avoid circular dep
   densityRatio: number           // 0 = one word per seg, 1 = one seg per pause group
   subtitles: Subtitle[]
   selectedIndex: number | null   // which segment is open in the inspector

@@ -7,18 +7,14 @@ import {
   mergeSegments as _mergeSegments,
   insertSegmentAfter as _insertSegmentAfter,
 } from '../utils/ass'
-import type { Token } from '../utils/ass'
+import type { PauseGroups } from '../utils/ass'
 
 // ─── Session ──────────────────────────────────────────────────────────────────
 
-// EditorSession is extended with rawSubs (original whisper word-tokens)
-// and densityRatio (0–1 slider value). These are kept separate from the
-// displayed subtitles so the slider can re-process from scratch at any time.
-
 interface ExtendedSession extends EditorSession {
-  rawSubs:      Subtitle[]   // original one-word-per-block whisper output
-  pauseGroups:  Token[][]    // pause groups derived from rawSubs
-  densityRatio: number       // 0 = one word per seg, 1 = one seg per pause group
+  rawSubs:      Subtitle[]    // original one-word-per-block whisper output
+  pauseGroups:  PauseGroups   // two-level hierarchy: clauses → micro-pause groups
+  densityRatio: number        // 0 = one word per seg, 1 = one full clause per seg
 }
 
 export const session = writable<ExtendedSession | null>(null)
