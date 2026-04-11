@@ -200,7 +200,7 @@ function buildInlineTags(style: EffectiveStyle, base: Template): string {
 
 // ─── Main ASS builder ─────────────────────────────────────────────────────────
 
-export function buildAss(subtitles: Subtitle[], template: Template): string {
+export function buildAss(subtitles: Subtitle[], template: Template, rawSubs: Subtitle[] = []): string {
   const lines: string[] = []
   lines.push('[Script Info]')
   lines.push('Title: Subtitles')
@@ -219,7 +219,7 @@ export function buildAss(subtitles: Subtitle[], template: Template): string {
   lines.push('')
   lines.push('[Events]')
   lines.push('Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text')
-  lines.push(...buildPlainEvents(subtitles, template))
+  lines.push(...buildPlainEvents(subtitles, template, rawSubs))
   return lines.join('\n')
 }
 
@@ -342,8 +342,6 @@ function buildTypewriterEvents(
   return events
 }
 
-// ─── Plain events─────────────────────────────────────────
-
 // ─── posX/posY → \pos tag ────────────────────────────────────────────────────
 // posX/posY are stored as % (0–100) of the video frame.
 // ASS script space is 384×288 (SCRIPT_W × SCRIPT_H).
@@ -365,10 +363,21 @@ function buildPosTag(template: Template): string {
 // Iterates the already-grouped display subtitles directly.
 // Grouping is done upstream (applyDensityRatio / manual merge), NOT here.
 // Timing correction (syncOffset) is the only transformation applied at burn time.
+//
+// Active word highlight mode:
+// When activeWordBgEnabled or activeWordColor differs from primaryColor, each
+// display segment emits one base Dialogue event (Layer 0) plus one Layer 1
+// event per word whose timing window matches a rawSubs token.
+// Layer 1 events override color and simulate a background via a thick border
+// in the bg color — the best approximation available in ASS/libass.
 
-function buildPlainEvents(subtitles: Subtitle[], template: Template): string[] {
+function buildPlainEvents(subtitles: Subtitle[], template: Template, rawSubs: Subtitle[] = []): string[] {
   const events: string[] = []
   const syncOffset = template.syncOffset ?? 50
+
+  const needsWordHighlight =
+    template.activeWordBgEnabled ||
+    (template.activeWordColor ?? template.primaryColor) !== template.primaryColor
 
   // Convert each display subtitle into a Line for timing correction.
   const lines: Line[] = subtitles
@@ -389,6 +398,21 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template): string[] {
     if (sub.overrides) overrideMap.set(sub.start, sub.overrides)
   }
 
+  // Pre-apply the same syncOffset to rawSubs so word windows stay aligned
+  // with the corrected display lines.
+  const rawLines: Line[] = rawSubs
+    .filter(sub => sub.text.trim().length > 0)
+    .map(sub => ({
+      text:     sub.text.trim(),
+      startSrt: sub.start,
+      endSrt:   sub.end,
+      startMs:  srtToMs(sub.start),
+      endMs:    srtToMs(sub.end),
+    }))
+  const correctedRaw = needsWordHighlight && rawLines.length > 0
+    ? applyTimingCorrection(rawLines, syncOffset)
+    : []
+
   for (let i = 0; i < corrected.length; i++) {
     const line       = corrected[i]
     const origStart  = subtitles.filter(s => s.text.trim().length > 0)[i]?.start ?? line.startSrt
@@ -407,14 +431,70 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template): string[] {
       style.marginV   ?? template.marginV,
       style.fontSize  ?? template.fontSize,
     )
+
+    // Typewriter is incompatible with per-word highlight; emit as-is.
     if (template.animation === 'typewriter') {
       events.push(...buildTypewriterEvents(
         text, start, end,
         line.startMs, line.endMs,
         tags
       ))
-    } else {
-      events.push('Dialogue: 0,' + start + ',' + end + ',Default,,0,0,0,,' + animTag + tags + text)
+      continue
+    }
+
+    // ── Base event (Layer 0) ──────────────────────────────────────────────────
+    events.push('Dialogue: 0,' + start + ',' + end + ',Default,,0,0,0,,' + animTag + tags + text)
+
+    if (!needsWordHighlight) continue
+
+    // ── Active word overlay events (Layer 1) ──────────────────────────────────
+    // Find corrected rawSub tokens whose start falls inside this display segment.
+    const segStartMs = line.startMs
+    const segEndMs   = line.endMs
+    const wordTokens = correctedRaw.filter(r =>
+      r.startMs >= segStartMs - 50 && r.startMs <= segEndMs + 50
+    )
+
+    const words = text.split(' ')
+
+    for (let wi = 0; wi < words.length; wi++) {
+      const word  = words[wi]
+      const token = wordTokens[wi]
+      if (!word || !token) continue
+
+      // Clamp word window to the display segment so it never bleeds outside.
+      const wordStartMs = Math.max(token.startMs, segStartMs)
+      const wordEndMs   = Math.min(token.endMs,   segEndMs)
+      if (wordStartMs >= wordEndMs) continue
+
+      const wStart = msToAssTime(wordStartMs)
+      const wEnd   = msToAssTime(wordEndMs)
+
+      const activeColor = hexToAss(template.activeWordColor ?? template.primaryColor)
+      const alignment   = style.alignment ?? template.alignment
+
+      // Always override primary color to activeWordColor.
+      let wordTagContent = `\\an${alignment}\\c${activeColor}`
+
+      if (template.activeWordBgEnabled) {
+        // ASS has no native padding. Simulate it with a thick outline in the bg
+        // color using \xbord/\ybord (independent axis border thickness).
+        // \3c sets the outline/border color; \blur0 keeps it crisp.
+        const bgAss = hexToAss(template.activeWordBgColor ?? '#ffb900')
+        const fs    = style.fontSize ?? template.fontSize ?? 24
+        const padX  = Math.max(1, Math.round((template.activeWordBgPaddingX ?? 0.25) * fs))
+        const padY  = Math.max(1, Math.round((template.activeWordBgPaddingY ?? 0.2)  * fs))
+        wordTagContent += `\\3c${bgAss}\\xbord${padX}\\ybord${padY}\\blur0`
+        // \be1 gives a very slight softening that hints at rounded corners.
+        if (template.activeWordBgRounded) wordTagContent += '\\be1'
+      }
+
+      // Layer 1 renders on top of the base event.
+      // We emit only the single word (not the full line) with \an matching the
+      // base style. libass positions it by its own content, so it won't align
+      // with the full line — this is fine for the color-only case but is an
+      // inherent limitation of the border-as-bg approach for multi-word lines.
+      events.push(`Dialogue: 1,${wStart},${wEnd},Default,,0,0,0,,{${wordTagContent}}${word}`)
     }
   }
 

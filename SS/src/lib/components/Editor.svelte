@@ -66,6 +66,42 @@
     return t
   })())
 
+  // Active word index — qué token whisper está activo en currentTime
+let activeWordIndexDerived = $derived((() => {
+  if (!templateVal?.activeWordBgEnabled && templateVal?.activeWordColor === templateVal?.primaryColor) return -1
+  const raw: any[] = sessionVal?.rawSubs ?? []
+  const tMs = currentTime * 1000
+  return raw.findIndex((sub: any) => {
+    const s = srtToSeconds(sub.start) * 1000
+    const e = srtToSeconds(sub.end)   * 1000
+    return tMs >= s && tMs <= e
+  })
+})())
+
+// Words of the active sub, with indices into rawSubs to check active state
+let activeSubWords = $derived((() => {
+  if (!activeSub || !sessionVal?.rawSubs) return null
+  // Find which rawSubs fall within this display sub's time range
+  const subStartMs = srtToSeconds(activeSub.start) * 1000
+  const subEndMs   = srtToSeconds(activeSub.end)   * 1000
+  const raw: any[] = sessionVal.rawSubs
+  const tokens = raw.filter((s: any) => {
+    const sMs = srtToSeconds(s.start) * 1000
+    return sMs >= subStartMs - 50 && sMs <= subEndMs + 50
+  })
+  // Build display words from previewText aligned to tokens
+  const words = previewText.split(' ')
+  return words.map((w: string, i: number) => ({
+    word: w,
+    isActive: tokens[i] ? (() => {
+      const tMs = currentTime * 1000
+      const s = srtToSeconds(tokens[i].start) * 1000
+      const e = srtToSeconds(tokens[i].end) * 1000
+      return tMs >= s && tMs <= e
+    })() : false
+  }))
+})())
+
   // CSS filter for shadow preview
   let previewShadowStyle = $derived((() => {
     if (!templateVal) return ''
@@ -410,8 +446,43 @@
                   role="separator" aria-label="Resize left"></div>
 
                 <!-- Subtitle text -->
-                <span class="sub-text" style="font-family:{ef?.fontName??'Arial'};font-size:{(ef?.fontSize??24)*previewFontScale}px;font-weight:{ef?.bold?'bold':'normal'};font-style:{ef?.italic?'italic':'normal'};color:{ef?.primaryColor??'#fff'};text-shadow:-{ef?.outline??2}px -{ef?.outline??2}px 0 {ef?.outlineColor??'#000'},{ef?.outline??2}px -{ef?.outline??2}px 0 {ef?.outlineColor??'#000'},-{ef?.outline??2}px {ef?.outline??2}px 0 {ef?.outlineColor??'#000'},{ef?.outline??2}px {ef?.outline??2}px 0 {ef?.outlineColor??'#000'};{previewShadowStyle}{getAnimationStyle(templateVal?.animation)}">
-                  {previewText}
+                <span class="sub-text" style="
+                font-family:{ef?.fontName??'Arial'};
+                font-size:{(ef?.fontSize??24)*previewFontScale}px;
+                font-weight:{ef?.bold?'bold':'normal'};
+                font-style:{ef?.italic?'italic':'normal'};
+                color:{ef?.primaryColor??'#fff'};
+                line-height:{1.35 + (ef?.lineSpacing ?? 0)}em;
+                word-spacing:{ef?.wordSpacing ?? 0}px;
+                text-shadow:-{ef?.outline??2}px -{ef?.outline??2}px 0 {ef?.outlineColor??'#000'},
+                {ef?.outline??2}px -{ef?.outline??2}px 0 {ef?.outlineColor??'#000'},
+                -{ef?.outline??2}px {ef?.outline??2}px 0 {ef?.outlineColor??'#000'},
+                {ef?.outline??2}px {ef?.outline??2}px 0 {ef?.outlineColor??'#000'};
+                {previewShadowStyle}
+                {getAnimationStyle(templateVal?.animation)}">
+  <!-- active word rendering — ver cambio 2 -->
+                  
+                    {#if activeSubWords && (templateVal?.activeWordBgEnabled || templateVal?.activeWordColor !== templateVal?.primaryColor)}
+                    {#each activeSubWords as {word, isActive}, wi}
+                      {#if isActive}
+                        <span style="
+                          color:{templateVal?.activeWordColor ?? ef?.primaryColor};
+                          {templateVal?.activeWordBgEnabled ? `
+                            background:{templateVal?.activeWordBgColor ?? '#ffb900'};
+                            padding:{templateVal?.activeWordBgPaddingY ?? 0.2}em {templateVal?.activeWordBgPaddingX ?? 0.25}em;
+                            border-radius:{templateVal?.activeWordBgRounded ? '0.4em' : '0'};
+                            display:inline;
+                          ` : ''}
+                        ">{word}</span>
+                      {:else}
+                        {word}
+                      {/if}
+                      {#if wi < activeSubWords.length - 1}&nbsp;{/if}
+                    {/each}
+                  {:else}
+                    {previewText}
+                  {/if}
+
                 </span>
 
                 <!-- Right resize handle -->
