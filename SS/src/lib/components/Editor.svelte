@@ -55,25 +55,6 @@
     return chars.slice(0, revealed).join('')
   })())
 
-  // Preview text with textTransform and hidePunctuation applied
-  let previewText = $derived((() => {
-    if (!activeSub || !templateVal) return ''
-    const ef = { ...templateVal, ...(activeSub?.overrides ?? {}) } as any
-    let t = templateVal.animation === 'typewriter' ? (typewriterTextDerived ?? '') : activeSub.text
-    if (ef.textTransform === 'uppercase') t = t.toUpperCase()
-    if (ef.textTransform === 'lowercase') t = t.toLowerCase()
-    if (ef.hidePunctuation) t = t.replace(/[.!?,;:]/g, '')
-    return t
-  })())
-
-  // CSS filter for shadow preview
-  let previewShadowStyle = $derived((() => {
-    if (!templateVal) return ''
-    const ef = { ...templateVal, ...(activeSub?.overrides ?? {}) } as any
-    if (!ef.shadowEnabled) return ''
-    return `filter:drop-shadow(${ef.shadowOffsetX ?? 0}px ${ef.shadowOffsetY ?? 0}px ${ef.shadowBlur ?? 0}px ${ef.shadowColor ?? '#000'});`
-  })())
-
   function getAnimationStyle(a: string|undefined): string {
     if (a==='fade')     return 'animation:sub-fade 300ms ease-in-out forwards;'
     if (a==='pop')      return 'animation:sub-pop 350ms cubic-bezier(0.34,1.56,0.64,1) forwards;'
@@ -129,10 +110,8 @@
 
   const SYSTEM_FONTS = ['Arial','Arial Black','Comic Sans MS','Courier New','Georgia','Impact','Lucida Console','Tahoma','Times New Roman','Trebuchet MS','Verdana','Segoe UI','Calibri','Cambria','Consolas']
   let customFont = $state(false)
-  // Sub-sidebar state: null = main rail visible, 'customize' = sub-sidebar open
-  let subSidebar = $state<'customize' | null>(null)
-  type CSection = 'text' | 'layout' | 'animation'
-  let customSection = $state<CSection>('text')
+  type CSection = 'layout'|'text'|'animation'
+  let customSection = $state('text' as CSection)
   $effect(() => { if (templateVal?.fontName && !SYSTEM_FONTS.includes(templateVal.fontName)) customFont = true })
   function handleFontSelect(e: Event) {
     const v = (e.target as HTMLSelectElement).value
@@ -410,8 +389,8 @@
                   role="separator" aria-label="Resize left"></div>
 
                 <!-- Subtitle text -->
-                <span class="sub-text" style="font-family:{ef?.fontName??'Arial'};font-size:{(ef?.fontSize??24)*previewFontScale}px;font-weight:{ef?.bold?'bold':'normal'};font-style:{ef?.italic?'italic':'normal'};color:{ef?.primaryColor??'#fff'};text-shadow:-{ef?.outline??2}px -{ef?.outline??2}px 0 {ef?.outlineColor??'#000'},{ef?.outline??2}px -{ef?.outline??2}px 0 {ef?.outlineColor??'#000'},-{ef?.outline??2}px {ef?.outline??2}px 0 {ef?.outlineColor??'#000'},{ef?.outline??2}px {ef?.outline??2}px 0 {ef?.outlineColor??'#000'};{previewShadowStyle}{getAnimationStyle(templateVal?.animation)}">
-                  {previewText}
+                <span class="sub-text" style="font-family:{ef?.fontName??'Arial'};font-size:{(ef?.fontSize??24)*previewFontScale}px;font-weight:{ef?.bold?'bold':'normal'};font-style:{ef?.italic?'italic':'normal'};color:{ef?.primaryColor??'#fff'};text-shadow:-{ef?.outline??2}px -{ef?.outline??2}px 0 {ef?.outlineColor??'#000'},{ef?.outline??2}px -{ef?.outline??2}px 0 {ef?.outlineColor??'#000'},-{ef?.outline??2}px {ef?.outline??2}px 0 {ef?.outlineColor??'#000'},{ef?.outline??2}px {ef?.outline??2}px 0 {ef?.outlineColor??'#000'};{getAnimationStyle(templateVal?.animation)}">
+                  {templateVal?.animation==='typewriter' ? (typewriterTextDerived??'') : d.text}
                 </span>
 
                 <!-- Right resize handle -->
@@ -493,280 +472,103 @@
     </div>
 
     <div class="sidebar">
+      <div class="icon-rail">
+        <button class="rail-btn" class:active={activePanel==='styles'} onclick={()=>activePanel='styles'} title="Styles">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+          <span>Styles</span>
+        </button>
+        <button class="rail-btn" class:active={activePanel==='customize'} onclick={()=>activePanel='customize'} title="Customize">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.22 4.22l2.12 2.12M17.66 17.66l2.12 2.12M2 12h3M19 12h3M4.22 19.78l2.12-2.12M17.66 6.34l2.12-2.12"/></svg>
+          <span>Customize</span>
+        </button>
+        <button class="rail-btn" class:active={activePanel==='captions'} onclick={()=>activePanel='captions'} title="Captions">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M7 9h10M7 13h6"/></svg>
+          <span>Captions</span>
+        </button>
+      </div>
 
-      {#if subSidebar === 'customize' && templateVal}
-        <!-- ── Customize sub-sidebar ── -->
-        <div class="sub-sidebar">
+      <div class="panel">
 
-          <!-- Sub-sidebar icon rail -->
-          <div class="icon-rail">
-            <!-- Back button -->
-            <button class="rail-btn rail-back" onclick={() => subSidebar = null} title="Back">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M15 18l-6-6 6-6"/></svg>
-            </button>
-            <div class="rail-divider"></div>
-            <!-- Text sub-tab -->
-            <button class="rail-btn" class:active={customSection==='text'} onclick={()=>customSection='text'} title="Text">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7V4h16v3M9 20h6M12 4v16"/></svg>
-              <span>Text</span>
-            </button>
-            <!-- Layout sub-tab -->
-            <button class="rail-btn" class:active={customSection==='layout'} onclick={()=>customSection='layout'} title="Layout">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
-              <span>Layout</span>
-            </button>
-            <!-- Animation sub-tab -->
-            <button class="rail-btn" class:active={customSection==='animation'} onclick={()=>customSection='animation'} title="Animation">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
-              <span>Anim</span>
-            </button>
+        {#if activePanel==='styles'}
+          <div class="panel-hdr">
+            <span class="panel-title">Styles</span>
+            <button class="hdr-btn" onclick={()=>showSaveDialog=!showSaveDialog}>+ Save</button>
           </div>
-
-          <!-- Sub-sidebar panel content -->
-          <div class="panel">
-
-            {#if customSection === 'text'}
-              <div class="panel-hdr"><span class="panel-title">Typography</span></div>
-              <div class="panel-body">
-
-                <!-- Font family preview card -->
-                <button class="font-preview-card" onclick={() => { customFont = !customFont }}>
-                  <div class="font-preview-label">{templateVal.fontName.toUpperCase()}</div>
-                  <div class="font-preview-sample" style="font-family:{templateVal.fontName};font-weight:{templateVal.bold?'bold':'normal'};font-style:{templateVal.italic?'italic':'normal'};">{templateVal.fontName}</div>
-                </button>
-                <div class="field-row">
-                  <select class="font-select" onchange={handleFontSelect} value={customFont?'__custom__':templateVal.fontName}>
-                    {#each SYSTEM_FONTS as f}<option value={f}>{f}</option>{/each}
-                    <option value="__custom__">Custom…</option>
-                  </select>
-                </div>
-                {#if customFont}
-                  <div class="field-row"><input type="text" value={templateVal.fontName} placeholder="Font name…" onchange={(e)=>updateActiveTemplate({fontName:e.currentTarget.value})} /></div>
-                {/if}
-
-                <!-- Size + Bold/Italic -->
-                <div class="s-lbl">Font Size</div>
-                <div class="field-row">
-                  <input type="range" min="8" max="120" value={templateVal.fontSize} oninput={(e)=>updateActiveTemplate({fontSize:Number(e.currentTarget.value)})} />
-                  <span class="rval">{templateVal.fontSize}</span>
-                </div>
-                <div class="field-row" style="gap:.5rem;margin-top:.1rem">
-                  <button class="tog" class:active={templateVal.bold}   onclick={()=>updateActiveTemplate({bold:!templateVal.bold})}><b>B</b></button>
-                  <button class="tog" class:active={templateVal.italic} onclick={()=>updateActiveTemplate({italic:!templateVal.italic})}><i>I</i></button>
-                </div>
-
-                <!-- Line / Word spacing -->
-                <div class="s-lbl">Line Spacing</div>
-                <div class="field-row">
-                  <input type="range" min="0" max="3" step="0.1" value={(templateVal as any).lineSpacing??0} oninput={(e)=>updateActiveTemplate({lineSpacing:Number(e.currentTarget.value)} as any)} />
-                  <span class="rval">{((templateVal as any).lineSpacing??0).toFixed(1)}</span>
-                </div>
-
-                <div class="s-lbl">Letter Spacing</div>
-                <div class="field-row">
-                  <input type="range" min="0" max="20" step="0.5" value={templateVal.spacing} oninput={(e)=>updateActiveTemplate({spacing:Number(e.currentTarget.value)})} />
-                  <span class="rval">{templateVal.spacing}</span>
-                </div>
-
-                <div class="s-lbl">Word Spacing</div>
-                <div class="field-row">
-                  <input type="range" min="0" max="20" step="0.5" value={(templateVal as any).wordSpacing??0} oninput={(e)=>updateActiveTemplate({wordSpacing:Number(e.currentTarget.value)} as any)} />
-                  <span class="rval">{(templateVal as any).wordSpacing??0}</span>
-                </div>
-
-                <!-- Text alignment -->
-                <div class="s-lbl">Text Alignment</div>
-                <div class="chip-row">
-                  {#each ([[1,'left'],[2,'center'],[3,'right']] as [number,string][]) as [anVal, label]}
-                    {@const isActive = [anVal, anVal+3, anVal+6].includes(templateVal.alignment)}
-                    <button class="chip-btn" class:active={isActive}
-                      onclick={() => {
-                        const row = Math.floor((templateVal.alignment - 1) / 3)
-                        updateActiveTemplate({alignment: (row * 3 + anVal) as any})
-                      }}>
-                      {#if label==='left'}
-                        <svg width="16" height="14" viewBox="0 0 16 14" fill="currentColor"><rect x="0" y="0" width="16" height="2"/><rect x="0" y="4" width="11" height="2"/><rect x="0" y="8" width="13" height="2"/><rect x="0" y="12" width="9" height="2"/></svg>
-                      {:else if label==='center'}
-                        <svg width="16" height="14" viewBox="0 0 16 14" fill="currentColor"><rect x="0" y="0" width="16" height="2"/><rect x="2.5" y="4" width="11" height="2"/><rect x="1.5" y="8" width="13" height="2"/><rect x="3.5" y="12" width="9" height="2"/></svg>
-                      {:else}
-                        <svg width="16" height="14" viewBox="0 0 16 14" fill="currentColor"><rect x="0" y="0" width="16" height="2"/><rect x="5" y="4" width="11" height="2"/><rect x="3" y="8" width="13" height="2"/><rect x="7" y="12" width="9" height="2"/></svg>
-                      {/if}
-                    </button>
-                  {/each}
-                </div>
-
-                <!-- Text Color -->
-                <div class="s-lbl">Text Color</div>
-                <div class="color-row">
-                  <input type="color" value={templateVal.primaryColor} oninput={(e)=>updateActiveTemplate({primaryColor:e.currentTarget.value})} />
-                  <span class="color-value">{templateVal.primaryColor} / 100%</span>
-                </div>
-
-                <!-- Text Transform -->
-                <div class="s-lbl">Text Transform</div>
-                <div class="chip-row">
-                  {#each [['none','off'],['lowercase','lowercase'],['uppercase','UPPERCASE']] as [val, lbl]}
-                    <button class="chip-btn" class:active={((templateVal as any).textTransform ?? 'none') === val}
-                      onclick={()=>updateActiveTemplate({textTransform:val} as any)}>
-                      {lbl}
-                    </button>
-                  {/each}
-                </div>
-
-                <!-- Hide Punctuation toggle -->
-                <label class="toggle-row">
-                  <span class="toggle-lbl">Hide Punctuation</span>
-                  <button class="toggle-switch" class:on={(templateVal as any).hidePunctuation}
-                    onclick={()=>updateActiveTemplate({hidePunctuation:!(templateVal as any).hidePunctuation} as any)}>
-                    <span class="toggle-thumb"></span>
-                  </button>
-                </label>
-
-                <!-- Text Stroke (outline) -->
-                <div class="s-lbl" style="margin-top:.6rem">Effects</div>
-                <div class="section-card">
-                  <div class="section-card-hdr">
-                    <span>Text Stroke</span>
-                    <button class="toggle-switch toggle-switch-sm" class:on={templateVal.outline > 0}
-                      onclick={()=>updateActiveTemplate({outline: templateVal.outline > 0 ? 0 : 2})}>
-                      <span class="toggle-thumb"></span>
-                    </button>
-                  </div>
-                  {#if templateVal.outline > 0}
-                    <div class="color-row">
-                      <input type="color" value={templateVal.outlineColor} oninput={(e)=>updateActiveTemplate({outlineColor:e.currentTarget.value})} />
-                      <span class="color-value">{templateVal.outlineColor} / 100%</span>
-                    </div>
-                    <div class="field-row" style="margin-top:.4rem">
-                      <label>Width</label>
-                      <input type="range" min="0" max="10" step="0.5" value={templateVal.outline} oninput={(e)=>updateActiveTemplate({outline:Number(e.currentTarget.value)})} />
-                      <span class="rval">{templateVal.outline}</span>
-                    </div>
-                  {/if}
-                </div>
-
-                <!-- Text Shadow -->
-                <div class="section-card">
-                  <div class="section-card-hdr">
-                    <span>Text Shadow</span>
-                    <button class="toggle-switch toggle-switch-sm" class:on={(templateVal as any).shadowEnabled}
-                      onclick={()=>updateActiveTemplate({shadowEnabled:!(templateVal as any).shadowEnabled} as any)}>
-                      <span class="toggle-thumb"></span>
-                    </button>
-                  </div>
-                  {#if (templateVal as any).shadowEnabled}
-                    <div class="color-row">
-                      <input type="color" value={(templateVal as any).shadowColor??'#000000'} oninput={(e)=>updateActiveTemplate({shadowColor:e.currentTarget.value} as any)} />
-                      <span class="color-value">{(templateVal as any).shadowColor??'#000000'} / 100%</span>
-                    </div>
-                    <div class="field-row" style="margin-top:.4rem">
-                      <label>Blur</label>
-                      <input type="range" min="0" max="20" step="1" value={(templateVal as any).shadowBlur??0} oninput={(e)=>updateActiveTemplate({shadowBlur:Number(e.currentTarget.value)} as any)} />
-                      <span class="rval">{(templateVal as any).shadowBlur??0}</span>
-                    </div>
-                    <div class="field-row">
-                      <label>Offset X</label>
-                      <input type="range" min="-20" max="20" step="1" value={(templateVal as any).shadowOffsetX??0} oninput={(e)=>updateActiveTemplate({shadowOffsetX:Number(e.currentTarget.value)} as any)} />
-                      <span class="rval">{(templateVal as any).shadowOffsetX??0}</span>
-                    </div>
-                    <div class="field-row">
-                      <label>Offset Y</label>
-                      <input type="range" min="-20" max="20" step="1" value={(templateVal as any).shadowOffsetY??0} oninput={(e)=>updateActiveTemplate({shadowOffsetY:Number(e.currentTarget.value)} as any)} />
-                      <span class="rval">{(templateVal as any).shadowOffsetY??0}</span>
-                    </div>
-                  {/if}
-                </div>
-
-              </div>
-            {/if}
-
-            {#if customSection === 'layout'}
-              <div class="panel-hdr"><span class="panel-title">Layout</span></div>
-              <div class="panel-body">
-                <div class="s-lbl">Position</div>
-                <div class="field-row">
-                  <span style="font-size:.7rem;color:var(--color-text-muted);">Drag the subtitle in the preview to set position.</span>
-                </div>
-                {#if (templateVal as any)?.posX != null}
-                  <div class="field-row" style="margin-top:.3rem">
-                    <span style="font-size:.68rem;color:var(--color-text-muted);">
-                      X: {Math.round((templateVal as any).posX)}% &nbsp; Y: {Math.round((templateVal as any).posY)}%
-                    </span>
-                    <button class="reset-pos-btn" onclick={resetPosition}>↺ Reset</button>
-                  </div>
-                {:else}
-                  <div class="field-row" style="margin-top:.3rem">
-                    <span style="font-size:.68rem;color:var(--color-text-muted);">Default: bottom centre</span>
-                  </div>
-                {/if}
-                <div class="field-row mt"><label>Margin V</label><input type="range" min="0" max="100" value={templateVal.marginV} oninput={(e)=>updateActiveTemplate({marginV:Number(e.currentTarget.value)})} /><span class="rval">{templateVal.marginV}</span></div>
-                <div class="s-lbl">Timing</div>
-                <div class="field-row"><label>Sync</label><input type="range" min="0" max="300" step="10" value={templateVal.syncOffset??50} oninput={(e)=>updateActiveTemplate({syncOffset:Number(e.currentTarget.value)})} /><span class="rval">{templateVal.syncOffset??50}ms</span></div>
-                <div class="field-row"><label>Pause</label><input type="range" min="200" max="800" step="50" value={templateVal.pauseThreshold??500} oninput={(e)=>updateActiveTemplate({pauseThreshold:Number(e.currentTarget.value)})} /><span class="rval">{templateVal.pauseThreshold??500}ms</span></div>
-              </div>
-            {/if}
-
-            {#if customSection === 'animation'}
-              <div class="panel-hdr"><span class="panel-title">Animation</span></div>
-              <div class="panel-body">
-                <div class="s-lbl">Caption transition</div>
-                <div class="anim-grid">
-                  {#each [['none','None'],['fade','Fade'],['pop','Pop'],['slide-up','Slide up'],['typewriter','Typewriter']] as [val,lbl]}
-                    <button class="anim-btn" class:active={templateVal.animation===val} onclick={()=>updateActiveTemplate({animation:val as AnimationMode})}>{lbl}</button>
-                  {/each}
-                </div>
-              </div>
-            {/if}
-
-          </div>
-        </div>
-
-      {:else}
-        <!-- ── Main icon rail ── -->
-        <div class="icon-rail">
-          <button class="rail-btn" class:active={activePanel==='styles'} onclick={()=>activePanel='styles'} title="Styles">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
-            <span>Styles</span>
-          </button>
-          <button class="rail-btn" onclick={() => { subSidebar = 'customize'; customSection = 'text' }} title="Customize">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7V4h16v3M9 20h6M12 4v16"/></svg>
-            <span>Customize</span>
-          </button>
-          <button class="rail-btn" class:active={activePanel==='captions'} onclick={()=>activePanel='captions'} title="Captions">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M7 9h10M7 13h6"/></svg>
-            <span>Captions</span>
-          </button>
-        </div>
-
-        <div class="panel">
-
-          {#if activePanel==='styles'}
-            <div class="panel-hdr">
-              <span class="panel-title">Styles</span>
-              <button class="hdr-btn" onclick={()=>showSaveDialog=!showSaveDialog}>+ Save</button>
-            </div>
-            {#if showSaveDialog}
-              <div class="save-row">
-                <input type="text" bind:value={saveTemplateName} placeholder="Template name..." onkeydown={(e)=>e.key==='Enter'&&handleSaveTemplate()} />
-                <button onclick={handleSaveTemplate}>Save</button>
-                <button onclick={()=>showSaveDialog=false}>✕</button>
-              </div>
-            {/if}
-            <div class="style-grid">
-              {#each templatesVal as t}
-                <button class="style-card" class:active={templateVal?.id===t.id} onclick={()=>setActiveTemplate(t)}>
-                  <div class="style-preview" style="font-family:{t.fontName};color:{t.primaryColor};font-weight:{t.bold?'bold':'normal'};font-style:{t.italic?'italic':'normal'};text-shadow:-{t.outline}px -{t.outline}px 0 {t.outlineColor},{t.outline}px {t.outline}px 0 {t.outlineColor};">Aa</div>
-                  <span class="style-name">{t.name}</span>
-                </button>
-              {/each}
+          {#if showSaveDialog}
+            <div class="save-row">
+              <input type="text" bind:value={saveTemplateName} placeholder="Template name..." onkeydown={(e)=>e.key==='Enter'&&handleSaveTemplate()} />
+              <button onclick={handleSaveTemplate}>Save</button>
+              <button onclick={()=>showSaveDialog=false}>✕</button>
             </div>
           {/if}
+          <div class="style-grid">
+            {#each templatesVal as t}
+              <button class="style-card" class:active={templateVal?.id===t.id} onclick={()=>setActiveTemplate(t)}>
+                <div class="style-preview" style="font-family:{t.fontName};color:{t.primaryColor};font-weight:{t.bold?'bold':'normal'};font-style:{t.italic?'italic':'normal'};text-shadow:-{t.outline}px -{t.outline}px 0 {t.outlineColor},{t.outline}px {t.outline}px 0 {t.outlineColor};">Aa</div>
+                <span class="style-name">{t.name}</span>
+              </button>
+            {/each}
+          </div>
+        {/if}
 
-          {#if activePanel==='captions'}
-            <div class="panel-hdr">
-              <span class="panel-title">Captions</span>
-              <div class="cap-acts"><button class="hdr-btn" onclick={handleExportSRT}>↓ SRT</button><button class="hdr-btn" onclick={handleImportSRT}>↑ SRT</button></div>
-            </div>
+        {#if activePanel==='customize' && templateVal}
+          <div class="panel-hdr"><span class="panel-title">Customize</span></div>
+          <div class="sub-tabs">
+            <button class="sub-tab" class:active={customSection==='layout'} onclick={()=>customSection='layout'}>Layout</button>
+            <button class="sub-tab" class:active={customSection==='text'} onclick={()=>customSection='text'}>Text</button>
+            <button class="sub-tab" class:active={customSection==='animation'} onclick={()=>customSection='animation'}>Animation</button>
+          </div>
+          <div class="panel-body">
+            {#if customSection==='layout'}
+              <div class="s-lbl">Position</div>
+              <div class="field-row">
+                <span style="font-size:.7rem;color:var(--color-text-muted);">Drag the subtitle in the preview to set position.</span>
+              </div>
+              {#if (templateVal as any)?.posX != null}
+                <div class="field-row" style="margin-top:.3rem">
+                  <span style="font-size:.68rem;color:var(--color-text-muted);">
+                    X: {Math.round((templateVal as any).posX)}% &nbsp; Y: {Math.round((templateVal as any).posY)}%
+                  </span>
+                  <button class="reset-pos-btn" onclick={resetPosition}>↺ Reset</button>
+                </div>
+              {:else}
+                <div class="field-row" style="margin-top:.3rem">
+                  <span style="font-size:.68rem;color:var(--color-text-muted);">Default: bottom centre</span>
+                </div>
+              {/if}
+              <div class="field-row mt"><label>Margin V</label><input type="range" min="0" max="100" value={templateVal.marginV} oninput={(e)=>updateActiveTemplate({marginV:Number(e.currentTarget.value)})} /><span class="rval">{templateVal.marginV}</span></div>
+              <div class="s-lbl">Timing</div>
+              <div class="field-row"><label>Sync</label><input type="range" min="0" max="300" step="10" value={templateVal.syncOffset??50} oninput={(e)=>updateActiveTemplate({syncOffset:Number(e.currentTarget.value)})} /><span class="rval">{templateVal.syncOffset??50}ms</span></div>
+              <div class="field-row"><label>Pause</label><input type="range" min="200" max="800" step="50" value={templateVal.pauseThreshold??500} oninput={(e)=>updateActiveTemplate({pauseThreshold:Number(e.currentTarget.value)})} /><span class="rval">{templateVal.pauseThreshold??500}ms</span></div>
+            {/if}
+            {#if customSection==='text'}
+              <div class="s-lbl">Font</div>
+              <div class="field-row"><label>Family</label><select onchange={handleFontSelect} value={customFont?'__custom__':templateVal.fontName}>{#each SYSTEM_FONTS as f}<option value={f}>{f}</option>{/each}<option value="__custom__">Custom...</option></select></div>
+              {#if customFont}<div class="field-row"><label></label><input type="text" value={templateVal.fontName} placeholder="Font name..." onchange={(e)=>updateActiveTemplate({fontName:e.currentTarget.value})} /></div>{/if}
+              <div class="field-row"><label>Size</label><input type="number" min="8" max="120" value={templateVal.fontSize} class="short-in" onchange={(e)=>updateActiveTemplate({fontSize:Number(e.currentTarget.value)})} /><button class="tog" class:active={templateVal.bold} onclick={()=>updateActiveTemplate({bold:!templateVal.bold})}><b>B</b></button><button class="tog" class:active={templateVal.italic} onclick={()=>updateActiveTemplate({italic:!templateVal.italic})}><i>I</i></button></div>
+              <div class="s-lbl">Colors</div>
+              <div class="field-row"><label>Text</label><input type="color" value={templateVal.primaryColor} oninput={(e)=>updateActiveTemplate({primaryColor:e.currentTarget.value})} /><span class="hex">{templateVal.primaryColor}</span></div>
+              <div class="field-row"><label>Outline</label><input type="color" value={templateVal.outlineColor} oninput={(e)=>updateActiveTemplate({outlineColor:e.currentTarget.value})} /><span class="hex">{templateVal.outlineColor}</span></div>
+              <div class="field-row"><label>Outline W</label><input type="range" min="0" max="4" step="0.5" value={templateVal.outline} oninput={(e)=>updateActiveTemplate({outline:Number(e.currentTarget.value)})} /><span class="rval">{templateVal.outline}</span></div>
+              <div class="field-row"><label>Shadow</label><input type="range" min="0" max="4" step="0.5" value={templateVal.shadow} oninput={(e)=>updateActiveTemplate({shadow:Number(e.currentTarget.value)})} /><span class="rval">{templateVal.shadow}</span></div>
+
+            {/if}
+            {#if customSection==='animation'}
+              <div class="s-lbl">Caption transition</div>
+              <div class="anim-grid">
+                {#each [['none','None'],['fade','Fade'],['pop','Pop'],['slide-up','Slide up'],['typewriter','Typewriter']] as [val,lbl]}
+                  <button class="anim-btn" class:active={templateVal.animation===val} onclick={()=>updateActiveTemplate({animation:val as AnimationMode})}>{lbl}</button>
+                {/each}
+              </div>
+            {/if}
+          </div>
+        {/if}
+
+        {#if activePanel==='captions'}
+          <div class="panel-hdr">
+            <span class="panel-title">Captions</span>
+            <div class="cap-acts"><button class="hdr-btn" onclick={handleExportSRT}>↓ SRT</button><button class="hdr-btn" onclick={handleImportSRT}>↑ SRT</button></div>
+          </div>
           <!-- Density slider -->
           <div class="density-row">
             <span class="density-lbl">Segment length</span>
@@ -833,9 +635,8 @@
           </div>
         {/if}
 
-        </div><!-- /.panel -->
-      {/if}<!-- end {#if subSidebar} -->
-    </div><!-- /.sidebar -->
+      </div>
+    </div>
   </div>
 </div>
 
@@ -880,11 +681,7 @@
   .progress-bar{flex:1;height:4px;background:rgba(255,255,255,.3);border-radius:2px;cursor:pointer;position:relative}
   .progress-fill{height:100%;background:var(--color-accent);border-radius:2px;pointer-events:none}
   .sidebar{display:flex;width:320px;flex-shrink:0;border-left:1px solid var(--color-border)}
-  /* Sub-sidebar takes full sidebar width with its own rail */
-  .sub-sidebar{display:flex;width:100%;overflow:hidden}
   .icon-rail{display:flex;flex-direction:column;align-items:center;gap:.25rem;padding:.75rem 0;width:58px;flex-shrink:0;border-right:1px solid var(--color-border);background:var(--color-bg)}
-  .rail-back{color:var(--color-text-muted)!important}
-  .rail-divider{width:32px;height:1px;background:var(--color-border);margin:.25rem 0}
   .rail-btn{display:flex;flex-direction:column;align-items:center;gap:2px;padding:.5rem .25rem;border-radius:8px;border:none;background:transparent;color:var(--color-text-muted);cursor:pointer;width:50px;font-size:.58rem;line-height:1.2;transition:background .15s,color .15s}
   .rail-btn svg{width:20px;height:20px}.rail-btn:hover{background:var(--color-surface-hover);color:var(--color-text)}.rail-btn.active{background:var(--color-accent-subtle);color:var(--color-accent)}
   .panel{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}
@@ -900,7 +697,9 @@
   .save-row{display:flex;gap:.25rem;padding:.35rem .6rem;border-bottom:1px solid var(--color-border);flex-shrink:0}
   .save-row input{flex:1;padding:.22rem .4rem;border-radius:4px;border:1px solid var(--color-border);background:var(--color-bg);color:var(--color-text);font-size:.73rem}
   .save-row button{padding:.22rem .45rem;border-radius:4px;border:1px solid var(--color-border);background:var(--color-surface);color:var(--color-text);font-size:.73rem;cursor:pointer}
-  /* Remove old sub-tabs now replaced by sub-sidebar rail */
+  .sub-tabs{display:flex;border-bottom:1px solid var(--color-border);flex-shrink:0}
+  .sub-tab{flex:1;padding:.42rem 0;font-size:.7rem;border:none;background:transparent;color:var(--color-text-muted);cursor:pointer;border-bottom:2px solid transparent;transition:color .15s,border-color .15s}
+  .sub-tab:hover{color:var(--color-text)}.sub-tab.active{color:var(--color-accent);border-bottom-color:var(--color-accent)}
   .panel-body{flex:1;overflow-y:auto;padding:.55rem .7rem;display:flex;flex-direction:column;gap:.38rem}
   .s-lbl{font-size:.62rem;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--color-text-muted);margin-top:.35rem}
   .mt{margin-top:.35rem}
@@ -968,37 +767,6 @@
   .merge-btn:hover{background:var(--color-accent-subtle);border-color:var(--color-accent);color:var(--color-accent)}
   .insert-btn:hover{background:var(--color-surface-hover);border-color:var(--color-border);color:var(--color-text)}
   
-  /* Font preview card */
-  .font-preview-card{width:100%;padding:.65rem .75rem;border-radius:8px;border:1px solid var(--color-border);background:var(--color-surface);cursor:pointer;text-align:center;transition:border-color .15s;margin-bottom:.25rem}
-  .font-preview-card:hover{border-color:var(--color-text-muted)}
-  .font-preview-label{font-size:.58rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--color-text-muted);margin-bottom:.25rem}
-  .font-preview-sample{font-size:1.35rem;color:var(--color-text);line-height:1.2}
-  .font-select{width:100%;padding:.25rem .4rem;border-radius:5px;border:1px solid var(--color-border);background:var(--color-bg);color:var(--color-text);font-size:.73rem;outline:none}
-  .font-select:focus{border-color:var(--color-accent)}
-  /* Chip row (text align, transform) */
-  .chip-row{display:flex;gap:.35rem}
-  .chip-btn{flex:1;display:flex;align-items:center;justify-content:center;padding:.4rem;border-radius:6px;border:1px solid var(--color-border);background:var(--color-bg);color:var(--color-text-muted);font-size:.7rem;cursor:pointer;transition:all .15s;min-height:32px}
-  .chip-btn:hover{border-color:var(--color-text-muted);color:var(--color-text)}
-  .chip-btn.active{border-color:var(--color-accent);background:var(--color-accent-subtle);color:var(--color-accent)}
-  /* Color row */
-  .color-row{display:flex;align-items:center;gap:.5rem;padding:.4rem .5rem;border-radius:6px;border:1px solid var(--color-border);background:var(--color-surface)}
-  .color-row input[type="color"]{width:32px;height:28px;padding:1px;border:none;border-radius:4px;cursor:pointer;flex-shrink:0;background:none}
-  .color-value{font-size:.72rem;color:var(--color-text-muted);font-family:monospace}
-  /* Toggle row */
-  .toggle-row{display:flex;align-items:center;justify-content:space-between;padding:.3rem 0;cursor:pointer}
-  .toggle-lbl{font-size:.75rem;color:var(--color-text)}
-  /* Toggle switch (shared) */
-  .toggle-switch{width:36px;height:20px;border-radius:10px;border:none;background:var(--color-border);position:relative;cursor:pointer;transition:background .15s;flex-shrink:0}
-  .toggle-switch.on{background:var(--color-accent)}
-  .toggle-thumb{position:absolute;width:14px;height:14px;border-radius:50%;background:white;top:3px;left:3px;transition:transform .15s;box-shadow:0 1px 3px rgba(0,0,0,.3);pointer-events:none}
-  .toggle-switch.on .toggle-thumb{transform:translateX(16px)}
-  .toggle-switch-sm{width:30px;height:17px}
-  .toggle-switch-sm .toggle-thumb{width:11px;height:11px;top:3px;left:3px}
-  .toggle-switch-sm.on .toggle-thumb{transform:translateX(13px)}
-  /* Section cards (stroke/shadow) */
-  .section-card{border:1px solid var(--color-border);border-radius:8px;padding:.55rem .65rem;display:flex;flex-direction:column;gap:.4rem;background:var(--color-surface)}
-  .section-card-hdr{display:flex;align-items:center;justify-content:space-between;font-size:.75rem;color:var(--color-text);font-weight:500}
-  /* Remove old sub-tabs now replaced by sub-sidebar rail */
   @keyframes sub-fade{from{opacity:0}to{opacity:1}}
   @keyframes sub-pop{from{transform:scale(0.5);opacity:0}to{transform:scale(1);opacity:1}}
   @keyframes sub-slide-up{from{transform:translateY(40px);opacity:0}to{transform:translateY(0);opacity:1}}

@@ -173,17 +173,13 @@ function buildStyleLine(name: string, t: EffectiveStyle): string {
   const back      = hexToAss(t.backColor, 128)
   const bold      = t.bold ? -1 : 0
   const italic    = t.italic ? -1 : 0
-  // Shadow depth: use the larger of the two offsets as the ASS shadow value
-  const shadowDepth = t.shadowEnabled
-    ? Math.round(Math.max(Math.abs(t.shadowOffsetX ?? 0), Math.abs(t.shadowOffsetY ?? 0), t.shadow ?? 0))
-    : (t.shadow ?? 0)
   return [
     'Style: ' + name,
     t.fontName, t.fontSize,
     primary, secondary, outline, back,
     bold, italic, 0, 0,
     t.scaleX, t.scaleY, t.spacing, 0,
-    1, t.outline, shadowDepth, t.alignment,
+    1, t.outline, t.shadow, t.alignment,
     t.marginL, t.marginR, t.marginV, 1,
   ].join(',')
 }
@@ -400,12 +396,7 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template): string[] {
     const style      = resolveStyle(template, overrides)
     const start      = srtTimeToAss(line.startSrt)
     const end        = srtTimeToAss(line.endSrt)
-    // Apply text transform and punctuation hiding
-    let rawText = line.text
-    if (template.textTransform === 'uppercase')  rawText = rawText.toUpperCase()
-    if (template.textTransform === 'lowercase')  rawText = rawText.toLowerCase()
-    if (template.hidePunctuation)                rawText = rawText.replace(/[.!?,;:]/g, '')
-    const text       = rawText.trim().replace(/\{/g, '\\{').replace(/\}/g, '\\}')
+    const text       = line.text.replace(/\{/g, '\\{').replace(/\}/g, '\\}')
     const durationMs = line.endMs - line.startMs
     const posTag     = buildPosTag(template)
     const tags       = posTag + buildInlineTags(style, template)
@@ -453,33 +444,29 @@ export function parseSRT(content: string): Subtitle[] {
 
 // ─── Clause / micro-pause extraction ─────────────────────────────────────────
 //
-// Three-level hierarchy that drives the density slider:
+// Three-level hierarchy that drives the density slider, built entirely from
+// timing gaps in whisper's word timestamps. No punctuation is used because
+// whisper often strips it or attaches it inconsistently across versions.
 //
-//   Clause      — words bounded by sentence-ending punctuation (. ! ? , ; :).
-//                 A clause always ends at most ONE punctuation mark, always at
-//                 the very last word. This is the maximum segment size (ratio=1).
+//   Clause      — maximal run of words with no inter-word gap ≥ CLAUSE_CUT_MS.
+//                 This is the maximum segment size (ratio = 1). In practice
+//                 500 ms captures natural sentence-boundary pauses reliably.
 //
-//   Micro-pause — timing gaps ≥ microMs within a clause, used to subdivide it
-//                 when the slider is between 0.5 and 1.
+//   Micro-pause — gap ≥ MICRO_CUT_MS within a clause, used to subdivide it
+//                 when the slider is in the middle range (≈ 0.5).
+//                 80 ms catches brief hesitations within a phrase.
 //
-//   Word        — single token, used when the slider is at 0.
+//   Word        — single token, the minimum unit (ratio = 0).
 //
 // Slider mapping:
 //   ratio = 0.0  → 1 word per segment
-//   ratio = 0.5  → 1 micro-pause group per segment (within each clause)
+//   ratio = 0.5  → 1 micro-pause group per segment
 //   ratio = 1.0  → 1 full clause per segment
 //
-// Between 0 and 0.5 the micro-pause groups are further subdivided proportionally.
-// Between 0.5 and 1 clauses are subdivided into micro-pause groups proportionally.
+// Between anchor points the groups are merged/split proportionally.
 
-// A "clause" is a maximal run of tokens ending in (or at) sentence punctuation.
-// clauseCutMs: hard timing gap that also forces a clause break even without punctuation.
-const CLAUSE_PUNCT   = /[.!?,;:]$/   // last char of rawWord
-const CLAUSE_CUT_MS  = 800           // hard gap → always a new clause
-
-// microCutMs: gap that splits a clause into micro-pause sub-groups.
-// Smaller than clauseCut so micro-pauses are real brief hesitations within a phrase.
-const MICRO_CUT_MS   = 300
+const CLAUSE_CUT_MS = 500   // gap ≥ this → new clause (sentence boundary)
+const MICRO_CUT_MS  = 80    // gap ≥ this within a clause → micro-pause group
 
 export interface PauseGroups {
   clauses: Token[][]        // top level — one entry per clause
@@ -499,7 +486,7 @@ export function extractPauseGroups(rawSubs: Subtitle[]): PauseGroups {
     if (clauseBuf.length === 0) return
     clauses.push([...clauseBuf])
 
-    // Split this clause into micro-pause groups
+    // Split this clause into micro-pause groups by MICRO_CUT_MS gaps
     const mGroups: Token[][] = []
     let mBuf: Token[] = [clauseBuf[0]]
     for (let j = 1; j < clauseBuf.length; j++) {
@@ -518,16 +505,11 @@ export function extractPauseGroups(rawSubs: Subtitle[]): PauseGroups {
   }
 
   for (let i = 0; i < tokens.length; i++) {
-    // Hard timing gap → flush current clause and start a new one
     if (clauseBuf.length > 0) {
       const gap = tokens[i].startMs - clauseBuf[clauseBuf.length - 1].endMs
       if (gap >= CLAUSE_CUT_MS) flushClause()
     }
-
     clauseBuf.push(tokens[i])
-
-    // Punctuation at the end of this token → flush after adding it
-    if (CLAUSE_PUNCT.test(tokens[i].rawWord)) flushClause()
   }
   flushClause()
 
