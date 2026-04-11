@@ -173,13 +173,17 @@ function buildStyleLine(name: string, t: EffectiveStyle): string {
   const back      = hexToAss(t.backColor, 128)
   const bold      = t.bold ? -1 : 0
   const italic    = t.italic ? -1 : 0
+  // Shadow depth: use the larger of the two offsets as the ASS shadow value
+  const shadowDepth = t.shadowEnabled
+    ? Math.round(Math.max(Math.abs(t.shadowOffsetX ?? 0), Math.abs(t.shadowOffsetY ?? 0), t.shadow ?? 0))
+    : (t.shadow ?? 0)
   return [
     'Style: ' + name,
     t.fontName, t.fontSize,
     primary, secondary, outline, back,
     bold, italic, 0, 0,
     t.scaleX, t.scaleY, t.spacing, 0,
-    1, t.outline, t.shadow, t.alignment,
+    1, t.outline, shadowDepth, t.alignment,
     t.marginL, t.marginR, t.marginV, 1,
   ].join(',')
 }
@@ -396,7 +400,12 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template): string[] {
     const style      = resolveStyle(template, overrides)
     const start      = srtTimeToAss(line.startSrt)
     const end        = srtTimeToAss(line.endSrt)
-    const text       = line.text.replace(/\{/g, '\\{').replace(/\}/g, '\\}')
+    // Apply text transform and punctuation hiding
+    let rawText = line.text
+    if (template.textTransform === 'uppercase')  rawText = rawText.toUpperCase()
+    if (template.textTransform === 'lowercase')  rawText = rawText.toLowerCase()
+    if (template.hidePunctuation)                rawText = rawText.replace(/[.!?,;:]/g, '')
+    const text       = rawText.trim().replace(/\{/g, '\\{').replace(/\}/g, '\\}')
     const durationMs = line.endMs - line.startMs
     const posTag     = buildPosTag(template)
     const tags       = posTag + buildInlineTags(style, template)

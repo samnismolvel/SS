@@ -26,6 +26,17 @@ export interface Template {
   marginV: number        // vertical margin in pixels
   marginL: number
   marginR: number
+  // Typography extras
+  lineSpacing: number      // extra line height multiplier (0 = tight, 1 = normal, 2 = loose)
+  wordSpacing: number      // extra word spacing in script-space units
+  textTransform: 'none' | 'uppercase' | 'lowercase'
+  hidePunctuation: boolean // strip . , ! ? ; : from rendered text
+  // Shadow (separate from ASS built-in shadow depth)
+  shadowEnabled: boolean
+  shadowColor: string      // hex
+  shadowBlur: number       // 0–20
+  shadowOffsetX: number    // -20–20
+  shadowOffsetY: number    // -20–20
   // Timing tuning (user-adjustable in Advanced panel)
   syncOffset: number      // ms to shift subtitle starts forward (whisper early-onset correction)
   pauseThreshold: number  // inter-word gap ms that triggers a line break (clause boundary)
