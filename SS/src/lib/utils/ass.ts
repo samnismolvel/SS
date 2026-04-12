@@ -439,9 +439,10 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template, rawSubs: Su
       startMs:  srtToMs(sub.start),
       endMs:    srtToMs(sub.end),
     }))
-  // For word tokens we only shift by syncOffset — we do NOT chain-clamp via
-  // applyTimingCorrection because that distorts per-word windows relative to
-  // each other (it enforces minimum gaps which is wrong for overlapping tokens).
+  // Simple offset shift for word tokens — do NOT use applyTimingCorrection here.
+  // applyTimingCorrection enforces a minimum-gap chain between events, which is
+  // correct for display segments but wrong for per-word tokens: it compresses
+  // word windows relative to each other and makes t0cs/t1cs unreliable.
   const correctedRaw: Line[] = needsWordHighlight
     ? rawLines.map(r => ({
         ...r,
@@ -487,21 +488,22 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template, rawSubs: Su
       continue
     }
 
-    // Active word highlight — per-word Layer 1 events.
+    // Active word highlight — Layer 0 (base) + Layer 1 per-word events.
     //
-    // Strategy: emit the base line once at Layer 0 for the full segment duration
-    // (all words in base color, always visible). Then for each word's timing
-    // window, emit a Layer 1 event containing the FULL line text, but with all
-    // words made invisible (lpha&HFF&a&HFF&) except the active word which
-    // gets active color + optional background border. Layer 1 renders on top of
-    // Layer 0, so the active word appears highlighted while non-active words are
-    // provided by Layer 0 underneath.
+    // Layer 0: full line in base color, full segment duration. Always visible.
+    // Layer 1 per word: same full line text, but all words invisible (\alpha&HFF&
+    // \3a&HFF&) except the active word, which is shown in activeWordColor plus
+    // an optional background via \3c + \bord. Because L1 has the full line text,
+    // libass positions it identically to L0 — no \pos math required.
     //
-    // This is the only approach that works reliably in libass without \pos
-    // coordinate calculation: since Layer 1 contains the full line text it is
-    // positioned identically to Layer 0 by the renderer's collision engine.
+    // Word window: extended from token.endMs to the NEXT token's startMs (or
+    // segEndMs), so the highlight covers the perceptual gap between words and
+    // does not flash off too quickly.
+    //
+    // Background: \3c sets border color to bgColor, \bord sets uniform thickness.
+    // \bord is used (not \xbord/\ybord) for universal libass/FFmpeg compatibility.
 
-    // Layer 0: base line, full duration
+    // Layer 0: base line, full segment duration
     events.push('Dialogue: 0,' + start + ',' + end + ',Default,,0,0,0,,' + animTag + tags + text)
 
     const segStartMs = line.startMs
@@ -510,10 +512,8 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template, rawSubs: Su
       r.startMs >= segStartMs - 50 && r.startMs <= segEndMs + 50
     )
     const words = text.split(' ')
-
     const activeColor = hexToAss(template.activeWordColor ?? template.primaryColor)
-
-    // Invisible tag: hides fill + outline completely
+    // Invisible: hide fill (\alpha) + outline (\3a) completely
     const INVIS = '{\\alpha&HFF&\\3a&HFF&}'
 
     for (let wi = 0; wi < words.length; wi++) {
@@ -521,44 +521,41 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template, rawSubs: Su
       if (!token) continue
 
       const wordStartMs = Math.max(token.startMs, segStartMs)
-      const wordEndMs   = Math.min(token.endMs,   segEndMs)
+      // Extend window to next token start (not just phonetic end of this token).
+      // This prevents the highlight from vanishing in the gap between words.
+      const nextStart   = wordTokens[wi + 1]?.startMs ?? segEndMs
+      const wordEndMs   = Math.min(nextStart, segEndMs)
       if (wordStartMs >= wordEndMs) continue
 
       const wStart = msToAssTime(wordStartMs)
       const wEnd   = msToAssTime(wordEndMs)
 
-      // Build the full line with all words invisible except word[wi].
-      // Each word slot is either: INVIS + word (hidden), or activeTag + word + restoreTag (visible).
-      // We track whether we're currently in "invisible" state to avoid redundant tag spam.
+      // Build the full line: invisible words except word[wi]
       let lineText = ''
-      let inInvis = false
+      let inInvis  = false
       for (let wj = 0; wj < words.length; wj++) {
         if (wj > 0) lineText += ' '
         if (wj === wi) {
-          // Active word: switch to visible + active color + optional bg
-          let activeTag = '{\\c' + activeColor + '\\alpha&H00&\\3a&H00&'
+          // Active word tag: visible, active color, optional background
+          let atag = '{\\c' + activeColor + '\\alpha&H00&\\1a&H00&\\3a&H00&'
           if (template.activeWordBgEnabled) {
             const bgAss = hexToAss(template.activeWordBgColor ?? '#ffb900')
             const fs    = style.fontSize ?? template.fontSize ?? 24
-            const padX  = Math.max(1, Math.round((template.activeWordBgPaddingX ?? 0.25) * fs))
-            const padY  = Math.max(1, Math.round((template.activeWordBgPaddingY ?? 0.2)  * fs))
-            activeTag += '\\3c' + bgAss + '\\xbord' + padX + '\\ybord' + padY
-            if (template.activeWordBgRounded) activeTag += '\\be1'
+            // \bord value = paddingY * fontSize. Must override any outline from
+            // the style so the bg border is thick enough to be visible.
+            const bord  = Math.max(2, Math.round((template.activeWordBgPaddingY ?? 0.2) * fs))
+            atag += '\\3c' + bgAss + '\\bord' + bord
           }
-          activeTag += '}'
-          lineText += activeTag + words[wj]
+          atag += '}'
+          lineText += atag + words[wj]
           inInvis = false
-          // If there are more words after this, switch back to invisible
+          // Restore invisible for subsequent words
           if (wj < words.length - 1) {
             lineText += '{\\alpha&HFF&\\3a&HFF&}'
             inInvis = true
           }
         } else {
-          // Non-active word: ensure invisible state is active
-          if (!inInvis) {
-            lineText += INVIS
-            inInvis = true
-          }
+          if (!inInvis) { lineText += INVIS; inInvis = true }
           lineText += words[wj]
         }
       }
