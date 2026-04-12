@@ -198,6 +198,36 @@ function buildInlineTags(style: EffectiveStyle, base: Template): string {
   return tags.length > 0 ? '{' + tags.join('') + '}' : ''
 }
 
+// ─── Text pre-processing ────────────────────────────────────────────────────────────────────────────
+//
+// Applies textTransform, hidePunctuation, and wordSpacing to segment text
+// before it is written into a Dialogue event.
+//
+// wordSpacing: ASS has no word-spacing property. We approximate it by inserting
+// extra ASS hard-space characters (\h) between words. Each \h is one em-width
+// non-breaking space in libass. wordSpacing (0–20 from the UI slider) is rounded
+// to a whole number of \h chars, clamped to 8 maximum.
+//
+// lineSpacing: No ASS equivalent exists. Affecting line height in libass requires
+// \fscx/\fscy which distorts glyphs. lineSpacing is therefore preview-only.
+
+function applyTextTransforms(rawText: string, style: EffectiveStyle): string {
+  let t = rawText
+
+  if (style.textTransform === 'uppercase') t = t.toUpperCase()
+  else if (style.textTransform === 'lowercase') t = t.toLowerCase()
+
+  if (style.hidePunctuation) t = t.replace(/[.!?,;:]/g, '')
+
+  const extraSpaces = Math.min(8, Math.max(0, Math.round(style.wordSpacing ?? 0)))
+  if (extraSpaces > 0) {
+    const pad = '\\h'.repeat(extraSpaces)
+    t = t.split(/\s+/).join(' ' + pad)
+  }
+
+  return t
+}
+
 // ─── Main ASS builder ─────────────────────────────────────────────────────────
 
 export function buildAss(subtitles: Subtitle[], template: Template, rawSubs: Subtitle[] = []): string {
@@ -420,11 +450,14 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template, rawSubs: Su
     const style      = resolveStyle(template, overrides)
     const start      = srtTimeToAss(line.startSrt)
     const end        = srtTimeToAss(line.endSrt)
-    const text       = line.text.replace(/\{/g, '\\{').replace(/\}/g, '\\}')
-    const durationMs = line.endMs - line.startMs
-    const posTag     = buildPosTag(template)
-    const tags       = posTag + buildInlineTags(style, template)
-    const animTag    = buildAnimationTag(
+    // Apply text transforms (textTransform, hidePunctuation, wordSpacing).
+    // Escape ASS special chars AFTER transforms so \h hard-spaces survive.
+    const transformed = applyTextTransforms(line.text, style)
+    const text        = transformed.replace(/\{/g, '\\{').replace(/\}/g, '\\}')
+    const durationMs  = line.endMs - line.startMs
+    const posTag      = buildPosTag(template)
+    const tags        = posTag + buildInlineTags(style, template)
+    const animTag     = buildAnimationTag(
       template.animation,
       durationMs,
       style.alignment ?? template.alignment,
@@ -442,60 +475,70 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template, rawSubs: Su
       continue
     }
 
-    // ── Base event (Layer 0) ──────────────────────────────────────────────────
-    events.push('Dialogue: 0,' + start + ',' + end + ',Default,,0,0,0,,' + animTag + tags + text)
+    if (!needsWordHighlight) {
+      events.push('Dialogue: 0,' + start + ',' + end + ',Default,,0,0,0,,' + animTag + tags + text)
+      continue
+    }
 
-    if (!needsWordHighlight) continue
+    // Active word highlight via \t() animated color switches within a single event.
+    //
+    // We emit ONE Dialogue event for the full line. Each word is wrapped in \t()
+    // tag pairs that switch \c to activeWordColor exactly at the word's start time
+    // and revert at its end time. Because it is a single event the line stays
+    // fully visible and correctly positioned; only the color (and optionally the
+    // border/bg) changes per word.
+    //
+    // \t() timestamps are in centiseconds (cs) relative to the event's own start.
+    // Background simulation: \3c sets the outline/border color + \xbord/\ybord
+    // for independent axis thickness gives a filled pill shape in libass.
 
-    // ── Active word overlay events (Layer 1) ──────────────────────────────────
-    // Find corrected rawSub tokens whose start falls inside this display segment.
     const segStartMs = line.startMs
     const segEndMs   = line.endMs
     const wordTokens = correctedRaw.filter(r =>
       r.startMs >= segStartMs - 50 && r.startMs <= segEndMs + 50
     )
-
     const words = text.split(' ')
 
+    const baseColor   = hexToAss(style.primaryColor ?? template.primaryColor)
+    const activeColor = hexToAss(template.activeWordColor ?? template.primaryColor)
+    const baseBord    = style.outline ?? template.outline ?? 2
+    const baseOutline = hexToAss(style.outlineColor ?? template.outlineColor)
+
+    let karaokeText = ''
     for (let wi = 0; wi < words.length; wi++) {
       const word  = words[wi]
       const token = wordTokens[wi]
-      if (!word || !token) continue
+      if (wi > 0) karaokeText += ' '
 
-      // Clamp word window to the display segment so it never bleeds outside.
+      if (!token) {
+        karaokeText += '{\\c' + baseColor + '}' + word
+        continue
+      }
+
       const wordStartMs = Math.max(token.startMs, segStartMs)
       const wordEndMs   = Math.min(token.endMs,   segEndMs)
-      if (wordStartMs >= wordEndMs) continue
-
-      const wStart = msToAssTime(wordStartMs)
-      const wEnd   = msToAssTime(wordEndMs)
-
-      const activeColor = hexToAss(template.activeWordColor ?? template.primaryColor)
-      const alignment   = style.alignment ?? template.alignment
-
-      // Always override primary color to activeWordColor.
-      let wordTagContent = `\\an${alignment}\\c${activeColor}`
+      const t0cs = Math.round((wordStartMs - segStartMs) / 10)
+      const t1cs = Math.round((wordEndMs   - segStartMs) / 10)
 
       if (template.activeWordBgEnabled) {
-        // ASS has no native padding. Simulate it with a thick outline in the bg
-        // color using \xbord/\ybord (independent axis border thickness).
-        // \3c sets the outline/border color; \blur0 keeps it crisp.
         const bgAss = hexToAss(template.activeWordBgColor ?? '#ffb900')
         const fs    = style.fontSize ?? template.fontSize ?? 24
         const padX  = Math.max(1, Math.round((template.activeWordBgPaddingX ?? 0.25) * fs))
         const padY  = Math.max(1, Math.round((template.activeWordBgPaddingY ?? 0.2)  * fs))
-        wordTagContent += `\\3c${bgAss}\\xbord${padX}\\ybord${padY}\\blur0`
-        // \be1 gives a very slight softening that hints at rounded corners.
-        if (template.activeWordBgRounded) wordTagContent += '\\be1'
+        const beTag = template.activeWordBgRounded ? '\\be1' : '\\be0'
+        karaokeText +=
+          '{\\t(' + t0cs + ',' + t0cs + ',\\c' + activeColor + '\\3c' + bgAss + '\\xbord' + padX + '\\ybord' + padY + beTag + ')' +
+          '\\t(' + t1cs + ',' + t1cs + ',\\c' + baseColor + '\\3c' + baseOutline + '\\xbord' + baseBord + '\\ybord' + baseBord + '\\be0)}' +
+          word
+      } else {
+        karaokeText +=
+          '{\\t(' + t0cs + ',' + t0cs + ',\\c' + activeColor + ')' +
+          '\\t(' + t1cs + ',' + t1cs + ',\\c' + baseColor + ')}' +
+          word
       }
-
-      // Layer 1 renders on top of the base event.
-      // We emit only the single word (not the full line) with \an matching the
-      // base style. libass positions it by its own content, so it won't align
-      // with the full line — this is fine for the color-only case but is an
-      // inherent limitation of the border-as-bg approach for multi-word lines.
-      events.push(`Dialogue: 1,${wStart},${wEnd},Default,,0,0,0,,{${wordTagContent}}${word}`)
     }
+
+    events.push('Dialogue: 0,' + start + ',' + end + ',Default,,0,0,0,,' + animTag + tags + karaokeText)
   }
 
   return events
