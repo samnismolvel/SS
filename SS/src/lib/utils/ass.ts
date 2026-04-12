@@ -490,42 +490,59 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template, rawSubs: Su
 
     // Active word highlight — Layer 0 (base) + Layer 1 per-word events.
     //
-    // Layer 0: full line in base color, full segment duration. Always visible.
-    // Layer 1 per word: same full line text, but all words invisible (\alpha&HFF&
-    // \3a&HFF&) except the active word, which is shown in activeWordColor plus
-    // an optional background via \3c + \bord. Because L1 has the full line text,
-    // libass positions it identically to L0 — no \pos math required.
+    // The key insight from testing: libass collision avoidance moves Layer 1
+    // events away from Layer 0 events at the same position UNLESS both events
+    // have an explicit \pos tag with identical coordinates. With matching \pos,
+    // libass treats them as anchored and overlays them exactly.
     //
-    // Word window: extended from token.endMs to the NEXT token's startMs (or
-    // segEndMs), so the highlight covers the perceptual gap between words and
-    // does not flash off too quickly.
+    // So: both Layer 0 and all Layer 1 events get the same \pos computed from
+    // the style's alignment and marginV. Layer 1 events contain the full line
+    // text with all non-active words made invisible (\alpha&HFF&\3a&HFF&), so
+    // only the active word is visible on top of the Layer 0 base.
     //
-    // Background: \3c sets border color to bgColor, \bord sets uniform thickness.
-    // \bord is used (not \xbord/\ybord) for universal libass/FFmpeg compatibility.
+    // \pos coordinates in 384×288 ASS script space:
+    //   an1-3 (bottom): y = SCRIPT_H - marginV
+    //   an4-6 (middle): y = SCRIPT_H / 2
+    //   an7-9 (top):    y = marginV
+    //   an1,4,7 (left):   x = marginL
+    //   an2,5,8 (center): x = SCRIPT_W / 2
+    //   an3,6,9 (right):  x = SCRIPT_W - marginR
 
-    // Layer 0: base line, full segment duration
-    events.push('Dialogue: 0,' + start + ',' + end + ',Default,,0,0,0,,' + animTag + tags + text)
+    // alignPosTag: explicit \pos anchoring both Layer 0 and Layer 1 at identical
+    // coordinates, disabling libass collision avoidance between the two layers.
+    // If the user dragged the subtitle, posTag already contains \an5\pos — reuse it.
+    // Otherwise compute from the style's alignment and margins.
+    const al  = style.alignment ?? template.alignment
+    const mV  = style.marginV   ?? template.marginV
+    const mL  = style.marginL   ?? template.marginL
+    const mR  = style.marginR   ?? template.marginR
+    const apX = [1,4,7].includes(al) ? mL
+              : [3,6,9].includes(al) ? SCRIPT_W - mR
+              : SCRIPT_W / 2
+    const apY = al <= 3 ? SCRIPT_H - mV
+              : al <= 6 ? SCRIPT_H / 2
+              : mV
+    const alignPosTag = posTag !== ''
+      ? posTag
+      : `{\an${al}\pos(${Math.round(apX)},${Math.round(apY)})}`
+
+    // Layer 0: base line anchored with explicit \pos
+    events.push('Dialogue: 0,' + start + ',' + end + ',Default,,0,0,0,,' + animTag + alignPosTag + tags + text)
 
     const segStartMs = line.startMs
     const segEndMs   = line.endMs
     const wordTokens = correctedRaw.filter(r =>
       r.startMs >= segStartMs - 50 && r.startMs <= segEndMs + 50
     )
-    const words = text.split(' ')
+    const words       = text.split(' ')
     const activeColor = hexToAss(template.activeWordColor ?? template.primaryColor)
-    // Invisible: hide fill (\alpha) + outline (\3a) completely.
-    // Also reset \xbord/\ybord when bg is enabled so the bg border
-    // from the active word doesn't carry over to invisible neighbours.
-    const _bordReset = template.activeWordBgEnabled ? '\\xbord0\\ybord0' : ''
-    const INVIS = '{\\alpha&HFF&\\3a&HFF&' + _bordReset + '}'
+    const INVIS       = '{\\alpha&HFF&\\3a&HFF&}'
 
     for (let wi = 0; wi < words.length; wi++) {
       const token = wordTokens[wi]
       if (!token) continue
 
       const wordStartMs = Math.max(token.startMs, segStartMs)
-      // Extend window to next token start (not just phonetic end of this token).
-      // This prevents the highlight from vanishing in the gap between words.
       const nextStart   = wordTokens[wi + 1]?.startMs ?? segEndMs
       const wordEndMs   = Math.min(nextStart, segEndMs)
       if (wordStartMs >= wordEndMs) continue
@@ -533,40 +550,25 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template, rawSubs: Su
       const wStart = msToAssTime(wordStartMs)
       const wEnd   = msToAssTime(wordEndMs)
 
-      // Build the full line: invisible words except word[wi]
+      // Build full line text: non-active words invisible, active word styled.
       let lineText = ''
       let inInvis  = false
       for (let wj = 0; wj < words.length; wj++) {
         if (wj > 0) lineText += ' '
         if (wj === wi) {
-          // Active word tag: visible, active color, optional background
           let atag = '{\\c' + activeColor + '\\alpha&H00&\\1a&H00&\\3a&H00&'
           if (template.activeWordBgEnabled) {
-            const bgAss  = hexToAss(template.activeWordBgColor ?? '#ffb900')
-            const fs     = style.fontSize ?? template.fontSize ?? 24
-            // Use \xbord/\ybord for independent horizontal/vertical padding.
-            // These extend the border outward from each glyph edge, effectively
-            // creating a pill-shaped background behind the word.
-            // Values are in script-space pixels (384x288 coordinate system).
-            // paddingX/Y are 0-1 em-relative fractions from the UI; multiply
-            // by fontSize to convert to script pixels, then halve (border
-            // extends both sides, so half per side matches the em-based preview).
-            const xbord = Math.max(3, Math.round((template.activeWordBgPaddingX ?? 0.25) * fs * 0.6))
-            const ybord = Math.max(2, Math.round((template.activeWordBgPaddingY ?? 0.2)  * fs * 0.6))
-            // \be softens the border edges — rounded corners when enabled.
-            const be    = (template.activeWordBgRounded) ? 2 : 0
-            atag += '\\3c' + bgAss + '\\xbord' + xbord + '\\ybord' + ybord
-            if (be > 0) atag += '\\be' + be
+            const bgAss = hexToAss(template.activeWordBgColor ?? '#ffb900')
+            const fs    = style.fontSize ?? template.fontSize ?? 24
+            const bord  = Math.max(2, Math.round((template.activeWordBgPaddingY ?? 0.2) * fs))
+            atag += '\\3c' + bgAss + '\\bord' + bord
           }
           atag += '}'
           lineText += atag + words[wj]
           inInvis = false
-          // Restore invisible for subsequent words.
-          // Also reset \xbord/\ybord so the background border from the
-          // active word doesn't bleed onto invisible neighbouring words.
           if (wj < words.length - 1) {
-            const bordReset = template.activeWordBgEnabled ? '\\xbord0\\ybord0' : ''
-            lineText += '{\\alpha&HFF&\\3a&HFF&' + bordReset + '}'
+            // Reset bord before going invisible so bg border doesn't bleed
+            lineText += '{\\bord2\\alpha&HFF&\\3a&HFF&}'
             inInvis = true
           }
         } else {
@@ -575,7 +577,10 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template, rawSubs: Su
         }
       }
 
-      events.push('Dialogue: 1,' + wStart + ',' + wEnd + ',Default,,0,0,0,,' + tags + lineText)
+      // Layer 1 gets the SAME posTag as Layer 0 — this is critical.
+      // Without matching \pos, libass collision avoidance displaces Layer 1
+      // vertically away from Layer 0, breaking the overlay.
+      events.push('Dialogue: 1,' + wStart + ',' + wEnd + ',Default,,0,0,0,,' + alignPosTag + tags + lineText)
     }
   }
 
