@@ -66,41 +66,43 @@
     return t
   })())
 
-  // Active word index — qué token whisper está activo en currentTime
-let activeWordIndexDerived = $derived((() => {
-  if (!templateVal?.activeWordBgEnabled && templateVal?.activeWordColor === templateVal?.primaryColor) return -1
-  const raw: any[] = sessionVal?.rawSubs ?? []
-  const tMs = currentTime * 1000
-  return raw.findIndex((sub: any) => {
-    const s = srtToSeconds(sub.start) * 1000
-    const e = srtToSeconds(sub.end)   * 1000
-    return tMs >= s && tMs <= e
-  })
-})())
-
-// Words of the active sub, with indices into rawSubs to check active state
-let activeSubWords = $derived((() => {
-  if (!activeSub || !sessionVal?.rawSubs) return null
-  // Find which rawSubs fall within this display sub's time range
-  const subStartMs = srtToSeconds(activeSub.start) * 1000
-  const subEndMs   = srtToSeconds(activeSub.end)   * 1000
-  const raw: any[] = sessionVal.rawSubs
-  const tokens = raw.filter((s: any) => {
-    const sMs = srtToSeconds(s.start) * 1000
-    return sMs >= subStartMs - 50 && sMs <= subEndMs + 50
-  })
-  // Build display words from previewText aligned to tokens
-  const words = previewText.split(' ')
-  return words.map((w: string, i: number) => ({
-    word: w,
-    isActive: tokens[i] ? (() => {
-      const tMs = currentTime * 1000
-      const s = srtToSeconds(tokens[i].start) * 1000
-      const e = srtToSeconds(tokens[i].end) * 1000
+  // Active word index — which rawSub token is active at currentTime
+  let activeWordIndexDerived = $derived((() => {
+    if (!templateVal?.activeWordBgEnabled && templateVal?.activeWordColor === templateVal?.primaryColor) return -1
+    const raw: any[] = sessionVal?.rawSubs ?? []
+    const tMs = currentTime * 1000
+    return raw.findIndex((sub: any) => {
+      const s = srtToSeconds(sub.start) * 1000
+      const e = srtToSeconds(sub.end)   * 1000
       return tMs >= s && tMs <= e
-    })() : false
-  }))
-})())
+    })
+  })())
+
+  // Words of the active sub, with indices into rawSubs to check active state
+  let activeSubWords = $derived((() => {
+    const needsHighlight = templateVal?.activeWordBgEnabled ||
+      (templateVal?.activeWordColor && templateVal.activeWordColor !== templateVal.primaryColor)
+    if (!activeSub || !sessionVal?.rawSubs || !needsHighlight) return null
+    // Find which rawSubs fall within this display sub's time range
+    const subStartMs = srtToSeconds(activeSub.start) * 1000
+    const subEndMs   = srtToSeconds(activeSub.end)   * 1000
+    const raw: any[] = sessionVal.rawSubs
+    const tokens = raw.filter((s: any) => {
+      const sMs = srtToSeconds(s.start) * 1000
+      return sMs >= subStartMs - 50 && sMs <= subEndMs + 50
+    })
+    // Build display words from previewText aligned to tokens
+    const words = previewText.split(' ')
+    return words.map((w: string, i: number) => ({
+      word: w,
+      isActive: tokens[i] ? (() => {
+        const tMs = currentTime * 1000
+        const s = srtToSeconds(tokens[i].start) * 1000
+        const e = srtToSeconds(tokens[i].end) * 1000
+        return tMs >= s && tMs <= e
+      })() : false
+    }))
+  })())
 
   // CSS filter for shadow preview
   let previewShadowStyle = $derived((() => {
@@ -212,7 +214,7 @@ let activeSubWords = $derived((() => {
   }
   function handleBurn() {
     if (!sessionVal||!templateVal) return
-    onburn({videoPath:sessionVal.videoPath,outputPath:sessionVal.outputPath,assContent:buildAss(sessionVal.subtitles,templateVal)})
+    onburn({videoPath:sessionVal.videoPath,outputPath:sessionVal.outputPath,assContent:buildAss(sessionVal.subtitles,templateVal,sessionVal.rawSubs??[])})
   }
   function getFileName(p:string) { return p.split(/[\\/]/).pop()??p }
 
@@ -462,7 +464,7 @@ let activeSubWords = $derived((() => {
                 {getAnimationStyle(templateVal?.animation)}">
   <!-- active word rendering — ver cambio 2 -->
                   
-                    {#if activeSubWords && (templateVal?.activeWordBgEnabled || templateVal?.activeWordColor !== templateVal?.primaryColor)}
+                    {#if activeSubWords && (templateVal?.activeWordBgEnabled || (templateVal?.activeWordColor && templateVal.activeWordColor !== templateVal.primaryColor))}
                     {#each activeSubWords as {word, isActive}, wi}
                       {#if isActive}
                         <span style="

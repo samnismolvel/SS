@@ -407,7 +407,7 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template, rawSubs: Su
 
   const needsWordHighlight =
     template.activeWordBgEnabled ||
-    (template.activeWordColor ?? template.primaryColor) !== template.primaryColor
+    (template.activeWordColor !== template.primaryColor)
 
   // Convert each display subtitle into a Line for timing correction.
   const lines: Line[] = subtitles
