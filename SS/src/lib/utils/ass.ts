@@ -513,8 +513,11 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template, rawSubs: Su
     )
     const words = text.split(' ')
     const activeColor = hexToAss(template.activeWordColor ?? template.primaryColor)
-    // Invisible: hide fill (\alpha) + outline (\3a) completely
-    const INVIS = '{\\alpha&HFF&\\3a&HFF&}'
+    // Invisible: hide fill (\alpha) + outline (\3a) completely.
+    // Also reset \xbord/\ybord when bg is enabled so the bg border
+    // from the active word doesn't carry over to invisible neighbours.
+    const _bordReset = template.activeWordBgEnabled ? '\\xbord0\\ybord0' : ''
+    const INVIS = '{\\alpha&HFF&\\3a&HFF&' + _bordReset + '}'
 
     for (let wi = 0; wi < words.length; wi++) {
       const token = wordTokens[wi]
@@ -539,19 +542,31 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template, rawSubs: Su
           // Active word tag: visible, active color, optional background
           let atag = '{\\c' + activeColor + '\\alpha&H00&\\1a&H00&\\3a&H00&'
           if (template.activeWordBgEnabled) {
-            const bgAss = hexToAss(template.activeWordBgColor ?? '#ffb900')
-            const fs    = style.fontSize ?? template.fontSize ?? 24
-            // \bord value = paddingY * fontSize. Must override any outline from
-            // the style so the bg border is thick enough to be visible.
-            const bord  = Math.max(2, Math.round((template.activeWordBgPaddingY ?? 0.2) * fs))
-            atag += '\\3c' + bgAss + '\\bord' + bord
+            const bgAss  = hexToAss(template.activeWordBgColor ?? '#ffb900')
+            const fs     = style.fontSize ?? template.fontSize ?? 24
+            // Use \xbord/\ybord for independent horizontal/vertical padding.
+            // These extend the border outward from each glyph edge, effectively
+            // creating a pill-shaped background behind the word.
+            // Values are in script-space pixels (384x288 coordinate system).
+            // paddingX/Y are 0-1 em-relative fractions from the UI; multiply
+            // by fontSize to convert to script pixels, then halve (border
+            // extends both sides, so half per side matches the em-based preview).
+            const xbord = Math.max(3, Math.round((template.activeWordBgPaddingX ?? 0.25) * fs * 0.6))
+            const ybord = Math.max(2, Math.round((template.activeWordBgPaddingY ?? 0.2)  * fs * 0.6))
+            // \be softens the border edges — rounded corners when enabled.
+            const be    = (template.activeWordBgRounded) ? 2 : 0
+            atag += '\\3c' + bgAss + '\\xbord' + xbord + '\\ybord' + ybord
+            if (be > 0) atag += '\\be' + be
           }
           atag += '}'
           lineText += atag + words[wj]
           inInvis = false
-          // Restore invisible for subsequent words
+          // Restore invisible for subsequent words.
+          // Also reset \xbord/\ybord so the background border from the
+          // active word doesn't bleed onto invisible neighbouring words.
           if (wj < words.length - 1) {
-            lineText += '{\\alpha&HFF&\\3a&HFF&}'
+            const bordReset = template.activeWordBgEnabled ? '\\xbord0\\ybord0' : ''
+            lineText += '{\\alpha&HFF&\\3a&HFF&' + bordReset + '}'
             inInvis = true
           }
         } else {
