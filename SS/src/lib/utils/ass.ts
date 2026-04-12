@@ -439,8 +439,15 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template, rawSubs: Su
       startMs:  srtToMs(sub.start),
       endMs:    srtToMs(sub.end),
     }))
-  const correctedRaw = needsWordHighlight && rawLines.length > 0
-    ? applyTimingCorrection(rawLines, syncOffset)
+  // For word tokens we only shift by syncOffset — we do NOT chain-clamp via
+  // applyTimingCorrection because that distorts per-word windows relative to
+  // each other (it enforces minimum gaps which is wrong for overlapping tokens).
+  const correctedRaw: Line[] = needsWordHighlight
+    ? rawLines.map(r => ({
+        ...r,
+        startMs: r.startMs + syncOffset,
+        endMs:   r.endMs   + syncOffset,
+      }))
     : []
 
   for (let i = 0; i < corrected.length; i++) {
@@ -480,17 +487,22 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template, rawSubs: Su
       continue
     }
 
-    // Active word highlight via \t() animated color switches within a single event.
+    // Active word highlight — per-word Layer 1 events.
     //
-    // We emit ONE Dialogue event for the full line. Each word is wrapped in \t()
-    // tag pairs that switch \c to activeWordColor exactly at the word's start time
-    // and revert at its end time. Because it is a single event the line stays
-    // fully visible and correctly positioned; only the color (and optionally the
-    // border/bg) changes per word.
+    // Strategy: emit the base line once at Layer 0 for the full segment duration
+    // (all words in base color, always visible). Then for each word's timing
+    // window, emit a Layer 1 event containing the FULL line text, but with all
+    // words made invisible (lpha&HFF&a&HFF&) except the active word which
+    // gets active color + optional background border. Layer 1 renders on top of
+    // Layer 0, so the active word appears highlighted while non-active words are
+    // provided by Layer 0 underneath.
     //
-    // \t() timestamps are in centiseconds (cs) relative to the event's own start.
-    // Background simulation: \3c sets the outline/border color + \xbord/\ybord
-    // for independent axis thickness gives a filled pill shape in libass.
+    // This is the only approach that works reliably in libass without \pos
+    // coordinate calculation: since Layer 1 contains the full line text it is
+    // positioned identically to Layer 0 by the renderer's collision engine.
+
+    // Layer 0: base line, full duration
+    events.push('Dialogue: 0,' + start + ',' + end + ',Default,,0,0,0,,' + animTag + tags + text)
 
     const segStartMs = line.startMs
     const segEndMs   = line.endMs
@@ -499,46 +511,60 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template, rawSubs: Su
     )
     const words = text.split(' ')
 
-    const baseColor   = hexToAss(style.primaryColor ?? template.primaryColor)
     const activeColor = hexToAss(template.activeWordColor ?? template.primaryColor)
-    const baseBord    = style.outline ?? template.outline ?? 2
-    const baseOutline = hexToAss(style.outlineColor ?? template.outlineColor)
 
-    let karaokeText = ''
+    // Invisible tag: hides fill + outline completely
+    const INVIS = '{\\alpha&HFF&\\3a&HFF&}'
+
     for (let wi = 0; wi < words.length; wi++) {
-      const word  = words[wi]
       const token = wordTokens[wi]
-      if (wi > 0) karaokeText += ' '
-
-      if (!token) {
-        karaokeText += '{\\c' + baseColor + '}' + word
-        continue
-      }
+      if (!token) continue
 
       const wordStartMs = Math.max(token.startMs, segStartMs)
       const wordEndMs   = Math.min(token.endMs,   segEndMs)
-      const t0cs = Math.round((wordStartMs - segStartMs) / 10)
-      const t1cs = Math.round((wordEndMs   - segStartMs) / 10)
+      if (wordStartMs >= wordEndMs) continue
 
-      if (template.activeWordBgEnabled) {
-        const bgAss = hexToAss(template.activeWordBgColor ?? '#ffb900')
-        const fs    = style.fontSize ?? template.fontSize ?? 24
-        const padX  = Math.max(1, Math.round((template.activeWordBgPaddingX ?? 0.25) * fs))
-        const padY  = Math.max(1, Math.round((template.activeWordBgPaddingY ?? 0.2)  * fs))
-        const beTag = template.activeWordBgRounded ? '\\be1' : '\\be0'
-        karaokeText +=
-          '{\\t(' + t0cs + ',' + t0cs + ',\\c' + activeColor + '\\3c' + bgAss + '\\xbord' + padX + '\\ybord' + padY + beTag + ')' +
-          '\\t(' + t1cs + ',' + t1cs + ',\\c' + baseColor + '\\3c' + baseOutline + '\\xbord' + baseBord + '\\ybord' + baseBord + '\\be0)}' +
-          word
-      } else {
-        karaokeText +=
-          '{\\t(' + t0cs + ',' + t0cs + ',\\c' + activeColor + ')' +
-          '\\t(' + t1cs + ',' + t1cs + ',\\c' + baseColor + ')}' +
-          word
+      const wStart = msToAssTime(wordStartMs)
+      const wEnd   = msToAssTime(wordEndMs)
+
+      // Build the full line with all words invisible except word[wi].
+      // Each word slot is either: INVIS + word (hidden), or activeTag + word + restoreTag (visible).
+      // We track whether we're currently in "invisible" state to avoid redundant tag spam.
+      let lineText = ''
+      let inInvis = false
+      for (let wj = 0; wj < words.length; wj++) {
+        if (wj > 0) lineText += ' '
+        if (wj === wi) {
+          // Active word: switch to visible + active color + optional bg
+          let activeTag = '{\\c' + activeColor + '\\alpha&H00&\\3a&H00&'
+          if (template.activeWordBgEnabled) {
+            const bgAss = hexToAss(template.activeWordBgColor ?? '#ffb900')
+            const fs    = style.fontSize ?? template.fontSize ?? 24
+            const padX  = Math.max(1, Math.round((template.activeWordBgPaddingX ?? 0.25) * fs))
+            const padY  = Math.max(1, Math.round((template.activeWordBgPaddingY ?? 0.2)  * fs))
+            activeTag += '\\3c' + bgAss + '\\xbord' + padX + '\\ybord' + padY
+            if (template.activeWordBgRounded) activeTag += '\\be1'
+          }
+          activeTag += '}'
+          lineText += activeTag + words[wj]
+          inInvis = false
+          // If there are more words after this, switch back to invisible
+          if (wj < words.length - 1) {
+            lineText += '{\\alpha&HFF&\\3a&HFF&}'
+            inInvis = true
+          }
+        } else {
+          // Non-active word: ensure invisible state is active
+          if (!inInvis) {
+            lineText += INVIS
+            inInvis = true
+          }
+          lineText += words[wj]
+        }
       }
-    }
 
-    events.push('Dialogue: 0,' + start + ',' + end + ',Default,,0,0,0,,' + animTag + tags + karaokeText)
+      events.push('Dialogue: 1,' + wStart + ',' + wEnd + ',Default,,0,0,0,,' + tags + lineText)
+    }
   }
 
   return events

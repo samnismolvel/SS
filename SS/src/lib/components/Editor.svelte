@@ -466,20 +466,7 @@
                   
                     {#if activeSubWords && (templateVal?.activeWordBgEnabled || (templateVal?.activeWordColor && templateVal.activeWordColor !== templateVal.primaryColor))}
                     {#each activeSubWords as {word, isActive}, wi}
-                      {#if isActive}
-                        <span style="
-                          color:{templateVal?.activeWordColor ?? ef?.primaryColor};
-                          {templateVal?.activeWordBgEnabled ? `
-                            background:{templateVal?.activeWordBgColor ?? '#ffb900'};
-                            padding:{templateVal?.activeWordBgPaddingY ?? 0.2}em {templateVal?.activeWordBgPaddingX ?? 0.25}em;
-                            border-radius:{templateVal?.activeWordBgRounded ? '0.4em' : '0'};
-                            display:inline;
-                          ` : ''}
-                        ">{word}</span>
-                      {:else}
-                        {word}
-                      {/if}
-                      {#if wi < activeSubWords.length - 1}&nbsp;{/if}
+                      {#if wi > 0}&nbsp;{/if}{#if isActive}<span class="aw-active-word" style="color:{templateVal?.activeWordColor ?? ef?.primaryColor};{templateVal?.activeWordBgEnabled ? 'background:' + (templateVal?.activeWordBgColor ?? '#ffb900') + ';padding:' + (templateVal?.activeWordBgPaddingY ?? 0.2) + 'em ' + (templateVal?.activeWordBgPaddingX ?? 0.25) + 'em;border-radius:' + (templateVal?.activeWordBgRounded ? '0.4em' : '0') + ';' : ''}">{word}</span>{:else}{word}{/if}
                     {/each}
                   {:else}
                     {previewText}
@@ -1160,6 +1147,7 @@
   .aw-preview{display:flex;align-items:center;justify-content:center;padding:.9rem .5rem;border-radius:8px;background:#111;gap:.25em;margin-bottom:.25rem}
   .aw-prev-word{font-size:1.3rem;font-weight:700;line-height:1.3;white-space:nowrap}
   .aw-prev-bg{display:inline;line-height:inherit}
+  .aw-active-word{display:inline;line-height:inherit;white-space:nowrap}
   /* Remove old sub-tabs now replaced by sub-sidebar rail */
   @keyframes sub-fade{from{opacity:0}to{opacity:1}}
   @keyframes sub-pop{from{transform:scale(0.5);opacity:0}to{transform:scale(1);opacity:1}}
