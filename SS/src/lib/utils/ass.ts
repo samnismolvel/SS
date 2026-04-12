@@ -184,6 +184,22 @@ function buildStyleLine(name: string, t: EffectiveStyle): string {
   ].join(',')
 }
 
+function buildActiveBgStyleLine(t: Template, bgColor: string, textColor: string): string {
+  // BorderStyle 3 = opaque box. BackColour is the box fill color.
+  // Outline and Shadow set to 0 — the box itself IS the background.
+  const bold   = t.bold   ? -1 : 0
+  const italic = t.italic ? -1 : 0
+  return [
+    'Style: ActiveBg',
+    t.fontName, t.fontSize,
+    textColor, textColor, '&H00000000', bgColor,
+    bold, italic, 0, 0,
+    t.scaleX, t.scaleY, t.spacing, 0,
+    3, 0, 0, t.alignment,
+    t.marginL, t.marginR, t.marginV, 1,
+  ].join(',')
+}
+
 function buildInlineTags(style: EffectiveStyle, base: Template): string {
   const tags: string[] = []
   if (style.fontName     !== base.fontName)     tags.push('\\fn' + style.fontName)
@@ -246,6 +262,14 @@ export function buildAss(subtitles: Subtitle[], template: Template, rawSubs: Sub
     'Alignment, MarginL, MarginR, MarginV, Encoding'
   )
   lines.push(buildStyleLine('Default', template))
+  // ActiveBg style: BorderStyle 3 = opaque box background. Used by Layer 1
+  // active word events when activeWordBgEnabled is true. BackColour sets the
+  // box color. Outline=0, Shadow=0 so only the fill + box are visible.
+  if (template.activeWordBgEnabled) {
+    const bgColor   = hexToAss(template.activeWordBgColor ?? '#ffb900')
+    const textColor = hexToAss(template.activeWordColor ?? template.primaryColor)
+    lines.push(buildActiveBgStyleLine(template, bgColor, textColor))
+  }
   lines.push('')
   lines.push('[Events]')
   lines.push('Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text')
@@ -559,25 +583,24 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template, rawSubs: Su
       const wStart = msToAssTime(wordStartMs)
       const wEnd   = msToAssTime(wordEndMs)
 
-      // Build full line text: non-active words invisible, active word styled.
+      // Build full line text: non-active words invisible, active word visible.
+      // When activeWordBgEnabled: Layer 1 uses the 'ActiveBg' style (BorderStyle 3
+      // = opaque box). libass only draws the box around visible characters, so
+      // making non-active words invisible (lpha&HFF&) means the box covers only
+      // the active word — exactly a pill-shaped background behind it.
+      // When bg is disabled: Layer 1 uses 'Default' style, active word colored.
       let lineText = ''
       let inInvis  = false
+      const activeStyleName = template.activeWordBgEnabled ? 'ActiveBg' : 'Default'
+
       for (let wj = 0; wj < words.length; wj++) {
         if (wj > 0) lineText += ' '
         if (wj === wi) {
-          let atag = '{\\c' + activeColor + '\\alpha&H00&\\1a&H00&\\3a&H00&'
-          if (template.activeWordBgEnabled) {
-            const bgAss = hexToAss(template.activeWordBgColor ?? '#ffb900')
-            const fs    = style.fontSize ?? template.fontSize ?? 24
-            const bord  = Math.max(2, Math.round((template.activeWordBgPaddingY ?? 0.2) * fs))
-            atag += '\\3c' + bgAss + '\\bord' + bord
-          }
-          atag += '}'
-          lineText += atag + words[wj]
+          // Active word: fully visible with active color
+          lineText += '{\\alpha&H00&}' + words[wj]
           inInvis = false
           if (wj < words.length - 1) {
-            // Reset bord before going invisible so bg border doesn't bleed
-            lineText += '{\\bord2\\alpha&HFF&\\3a&HFF&}'
+            lineText += '{\\alpha&HFF&}'
             inInvis = true
           }
         } else {
@@ -586,10 +609,7 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template, rawSubs: Su
         }
       }
 
-      // Layer 1 gets the SAME posTag as Layer 0 — this is critical.
-      // Without matching \pos, libass collision avoidance displaces Layer 1
-      // vertically away from Layer 0, breaking the overlay.
-      events.push('Dialogue: 1,' + wStart + ',' + wEnd + ',Default,,0,0,0,,' + alignPosTag + tagsNoAn + lineText)
+      events.push('Dialogue: 1,' + wStart + ',' + wEnd + ',' + activeStyleName + ',,0,0,0,,' + alignPosTag + tagsNoAn + lineText)
     }
   }
 
