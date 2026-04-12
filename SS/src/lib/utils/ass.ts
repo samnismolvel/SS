@@ -609,7 +609,12 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template, rawSubs: Su
         }
       }
 
-      events.push('Dialogue: 1,' + wStart + ',' + wEnd + ',' + activeStyleName + ',,0,0,0,,' + alignPosTag + tagsNoAn + lineText)
+      // Layer 1: when using ActiveBg style, do NOT pass tagsNoAn — any inline
+      // ord or c tag would override BorderStyle 3 back to a plain outline,
+      // destroying the opaque box background. The ActiveBg style already has
+      // the correct font, color, and box settings baked in from buildActiveBgStyleLine.
+      const l1tags = template.activeWordBgEnabled ? alignPosTag : alignPosTag + tagsNoAn
+      events.push('Dialogue: 1,' + wStart + ',' + wEnd + ',' + activeStyleName + ',,0,0,0,,' + l1tags + lineText)
     }
   }
 
