@@ -583,41 +583,56 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template, rawSubs: Su
       const wStart = msToAssTime(wordStartMs)
       const wEnd   = msToAssTime(wordEndMs)
 
-      // Build full line text: non-active words invisible, active word visible.
-      // When activeWordBgEnabled: Layer 1 uses the 'ActiveBg' style (BorderStyle 3
-      // = opaque box). libass only draws the box around visible characters, so
-      // making non-active words invisible (lpha&HFF&) means the box covers only
-      // the active word — exactly a pill-shaped background behind it.
-      // When bg is disabled: Layer 1 uses 'Default' style, active word colored.
-      let lineText = ''
-      let inInvis  = false
-      const activeStyleName = template.activeWordBgEnabled ? 'ActiveBg' : 'Default'
+      if (template.activeWordBgEnabled) {
+        // ── Background mode ──────────────────────────────────────────────────
+        // BorderStyle 3 (opaque box) draws behind ALL glyphs in the event,
+        // including fully-transparent ones — so the full-line approach would
+        // produce a box spanning the entire line, not just the active word.
+        //
+        // Fix: emit the active word ALONE as the L1 text, positioned with
+        // \an5\pos(wordCentreX, apY) so the box is sized to that word only.
+        // wordCentreX is estimated from the word's character-midpoint ratio
+        // within the line (no font metrics needed — libass sizes the box).
+        const totalChars  = words.join(' ').length
+        const prefixChars = words.slice(0, wi).join(' ').length + (wi > 0 ? 1 : 0)
+        const wordChars   = words[wi].length
+        const midRatio    = totalChars > 0 ? (prefixChars + wordChars / 2) / totalChars : 0.5
 
-      for (let wj = 0; wj < words.length; wj++) {
-        if (wj > 0) lineText += ' '
-        if (wj === wi) {
-          // Active word: fully visible with active color
-          lineText += '{\\alpha&H00&}' + words[wj]
-          inInvis = false
-          if (wj < words.length - 1) {
-            lineText += '{\\alpha&HFF&}'
-            inInvis = true
+        const isLeft   = [1,4,7].includes(al)
+        const isRight  = [3,6,9].includes(al)
+        // Estimate line extent using 70% of script width as a conservative proxy
+        const estLineW    = SCRIPT_W * 0.70
+        const lineStartX  = isLeft  ? apX
+                          : isRight ? apX - estLineW
+                          : apX - estLineW / 2          // centre-anchored
+        const wordCentreX = Math.round(Math.max(4, Math.min(SCRIPT_W - 4, lineStartX + midRatio * estLineW)))
+
+        const wordPosTag = '{\\an5\\pos(' + wordCentreX + ',' + Math.round(apY) + ')}'
+        events.push('Dialogue: 1,' + wStart + ',' + wEnd + ',ActiveBg,,0,0,0,,' + wordPosTag + words[wi])
+
+      } else {
+        // ── Colour-only mode ─────────────────────────────────────────────────
+        // Full-line approach: all words present, non-active ones invisible.
+        // Keeps the line positioned identically to Layer 0.
+        let lineText = ''
+        let inInvis  = false
+
+        for (let wj = 0; wj < words.length; wj++) {
+          if (wj > 0) lineText += ' '
+          if (wj === wi) {
+            lineText += '{\\c' + activeColor + '\\alpha&H00&}' + words[wj]
+            inInvis = false
+            if (wj < words.length - 1) { lineText += '{\\alpha&HFF&}'; inInvis = true }
+          } else {
+            if (!inInvis) { lineText += INVIS; inInvis = true }
+            lineText += words[wj]
           }
-        } else {
-          if (!inInvis) { lineText += INVIS; inInvis = true }
-          lineText += words[wj]
         }
-      }
 
-      // Layer 1: when using ActiveBg style, do NOT pass tagsNoAn — any inline
-      // ord or c tag would override BorderStyle 3 back to a plain outline,
-      // destroying the opaque box background. The ActiveBg style already has
-      // the correct font, color, and box settings baked in from buildActiveBgStyleLine.
-      const l1tags = template.activeWordBgEnabled ? alignPosTag : alignPosTag + tagsNoAn
-      events.push('Dialogue: 1,' + wStart + ',' + wEnd + ',' + activeStyleName + ',,0,0,0,,' + l1tags + lineText)
+        events.push('Dialogue: 1,' + wStart + ',' + wEnd + ',Default,,0,0,0,,' + alignPosTag + tagsNoAn + lineText)
+      }
     }
   }
-
   return events
 }
 
@@ -843,4 +858,5 @@ export function serializeSRT(subtitles: Subtitle[]): string {
   return subtitles
     .map(s => `${s.index}\n${s.start} --> ${s.end}\n${s.text}`)
     .join('\n\n') + '\n'
+
 }
