@@ -1,32 +1,5 @@
 import type { Template, Subtitle, AnimationMode } from '../types'
 
-function estimateTextWidth(text: string, fontSize: number): number {
-  // Heurística típica: ancho ≈ 0.55–0.65 del fontSize por carácter
-  // Ajusta si tu fuente cambia
-  const avgFactor = 0.6
-
-  let width = 0
-  for (const ch of text) {
-    if (ch === ' ') width += fontSize * 0.35
-    else if (/[ilI.,']/i.test(ch)) width += fontSize * 0.3
-    else if (/[mwMW]/.test(ch)) width += fontSize * 0.9
-    else width += fontSize * avgFactor
-  }
-
-  return width
-}
-
-function computeWordOffset(words: string[], index: number, fontSize: number): number {
-  const before = words.slice(0, index).join(' ')
-  const beforeWidth = estimateTextWidth(before, fontSize)
-
-  // + espacio entre palabras
-  const spaceWidth = fontSize * 0.35
-  const extraSpaces = index > 0 ? spaceWidth : 0
-
-  return beforeWidth + extraSpaces
-}
-
 // ─── Color helpers ────────────────────────────────────────────────────────────
 
 export function hexToAss(hex: string, alpha = 0): string {
@@ -222,7 +195,7 @@ function buildActiveBgStyleLine(t: Template, bgColor: string, textColor: string)
     textColor, textColor, '&H00000000', bgColor,
     bold, italic, 0, 0,
     t.scaleX, t.scaleY, t.spacing, 0,
-    3, 0, 0, t.alignment,
+    3, 3, 0, t.alignment,
     t.marginL, t.marginR, t.marginV, 1,
   ].join(',')
 }
@@ -579,9 +552,6 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template, rawSubs: Su
       ? posTag
       : '{\\an' + al + '\\pos(' + Math.round(apX) + ',' + Math.round(apY) + ')}'
 
-    const baseX = Math.round(apX)
-    const baseY = Math.round(apY)
-    const fontSize = style.fontSize ?? template.fontSize
     // Strip any \an tag from buildInlineTags output — alignPosTag already sets it,
     // and a duplicate \an after \pos would override the position anchor.
     const tagsNoAn = tags.replace(/\{([^}]*)\\an\d([^}]*)\}/g, (_, pre, post) => {
@@ -621,34 +591,16 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template, rawSubs: Su
       // When bg is disabled: Layer 1 uses 'Default' style, active word colored.
       const activeStyleName = template.activeWordBgEnabled ? 'ActiveBg' : 'Default'
 
-      // palabra activa
+// SOLO la palabra activa
       const activeWord = words[wi]
 
-      // métricas base
-      const fontSize = style.fontSize ?? template.fontSize
-
-      // calcular offset horizontal
-      const offset = computeWordOffset(words, wi, fontSize)
-
-      // ancho total de la línea (para centrar correctamente)
-      const fullWidth = estimateTextWidth(words.join(' '), fontSize)
-
-      // compensación por centrado (MUY importante)
-      const centeredOffset = offset - fullWidth / 2
-
-      // posición final de la palabra
-      const wordX = Math.round(apX + centeredOffset)
-      const wordY = Math.round(apY)
-
-      // construir \pos específico para esta palabra
-      const posTagWord = '{\\an' + al + '\\pos(' + wordX + ',' + wordY + ')}'
-
       // ⚠️ IMPORTANTE:
-      // - NO usar tagsNoAn si usas ActiveBg (rompe BorderStyle=3)
-      // - SI no hay fondo, puedes mantener estilos inline
+      // usamos alignPosTag para mantener alineación exacta con Layer 0
+      // NO usamos \alpha ni reconstruimos la línea
+
       const l1tags = template.activeWordBgEnabled
-        ? posTagWord
-        : posTagWord + tagsNoAn
+        ? alignPosTag
+        : alignPosTag + tagsNoAn
 
       events.push(
         'Dialogue: 1,' +
