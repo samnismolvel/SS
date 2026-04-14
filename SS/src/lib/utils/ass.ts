@@ -566,36 +566,14 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template, rawSubs: Su
       return inner ? '{' + inner + '}' : ''
     })
 
+    events.push(
+      'Dialogue: 0,' +
+      start + ',' + end + ',Default,,0,0,0,,' +
+      alignPosTag + animTag + tagsNoAn +
+      text
+    )
 
-    for (let wi = 0; wi < words.length; wi++) {
-      const token = wordTokens[wi]
-      if (!token) continue
-
-      const wordStartMs = Math.max(token.startMs, segStartMs)
-      const nextStart   = wordTokens[wi + 1]?.startMs ?? segEndMs
-      const wordEndMs   = Math.min(nextStart, segEndMs)
-      if (wordStartMs >= wordEndMs) continue
-
-      const wStart = msToAssTime(wordStartMs)
-      const wEnd   = msToAssTime(wordEndMs)
-
-      let baseText = ''
-      for (let i = 0; i < words.length; i++) {
-        if (i > 0) baseText += ' '
-        if (i === wi) {
-          baseText += '{\\alpha&HFF&}' + words[i] + '{\\alpha&H00&}'
-        } else {
-          baseText += words[i]
-        }
-      }
-
-      events.push(
-        'Dialogue: 0,' +
-        wStart + ',' + wEnd + ',Default,,0,0,0,,' +
-        animTag + alignPosTag + tagsNoAn +
-        baseText
-      )
-    }
+    
 
     // Strip any \an tag from buildInlineTags output — alignPosTag already sets it,
     // and a duplicate \an after \pos would override the position anchor.
