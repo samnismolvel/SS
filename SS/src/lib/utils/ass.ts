@@ -566,16 +566,7 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template, rawSubs: Su
       return inner ? '{' + inner + '}' : ''
     })
 
-    events.push(
-      'Dialogue: 0,' +
-      start + ',' + end + ',Default,,0,0,0,,' +
-      alignPosTag + animTag + tagsNoAn +
-      text
-    )
-
-    
-
-    // Strip any \an tag from buildInlineTags output — alignPosTag already sets it,
+        // Strip any \an tag from buildInlineTags output — alignPosTag already sets it,
     // and a duplicate \an after \pos would override the position anchor.
     
 
@@ -605,6 +596,23 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template, rawSubs: Su
       // making non-active words invisible (lpha&HFF&) means the box covers only
       // the active word — exactly a pill-shaped background behind it.
       // When bg is disabled: Layer 1 uses 'Default' style, active word colored.
+      let baseText = ''
+      for (let i = 0; i < words.length; i++) {
+        if (i > 0) baseText += ' '
+        if (i === wi) {
+          baseText += '{\\alpha&HFF&}' + words[i] + '{\\alpha&H00&}'
+        } else {
+          baseText += words[i]
+        }
+      }
+
+      events.push(
+        'Dialogue: 0,' +
+        wStart + ',' + wEnd + ',Default,,0,0,0,,' +
+        alignPosTag + animTag + tagsNoAn +
+        baseText
+      )
+
       const activeStyleName = template.activeWordBgEnabled ? 'ActiveBg' : 'Default'
 
 // SOLO la palabra activa
