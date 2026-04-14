@@ -184,22 +184,6 @@ function buildStyleLine(name: string, t: EffectiveStyle): string {
   ].join(',')
 }
 
-function buildActiveBgStyleLine(t: Template, bgColor: string, textColor: string): string {
-  // BorderStyle 3 = opaque box. BackColour is the box fill color.
-  // Outline and Shadow set to 0 — the box itself IS the background.
-  const bold   = t.bold   ? -1 : 0
-  const italic = t.italic ? -1 : 0
-  return [
-    'Style: ActiveBg',
-    t.fontName, t.fontSize,
-    textColor, textColor, '&H00000000', bgColor,
-    bold, italic, 0, 0,
-    t.scaleX, t.scaleY, t.spacing, 0,
-    3, 0, 0, t.alignment,
-    t.marginL, t.marginR, t.marginV, 1,
-  ].join(',')
-}
-
 function buildInlineTags(style: EffectiveStyle, base: Template): string {
   const tags: string[] = []
   if (style.fontName     !== base.fontName)     tags.push('\\fn' + style.fontName)
@@ -262,14 +246,49 @@ export function buildAss(subtitles: Subtitle[], template: Template, rawSubs: Sub
     'Alignment, MarginL, MarginR, MarginV, Encoding'
   )
   lines.push(buildStyleLine('Default', template))
-  // ActiveBg style: BorderStyle 3 = opaque box background. Used by Layer 1
-  // active word events when activeWordBgEnabled is true. BackColour sets the
-  // box color. Outline=0, Shadow=0 so only the fill + box are visible.
+
+  // ActiveWord style — BorderStyle=3 gives a filled BackColour box behind the text.
+  // This is universally supported by all libass/FFmpeg versions.
+  // Only emitted when the user has enabled active word background.
   if (template.activeWordBgEnabled) {
-    const bgColor   = hexToAss(template.activeWordBgColor ?? '#ffb900')
-    const textColor = hexToAss(template.activeWordColor ?? template.primaryColor)
-    lines.push(buildActiveBgStyleLine(template, bgColor, textColor))
+    const bgColor      = hexToAss(template.activeWordBgColor ?? '#ffb900', 0)
+    const activeColor  = hexToAss(template.activeWordColor  ?? template.primaryColor)
+    const bold         = template.bold   ? -1 : 0
+    const italic       = template.italic ? -1 : 0
+    lines.push([
+      'Style: ActiveWord',
+      template.fontName, template.fontSize,
+      activeColor,           // PrimaryColour  — word text color
+      activeColor,           // SecondaryColour
+      bgColor,               // OutlineColour  — unused in BorderStyle=3 but required
+      bgColor,               // BackColour     — THIS is the box color in BorderStyle=3
+      bold, italic, 0, 0,
+      template.scaleX, template.scaleY, template.spacing, 0,
+      3,                     // BorderStyle=3  — filled background box ← the key change
+      0, 0,                  // Outline=0, Shadow=0 (box handles the bg)
+      template.alignment,
+      template.marginL, template.marginR, template.marginV, 1,
+    ].join(','))
+  } else if (template.activeWordColor !== template.primaryColor) {
+    // Color-only highlight — still needs an ActiveWord style, BorderStyle=1
+    const activeColor = hexToAss(template.activeWordColor ?? template.primaryColor)
+    const bold        = template.bold   ? -1 : 0
+    const italic      = template.italic ? -1 : 0
+    lines.push([
+      'Style: ActiveWord',
+      template.fontName, template.fontSize,
+      activeColor,
+      activeColor,
+      hexToAss(template.outlineColor),
+      hexToAss(template.backColor, 128),
+      bold, italic, 0, 0,
+      template.scaleX, template.scaleY, template.spacing, 0,
+      1, template.outline, template.shadow,
+      template.alignment,
+      template.marginL, template.marginR, template.marginV, 1,
+    ].join(','))
   }
+
   lines.push('')
   lines.push('[Events]')
   lines.push('Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text')
@@ -431,7 +450,7 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template, rawSubs: Su
 
   const needsWordHighlight =
     template.activeWordBgEnabled ||
-    (template.activeWordColor !== template.primaryColor)
+    (template.activeWordColor ?? template.primaryColor) !== template.primaryColor
 
   // Convert each display subtitle into a Line for timing correction.
   const lines: Line[] = subtitles
@@ -463,16 +482,8 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template, rawSubs: Su
       startMs:  srtToMs(sub.start),
       endMs:    srtToMs(sub.end),
     }))
-  // Simple offset shift for word tokens — do NOT use applyTimingCorrection here.
-  // applyTimingCorrection enforces a minimum-gap chain between events, which is
-  // correct for display segments but wrong for per-word tokens: it compresses
-  // word windows relative to each other and makes t0cs/t1cs unreliable.
-  const correctedRaw: Line[] = needsWordHighlight
-    ? rawLines.map(r => ({
-        ...r,
-        startMs: r.startMs + syncOffset,
-        endMs:   r.endMs   + syncOffset,
-      }))
+  const correctedRaw = needsWordHighlight && rawLines.length > 0
+    ? applyTimingCorrection(rawLines, syncOffset)
     : []
 
   for (let i = 0; i < corrected.length; i++) {
@@ -512,64 +523,25 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template, rawSubs: Su
       continue
     }
 
-    // Active word highlight — Layer 0 (base) + Layer 1 per-word events.
+    // ── Active word highlight ─────────────────────────────────────────────────
+    // Layer 0: full line in Default style, always visible for the whole segment.
+    // Layer 1 per word: ONE event per active-word window, containing ONLY that
+    //   word, styled with the ActiveWord style (BorderStyle=3 = filled bg box).
     //
-    // The key insight from testing: libass collision avoidance moves Layer 1
-    // events away from Layer 0 events at the same position UNLESS both events
-    // have an explicit \pos tag with identical coordinates. With matching \pos,
-    // libass treats them as anchored and overlays them exactly.
-    //
-    // So: both Layer 0 and all Layer 1 events get the same \pos computed from
-    // the style's alignment and marginV. Layer 1 events contain the full line
-    // text with all non-active words made invisible (\alpha&HFF&\3a&HFF&), so
-    // only the active word is visible on top of the Layer 0 base.
-    //
-    // \pos coordinates in 384×288 ASS script space:
-    //   an1-3 (bottom): y = SCRIPT_H - marginV
-    //   an4-6 (middle): y = SCRIPT_H / 2
-    //   an7-9 (top):    y = marginV
-    //   an1,4,7 (left):   x = marginL
-    //   an2,5,8 (center): x = SCRIPT_W / 2
-    //   an3,6,9 (right):  x = SCRIPT_W - marginR
-
-    // alignPosTag: explicit \pos anchoring both Layer 0 and Layer 1 at identical
-    // coordinates, disabling libass collision avoidance between the two layers.
-    // If the user dragged the subtitle, posTag already contains \an5\pos — reuse it.
-    // Otherwise compute from the style's alignment and margins.
-    const al  = style.alignment ?? template.alignment
-    const mV  = style.marginV   ?? template.marginV
-    const mL  = style.marginL   ?? template.marginL
-    const mR  = style.marginR   ?? template.marginR
-    const apX = [1,4,7].includes(al) ? mL
-              : [3,6,9].includes(al) ? SCRIPT_W - mR
-              : SCRIPT_W / 2
-    const apY = al <= 3 ? SCRIPT_H - mV
-              : al <= 6 ? SCRIPT_H / 2
-              : mV
-    // Use string concatenation — template literals silently drop backslashes
-    // before letters that aren't valid JS escape sequences (\a, \p become a, p).
-    const alignPosTag = posTag !== ''
-      ? posTag
-      : '{\\an' + al + '\\pos(' + Math.round(apX) + ',' + Math.round(apY) + ')}'
-
-    // Strip any \an tag from buildInlineTags output — alignPosTag already sets it,
-    // and a duplicate \an after \pos would override the position anchor.
-    const tagsNoAn = tags.replace(/\{([^}]*)\\an\d([^}]*)\}/g, (_, pre, post) => {
-      const inner = (pre + post).trim()
-      return inner ? '{' + inner + '}' : ''
-    })
-
-    // Layer 0: base line anchored with explicit \pos
-    events.push('Dialogue: 0,' + start + ',' + end + ',Default,,0,0,0,,' + animTag + alignPosTag + tagsNoAn + text)
+    // Because the ActiveWord event contains only the one word, libass renders
+    // it at the same alignment anchor as the base line. This works correctly
+    // for all alignment values and is universally supported by libass/FFmpeg.
+    events.push('Dialogue: 0,' + start + ',' + end + ',Default,,0,0,0,,' + animTag + tags + text)
 
     const segStartMs = line.startMs
     const segEndMs   = line.endMs
     const wordTokens = correctedRaw.filter(r =>
       r.startMs >= segStartMs - 50 && r.startMs <= segEndMs + 50
     )
-    const words       = text.split(' ')
-    const activeColor = hexToAss(template.activeWordColor ?? template.primaryColor)
-    const INVIS       = '{\\alpha&HFF&\\3a&HFF&}'
+    const words = text.split(' ')
+
+    // posTag for the active word events — same anchor as the base line
+    const awPosTag = posTag || ''
 
     for (let wi = 0; wi < words.length; wi++) {
       const token = wordTokens[wi]
@@ -582,57 +554,20 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template, rawSubs: Su
 
       const wStart = msToAssTime(wordStartMs)
       const wEnd   = msToAssTime(wordEndMs)
+      const word   = words[wi]
 
-      if (template.activeWordBgEnabled) {
-        // ── Background mode ──────────────────────────────────────────────────
-        // BorderStyle 3 (opaque box) draws behind ALL glyphs in the event,
-        // including fully-transparent ones — so the full-line approach would
-        // produce a box spanning the entire line, not just the active word.
-        //
-        // Fix: emit the active word ALONE as the L1 text, positioned with
-        // \an5\pos(wordCentreX, apY) so the box is sized to that word only.
-        // wordCentreX is estimated from the word's character-midpoint ratio
-        // within the line (no font metrics needed — libass sizes the box).
-        const totalChars  = words.join(' ').length
-        const prefixChars = words.slice(0, wi).join(' ').length + (wi > 0 ? 1 : 0)
-        const wordChars   = words[wi].length
-        const midRatio    = totalChars > 0 ? (prefixChars + wordChars / 2) / totalChars : 0.5
-
-        const isLeft   = [1,4,7].includes(al)
-        const isRight  = [3,6,9].includes(al)
-        // Estimate line extent using 70% of script width as a conservative proxy
-        const estLineW    = SCRIPT_W * 0.70
-        const lineStartX  = isLeft  ? apX
-                          : isRight ? apX - estLineW
-                          : apX - estLineW / 2          // centre-anchored
-        const wordCentreX = Math.round(Math.max(4, Math.min(SCRIPT_W - 4, lineStartX + midRatio * estLineW)))
-
-        const wordPosTag = '{\\an5\\pos(' + wordCentreX + ',' + Math.round(apY) + ')}'
-        events.push('Dialogue: 1,' + wStart + ',' + wEnd + ',ActiveBg,,0,0,0,,' + wordPosTag + words[wi])
-
-      } else {
-        // ── Colour-only mode ─────────────────────────────────────────────────
-        // Full-line approach: all words present, non-active ones invisible.
-        // Keeps the line positioned identically to Layer 0.
-        let lineText = ''
-        let inInvis  = false
-
-        for (let wj = 0; wj < words.length; wj++) {
-          if (wj > 0) lineText += ' '
-          if (wj === wi) {
-            lineText += '{\\c' + activeColor + '\\alpha&H00&}' + words[wj]
-            inInvis = false
-            if (wj < words.length - 1) { lineText += '{\\alpha&HFF&}'; inInvis = true }
-          } else {
-            if (!inInvis) { lineText += INVIS; inInvis = true }
-            lineText += words[wj]
-          }
-        }
-
-        events.push('Dialogue: 1,' + wStart + ',' + wEnd + ',Default,,0,0,0,,' + alignPosTag + tagsNoAn + lineText)
-      }
+      // Emit a single-word event in the ActiveWord style (BorderStyle=3 = filled box).
+      // \an sets the alignment anchor to match the base line so the word
+      // lands at the same position. posTag carries any drag-to-position \pos.
+      const an = style.alignment ?? template.alignment ?? 2
+      const anTag = '{\\an' + an + '}'
+      events.push(
+        'Dialogue: 1,' + wStart + ',' + wEnd + ',ActiveWord,,0,0,0,,' +
+        anTag + awPosTag + word
+      )
     }
   }
+
   return events
 }
 
@@ -858,5 +793,4 @@ export function serializeSRT(subtitles: Subtitle[]): string {
   return subtitles
     .map(s => `${s.index}\n${s.start} --> ${s.end}\n${s.text}`)
     .join('\n\n') + '\n'
-
 }
