@@ -68,7 +68,7 @@
 
   // Active word index — which rawSub token is active at currentTime
   let activeWordIndexDerived = $derived((() => {
-    if (!templateVal?.activeWordBgEnabled && templateVal?.activeWordColor === templateVal?.primaryColor) return -1
+    if (!templateVal?.lineBgEnabled && templateVal?.activeWordColor === templateVal?.primaryColor) return -1
     const raw: any[] = sessionVal?.rawSubs ?? []
     const tMs = currentTime * 1000
     return raw.findIndex((sub: any) => {
@@ -80,7 +80,7 @@
 
   // Words of the active sub, with indices into rawSubs to check active state
   let activeSubWords = $derived((() => {
-    const needsHighlight = templateVal?.activeWordBgEnabled ||
+    const needsHighlight = templateVal?.lineBgEnabled ||
       (templateVal?.activeWordColor && templateVal.activeWordColor !== templateVal.primaryColor)
     if (!activeSub || !sessionVal?.rawSubs || !needsHighlight) return null
     // Find which rawSubs fall within this display sub's time range
@@ -464,9 +464,9 @@
                 {getAnimationStyle(templateVal?.animation)}">
   <!-- active word rendering — ver cambio 2 -->
                   
-                    {#if activeSubWords && (templateVal?.activeWordBgEnabled || (templateVal?.activeWordColor && templateVal.activeWordColor !== templateVal.primaryColor))}
+                    {#if activeSubWords && (templateVal?.lineBgEnabled || (templateVal?.activeWordColor && templateVal.activeWordColor !== templateVal.primaryColor))}
                     {#each activeSubWords as {word, isActive}, wi}
-                      {#if wi > 0}&nbsp;{/if}{#if isActive}<span class="aw-active-word" style="color:{templateVal?.activeWordColor ?? ef?.primaryColor};{templateVal?.activeWordBgEnabled ? 'background:' + (templateVal?.activeWordBgColor ?? '#ffb900') + ';padding:' + (templateVal?.activeWordBgPaddingY ?? 0.2) + 'em ' + (templateVal?.activeWordBgPaddingX ?? 0.25) + 'em;border-radius:' + (templateVal?.activeWordBgRounded ? '0.4em' : '0') + ';' : ''}">{word}</span>{:else}{word}{/if}
+                      {#if wi > 0}&nbsp;{/if}{#if isActive}<span class="aw-active-word" style="color:{templateVal?.activeWordColor ?? ef?.primaryColor};{templateVal?.lineBgEnabled ? 'background:' + (templateVal?.activeWordBgColor ?? '#ffb900') + ';padding:' + (templateVal?.activeWordBgPaddingY ?? 0.2) + 'em ' + (templateVal?.activeWordBgPaddingX ?? 0.25) + 'em;border-radius:' + (templateVal?.activeWordBgRounded ? '0.4em' : '0') + ';' : ''}">{word}</span>{:else}{word}{/if}
                     {/each}
                   {:else}
                     {previewText}
@@ -789,7 +789,7 @@
                     font-weight:{templateVal.bold ? 'bold' : 'normal'};
                     font-style:{templateVal.italic ? 'italic' : 'normal'};
                   ">
-                    {#if (templateVal as any).activeWordBgEnabled}
+                    {#if (templateVal as any).lineBgEnabled}
                       <span class="aw-prev-bg" style="
                         background:{(templateVal as any).activeWordBgColor ?? '#ffb900'};
                         padding:{((templateVal as any).activeWordBgPaddingY ?? 0.2)}em {((templateVal as any).activeWordBgPaddingX ?? 0.25)}em;
@@ -821,12 +821,12 @@
                   <div class="section-card-hdr">
                     <span>Background</span>
                     <button class="toggle-switch toggle-switch-sm"
-                      class:on={(templateVal as any).activeWordBgEnabled}
-                      onclick={()=>updateActiveTemplate({activeWordBgEnabled:!(templateVal as any).activeWordBgEnabled} as any)}>
+                      class:on={(templateVal as any).lineBgEnabled}
+                      onclick={()=>updateActiveTemplate({lineBgEnabled:!(templateVal as any).lineBgEnabled} as any)}>
                       <span class="toggle-thumb"></span>
                     </button>
                   </div>
-                  {#if (templateVal as any).activeWordBgEnabled}
+                  {#if (templateVal as any).lineBgEnabled}
                     <div class="color-row">
                       <input type="color"
                         value={(templateVal as any).activeWordBgColor ?? '#ffb900'}

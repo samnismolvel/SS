@@ -35,13 +35,13 @@ export interface Template {
   wordSpacing: number      // extra word spacing (em units)
   textTransform: 'none' | 'uppercase' | 'lowercase'
   hidePunctuation: boolean
-  // Active word highlight
+  // Active word highlight (color only — no background)
   activeWordColor: string
-  activeWordBgEnabled: boolean
-  activeWordBgColor: string
-  activeWordBgPaddingX: number    // em units
-  activeWordBgPaddingY: number    // em units
-  activeWordBgRounded: boolean
+  // Line background — opaque box behind each subtitle line
+  lineBgEnabled: boolean
+  lineBgColor: string
+  lineBgPaddingX: number    // em units, horizontal padding inside the box
+  lineBgPaddingY: number    // em units, vertical padding inside the box
   // Shadow
   shadowEnabled: boolean
   shadowColor: string

@@ -170,9 +170,26 @@ function buildStyleLine(name: string, t: EffectiveStyle): string {
   const primary   = hexToAss(t.primaryColor)
   const secondary = hexToAss(t.secondaryColor)
   const outline   = hexToAss(t.outlineColor)
-  const back      = hexToAss(t.backColor, 128)
   const bold      = t.bold ? -1 : 0
   const italic    = t.italic ? -1 : 0
+
+  if ((t as any).lineBgEnabled) {
+    // BorderStyle 3 = opaque box behind the text. BackColour is the box fill.
+    // Outline colour and width are preserved so text stroke still renders.
+    // Padding is controlled per-event via \bord inline override.
+    const bgColor = hexToAss((t as any).lineBgColor ?? '#000000')
+    return [
+      'Style: ' + name,
+      t.fontName, t.fontSize,
+      primary, secondary, outline, bgColor,
+      bold, italic, 0, 0,
+      t.scaleX, t.scaleY, t.spacing, 0,
+      3, t.outline, t.shadow, t.alignment,
+      t.marginL, t.marginR, t.marginV, 1,
+    ].join(',')
+  }
+
+  const back = hexToAss(t.backColor, 128)
   return [
     'Style: ' + name,
     t.fontName, t.fontSize,
@@ -180,22 +197,6 @@ function buildStyleLine(name: string, t: EffectiveStyle): string {
     bold, italic, 0, 0,
     t.scaleX, t.scaleY, t.spacing, 0,
     1, t.outline, t.shadow, t.alignment,
-    t.marginL, t.marginR, t.marginV, 1,
-  ].join(',')
-}
-
-function buildActiveBgStyleLine(t: Template, bgColor: string, textColor: string): string {
-  // BorderStyle 3 = opaque box. BackColour is the box fill color.
-  // Outline and Shadow set to 0 — the box itself IS the background.
-  const bold   = t.bold   ? -1 : 0
-  const italic = t.italic ? -1 : 0
-  return [
-    'Style: ActiveBg',
-    t.fontName, t.fontSize,
-    textColor, textColor, '&H00000000', bgColor,
-    bold, italic, 0, 0,
-    t.scaleX, t.scaleY, t.spacing, 0,
-    3, 3, 0, t.alignment,
     t.marginL, t.marginR, t.marginV, 1,
   ].join(',')
 }
@@ -262,14 +263,6 @@ export function buildAss(subtitles: Subtitle[], template: Template, rawSubs: Sub
     'Alignment, MarginL, MarginR, MarginV, Encoding'
   )
   lines.push(buildStyleLine('Default', template))
-  // ActiveBg style: BorderStyle 3 = opaque box background. Used by Layer 1
-  // active word events when activeWordBgEnabled is true. BackColour sets the
-  // box color. Outline=0, Shadow=0 so only the fill + box are visible.
-  if (template.activeWordBgEnabled) {
-    const bgColor   = hexToAss(template.activeWordBgColor ?? '#ffb900')
-    const textColor = hexToAss(template.activeWordColor ?? template.primaryColor)
-    lines.push(buildActiveBgStyleLine(template, bgColor, textColor))
-  }
   lines.push('')
   lines.push('[Events]')
   lines.push('Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text')
@@ -418,20 +411,21 @@ function buildPosTag(template: Template): string {
 // Grouping is done upstream (applyDensityRatio / manual merge), NOT here.
 // Timing correction (syncOffset) is the only transformation applied at burn time.
 //
-// Active word highlight mode:
-// When activeWordBgEnabled or activeWordColor differs from primaryColor, each
-// display segment emits one base Dialogue event (Layer 0) plus one Layer 1
-// event per word whose timing window matches a rawSubs token.
-// Layer 1 events override color and simulate a background via a thick border
-// in the bg color — the best approximation available in ASS/libass.
+// Active word color highlight:
+// When activeWordColor differs from primaryColor, each segment emits a Layer 0
+// base event plus one Layer 1 event per word, both anchored with identical \pos
+// to prevent libass collision avoidance from displacing them.
+//
+// Line background:
+// When lineBgEnabled, the Default style uses BorderStyle 3 (opaque box).
+// The \bord inline tag per-event controls the padding around the text.
 
 function buildPlainEvents(subtitles: Subtitle[], template: Template, rawSubs: Subtitle[] = []): string[] {
   const events: string[] = []
   const syncOffset = template.syncOffset ?? 50
 
-  const needsWordHighlight =
-    template.activeWordBgEnabled ||
-    (template.activeWordColor !== template.primaryColor)
+  const needsWordHighlight = (template.activeWordColor !== template.primaryColor)
+  const lineBgEnabled      = (template as any).lineBgEnabled as boolean | undefined
 
   // Convert each display subtitle into a Line for timing correction.
   const lines: Line[] = subtitles
@@ -463,16 +457,9 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template, rawSubs: Su
       startMs:  srtToMs(sub.start),
       endMs:    srtToMs(sub.end),
     }))
-  // Simple offset shift for word tokens — do NOT use applyTimingCorrection here.
-  // applyTimingCorrection enforces a minimum-gap chain between events, which is
-  // correct for display segments but wrong for per-word tokens: it compresses
-  // word windows relative to each other and makes t0cs/t1cs unreliable.
+  // Simple offset shift for word-level tokens used in active word highlight.
   const correctedRaw: Line[] = needsWordHighlight
-    ? rawLines.map(r => ({
-        ...r,
-        startMs: r.startMs + syncOffset,
-        endMs:   r.endMs   + syncOffset,
-      }))
+    ? rawLines.map(r => ({ ...r, startMs: r.startMs + syncOffset, endMs: r.endMs + syncOffset }))
     : []
 
   for (let i = 0; i < corrected.length; i++) {
@@ -482,14 +469,26 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template, rawSubs: Su
     const style      = resolveStyle(template, overrides)
     const start      = srtTimeToAss(line.startSrt)
     const end        = srtTimeToAss(line.endSrt)
-    // Apply text transforms (textTransform, hidePunctuation, wordSpacing).
-    // Escape ASS special chars AFTER transforms so \h hard-spaces survive.
     const transformed = applyTextTransforms(line.text, style)
     const text        = transformed.replace(/\{/g, '\\{').replace(/\}/g, '\\}')
     const durationMs  = line.endMs - line.startMs
     const posTag      = buildPosTag(template)
-    const tags        = posTag + buildInlineTags(style, template)
-    const animTag     = buildAnimationTag(
+    const durationMs_ = durationMs  // alias for clarity
+
+    // Line background padding: when lineBgEnabled, inject \bord to add space
+    // around the text inside the opaque box. The style already has BorderStyle 3
+    // so \bord here controls the visual padding (border = box thickness in BS3).
+    const lineBgPad = lineBgEnabled
+      ? (() => {
+          const fs   = style.fontSize ?? template.fontSize ?? 24
+          const padY = Math.max(1, Math.round(((template as any).lineBgPaddingY ?? 0.2) * fs))
+          return '{\\bord' + padY + '}'
+        })()
+      : ''
+
+    const inlineTags = buildInlineTags(style, template)
+    const tags       = posTag + inlineTags
+    const animTag    = buildAnimationTag(
       template.animation,
       durationMs,
       style.alignment ?? template.alignment,
@@ -497,45 +496,28 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template, rawSubs: Su
       style.fontSize  ?? template.fontSize,
     )
 
-    // Typewriter is incompatible with per-word highlight; emit as-is.
+    // Typewriter: no word highlight, emit as-is.
     if (template.animation === 'typewriter') {
       events.push(...buildTypewriterEvents(
         text, start, end,
         line.startMs, line.endMs,
-        tags
+        lineBgPad + tags
       ))
       continue
     }
 
     if (!needsWordHighlight) {
-      events.push('Dialogue: 0,' + start + ',' + end + ',Default,,0,0,0,,' + animTag + tags + text)
+      events.push('Dialogue: 0,' + start + ',' + end + ',Default,,0,0,0,,' + animTag + lineBgPad + tags + text)
       continue
     }
 
-    // Active word highlight — Layer 0 (base) + Layer 1 per-word events.
+    // ── Active word color highlight ───────────────────────────────────────────
+    // Layer 0: full line, base color, anchored with \pos.
+    // Layer 1: per-word-window events with identical \pos, full line text,
+    //   non-active words invisible (\alpha&HFF&), active word in activeWordColor.
     //
-    // The key insight from testing: libass collision avoidance moves Layer 1
-    // events away from Layer 0 events at the same position UNLESS both events
-    // have an explicit \pos tag with identical coordinates. With matching \pos,
-    // libass treats them as anchored and overlays them exactly.
-    //
-    // So: both Layer 0 and all Layer 1 events get the same \pos computed from
-    // the style's alignment and marginV. Layer 1 events contain the full line
-    // text with all non-active words made invisible (\alpha&HFF&\3a&HFF&), so
-    // only the active word is visible on top of the Layer 0 base.
-    //
-    // \pos coordinates in 384×288 ASS script space:
-    //   an1-3 (bottom): y = SCRIPT_H - marginV
-    //   an4-6 (middle): y = SCRIPT_H / 2
-    //   an7-9 (top):    y = marginV
-    //   an1,4,7 (left):   x = marginL
-    //   an2,5,8 (center): x = SCRIPT_W / 2
-    //   an3,6,9 (right):  x = SCRIPT_W - marginR
+    // Both layers use the same \pos so libass overlays them without collision.
 
-    // alignPosTag: explicit \pos anchoring both Layer 0 and Layer 1 at identical
-    // coordinates, disabling libass collision avoidance between the two layers.
-    // If the user dragged the subtitle, posTag already contains \an5\pos — reuse it.
-    // Otherwise compute from the style's alignment and margins.
     const al  = style.alignment ?? template.alignment
     const mV  = style.marginV   ?? template.marginV
     const mL  = style.marginL   ?? template.marginL
@@ -546,35 +528,24 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template, rawSubs: Su
     const apY = al <= 3 ? SCRIPT_H - mV
               : al <= 6 ? SCRIPT_H / 2
               : mV
-    // Use string concatenation — template literals silently drop backslashes
-    // before letters that aren't valid JS escape sequences (\a, \p become a, p).
+    // String concatenation — template literals drop \a, \p backslashes.
     const alignPosTag = posTag !== ''
       ? posTag
       : '{\\an' + al + '\\pos(' + Math.round(apX) + ',' + Math.round(apY) + ')}'
+    // Strip \an from inlineTags — alignPosTag already sets it.
+    const tagsNoAn = inlineTags.replace(/\{([^}]*)\\an\d([^}]*)\}/g, (_, pre, post) => {
+      const inner = (pre + post).trim(); return inner ? '{' + inner + '}' : ''
+    })
+
+    // Layer 0: base line
+    events.push('Dialogue: 0,' + start + ',' + end + ',Default,,0,0,0,,' + animTag + lineBgPad + alignPosTag + tagsNoAn + text)
 
     const segStartMs = line.startMs
     const segEndMs   = line.endMs
-
     const wordTokens = correctedRaw.filter(r =>
       r.startMs >= segStartMs - 50 && r.startMs <= segEndMs + 50
     )
-
-    const words = text.split(' ')
-
-    const tagsNoAn = tags.replace(/\{([^}]*)\\an\d([^}]*)\}/g, (_, pre, post) => {
-      const inner = (pre + post).trim()
-      return inner ? '{' + inner + '}' : ''
-    })
-
-        // Strip any \an tag from buildInlineTags output — alignPosTag already sets it,
-    // and a duplicate \an after \pos would override the position anchor.
-    
-
-    // Layer 0: base line anchored with explicit \pos
-    //events.push('Dialogue: 0,' + start + ',' + end + ',Default,,0,0,0,,' + alignPosTag + animTag + tagsNoAn + text)
-    
-    
-    
+    const words       = text.split(' ')
     const activeColor = hexToAss(template.activeWordColor ?? template.primaryColor)
     const INVIS       = '{\\alpha&HFF&\\3a&HFF&}'
 
@@ -590,48 +561,22 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template, rawSubs: Su
       const wStart = msToAssTime(wordStartMs)
       const wEnd   = msToAssTime(wordEndMs)
 
-      // Build full line text: non-active words invisible, active word visible.
-      // When activeWordBgEnabled: Layer 1 uses the 'ActiveBg' style (BorderStyle 3
-      // = opaque box). libass only draws the box around visible characters, so
-      // making non-active words invisible (lpha&HFF&) means the box covers only
-      // the active word — exactly a pill-shaped background behind it.
-      // When bg is disabled: Layer 1 uses 'Default' style, active word colored.
-      let baseText = ''
-      for (let i = 0; i < words.length; i++) {
-        if (i > 0) baseText += ' '
-        if (i === wi) {
-          baseText += '{\\alpha&HFF&}' + words[i] + '{\\alpha&H00&}'
+      // Full line with non-active words invisible, active word in activeWordColor.
+      let lineText = ''
+      let inInvis  = false
+      for (let wj = 0; wj < words.length; wj++) {
+        if (wj > 0) lineText += ' '
+        if (wj === wi) {
+          lineText += '{\\c' + activeColor + '\\alpha&H00&\\1a&H00&\\3a&H00&}' + words[wj]
+          inInvis = false
+          if (wj < words.length - 1) { lineText += '{\\alpha&HFF&\\3a&HFF&}'; inInvis = true }
         } else {
-          baseText += words[i]
+          if (!inInvis) { lineText += INVIS; inInvis = true }
+          lineText += words[wj]
         }
       }
 
-      events.push(
-        'Dialogue: 0,' +
-        wStart + ',' + wEnd + ',Default,,0,0,0,,' +
-        alignPosTag + animTag + tagsNoAn +
-        baseText
-      )
-
-      const activeStyleName = template.activeWordBgEnabled ? 'ActiveBg' : 'Default'
-
-// SOLO la palabra activa
-      const activeWord = words[wi]
-
-      // ⚠️ IMPORTANTE:
-      // usamos alignPosTag para mantener alineación exacta con Layer 0
-      // NO usamos \alpha ni reconstruimos la línea
-
-      const l1tags = template.activeWordBgEnabled
-        ? alignPosTag
-        : alignPosTag + tagsNoAn
-
-      events.push(
-        'Dialogue: 1,' +
-        wStart + ',' + wEnd + ',' + activeStyleName + ',,0,0,0,,' +
-        l1tags +
-        activeWord
-      )
+      events.push('Dialogue: 1,' + wStart + ',' + wEnd + ',Default,,0,0,0,,' + lineBgPad + alignPosTag + tagsNoAn + lineText)
     }
   }
 
@@ -639,6 +584,7 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template, rawSubs: Su
 }
 
 
+// ─── SRT parser
 // ─── SRT parser (raw — word per block) ───────────────────────────────────────
 // Parses the raw whisper SRT into one Subtitle per word-token.
 // Does NOT group. Used to store the original tokens for re-processing.
