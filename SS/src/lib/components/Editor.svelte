@@ -459,7 +459,7 @@
                 {ef?.outline??2}px -{ef?.outline??2}px 0 {ef?.outlineColor??'#000'},
                 -{ef?.outline??2}px {ef?.outline??2}px 0 {ef?.outlineColor??'#000'},
                 {ef?.outline??2}px {ef?.outline??2}px 0 {ef?.outlineColor??'#000'};
-                {(ef as any)?.lineBgEnabled ? 'background:' + ((ef as any)?.lineBgColor ?? '#000') + ';padding:' + ((ef as any)?.lineBgPaddingY ?? 0.2) + 'em ' + ((ef as any)?.lineBgPaddingX ?? 0.5) + 'em;' : ''}
+                {(ef as any)?.lineBgEnabled ? 'background:' + ((ef as any)?.lineBgColor ?? '#000') + ';padding:' + ((ef as any)?.lineBgPaddingY ?? 0.2) + 'em ' + ((ef as any)?.lineBgPaddingX ?? 0.5) + 'em;border-radius:' + ((ef as any)?.lineBgRounded ? '0.4em' : '0') + ';' : ''}
                 {previewShadowStyle}
                 {getAnimationStyle(templateVal?.animation)}">
                   {#if activeSubWords}
@@ -794,7 +794,7 @@
                   font-weight:{templateVal.bold ? 'bold' : 'normal'};
                   color:{templateVal.primaryColor};
                   {(templateVal as any).lineBgEnabled
-                    ? 'background:' + ((templateVal as any).lineBgColor ?? '#000') + ';padding:' + ((templateVal as any).lineBgPaddingY ?? 0.2) + 'em ' + ((templateVal as any).lineBgPaddingX ?? 0.5) + 'em;'
+                    ? 'background:' + ((templateVal as any).lineBgColor ?? '#000') + ';padding:' + ((templateVal as any).lineBgPaddingY ?? 0.2) + 'em ' + ((templateVal as any).lineBgPaddingX ?? 0.5) + 'em;border-radius:' + ((templateVal as any).lineBgRounded ? '0.4em' : '0') + ';'
                     : 'background:transparent;padding:.4em .75em;outline:1px dashed var(--color-border);'}
                 ">subtitle text</div>
 
@@ -833,6 +833,15 @@
                       value={(templateVal as any).lineBgPaddingY ?? 0.2}
                       oninput={(e)=>updateActiveTemplate({lineBgPaddingY:Number(e.currentTarget.value)} as any)} />
                     <span class="rval">{((templateVal as any).lineBgPaddingY ?? 0.2).toFixed(2)}</span>
+                  </div>
+
+                  <!-- Corners -->
+                  <div class="s-lbl">Corners</div>
+                  <div class="chip-row">
+                    <button class="chip-btn" class:active={!((templateVal as any).lineBgRounded)}
+                      onclick={()=>updateActiveTemplate({lineBgRounded:false} as any)}>Sharp</button>
+                    <button class="chip-btn" class:active={(templateVal as any).lineBgRounded}
+                      onclick={()=>updateActiveTemplate({lineBgRounded:true} as any)}>Rounded</button>
                   </div>
                 {/if}
 

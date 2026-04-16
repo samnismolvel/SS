@@ -174,17 +174,19 @@ function buildStyleLine(name: string, t: EffectiveStyle): string {
   const italic    = t.italic ? -1 : 0
 
   if ((t as any).lineBgEnabled) {
-    // BorderStyle 3 = opaque box behind the text. BackColour is the box fill.
-    // Outline colour and width are preserved so text stroke still renders.
-    // Padding is controlled per-event via \bord inline override.
-    const bgColor = hexToAss((t as any).lineBgColor ?? '#000000')
+    // BorderStyle 3 = opaque box behind the text.
+    // BackColour (field 8) is the box fill color.
+    // In BorderStyle=3, \bord controls the size of the box padding on all sides
+    // (libass extends the box by \bord pixels in every direction around the glyphs).
+    // We bake a base \bord=0 here and apply the real padding per-event via inline \bord.
+    const bgColor = hexToAss((t as any).lineBgColor ?? '#000000', 0)
     return [
       'Style: ' + name,
       t.fontName, t.fontSize,
       primary, secondary, outline, bgColor,
       bold, italic, 0, 0,
       t.scaleX, t.scaleY, t.spacing, 0,
-      3, t.outline, t.shadow, t.alignment,
+      3, 0, 0, t.alignment,
       t.marginL, t.marginR, t.marginV, 1,
     ].join(',')
   }
@@ -475,14 +477,22 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template, rawSubs: Su
     const posTag      = buildPosTag(template)
     const durationMs_ = durationMs  // alias for clarity
 
-    // Line background padding: when lineBgEnabled, inject \bord to add space
-    // around the text inside the opaque box. The style already has BorderStyle 3
-    // so \bord here controls the visual padding (border = box thickness in BS3).
+    // Line background padding: when lineBgEnabled, the style has BorderStyle=3.
+    // In BorderStyle=3, \bord N expands the opaque box by N script-pixels on all
+    // sides around the glyphs — this IS the padding. We compute it from the
+    // user's paddingX/Y sliders (em-relative), converting to script-space pixels.
+    // \be N blurs the box edges: \be0 = sharp corners, \be2+ = soft/rounded look.
     const lineBgPad = lineBgEnabled
       ? (() => {
           const fs   = style.fontSize ?? template.fontSize ?? 24
+          const padX = Math.max(1, Math.round(((template as any).lineBgPaddingX ?? 0.5) * fs))
           const padY = Math.max(1, Math.round(((template as any).lineBgPaddingY ?? 0.2) * fs))
-          return '{\\bord' + padY + '}'
+          // Use the average for a single uniform \bord value (ASS BorderStyle=3
+          // does not support independent X/Y box expansion in standard libass).
+          const bord    = Math.round((padX + padY) / 2)
+          const rounded = (template as any).lineBgRounded ?? false
+          const be      = rounded ? '\\be3' : '\\be0'
+          return '{\\bord' + bord + be + '}'
         })()
       : ''
 
