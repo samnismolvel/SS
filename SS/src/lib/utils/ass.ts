@@ -153,7 +153,13 @@ function buildTokens(subtitles: Subtitle[]): Token[] {
   }
 
   return merged
-    .map(t => ({ ...t, rawWord: t.word, word: cleanWord(t.word) }))
+    .map(t => ({
+      ...t,
+      rawWord: t.word,
+      // Keep trailing punctuation in `word` so it appears in the subtitle text
+      // and hidePunctuation can strip it. Only strip leading non-word chars.
+      word: t.word.replace(/^[^\w]+/, '').trim(),
+    }))
     .filter(t => isValidWord(t.word))
 }
 
@@ -679,8 +685,12 @@ export function extractPauseGroups(rawSubs: Subtitle[]): PauseGroups {
 
   for (let i = 0; i < tokens.length; i++) {
     if (clauseBuf.length > 0) {
-      const gap = tokens[i].startMs - clauseBuf[clauseBuf.length - 1].endMs
-      if (gap >= CLAUSE_CUT_MS) flushClause()
+      const gap     = tokens[i].startMs - clauseBuf[clauseBuf.length - 1].endMs
+      const prevRaw = clauseBuf[clauseBuf.length - 1].rawWord
+      // Break clause on timing gap OR sentence-ending punctuation on previous token.
+      // This ensures ratio=1.0 never merges across sentence boundaries.
+      const hasSentenceEnd = /[.!?]$/.test(prevRaw.trim())
+      if (gap >= CLAUSE_CUT_MS || hasSentenceEnd) flushClause()
     }
     clauseBuf.push(tokens[i])
   }

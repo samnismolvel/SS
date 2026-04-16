@@ -354,7 +354,7 @@
     const sign  = resizeSide === 'right' ? 1 : -1
     const deltaPx  = (e.clientX - resizeStartX) * sign
     const deltaPct = (deltaPx / frame.width) * 100 * 2  // *2 because box expands both sides
-    const next  = Math.max(20, Math.min(100, resizeStartPct + deltaPct))
+    const next  = Math.max(25, Math.min(100, resizeStartPct + deltaPct))
     updateActiveTemplate({ overlayWidthPct: next } as any)
   }
 
@@ -1012,7 +1012,7 @@
   .sub-outer{pointer-events:auto;display:flex;flex-direction:column;align-items:center;gap:0}
   .sub-box{position:relative;display:inline-block;min-width:60px;box-sizing:border-box;padding:0 18px}
   .sub-box:hover .resize-handle{opacity:1}
-  .sub-text{display:block;line-height:1.35;white-space:pre-wrap;word-break:break-word;padding:2px 0}
+  .sub-text{display:block;line-height:1.35;white-space:normal;word-break:normal;overflow-wrap:normal;padding:2px 0}
 
   /* Resize handles */
   .resize-handle{position:absolute;top:50%;transform:translateY(-50%);width:12px;height:12px;border-radius:50%;background:white;box-shadow:0 0 4px rgba(0,0,0,.6);cursor:ew-resize;opacity:0;transition:opacity .15s;z-index:10}
