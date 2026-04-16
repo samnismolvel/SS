@@ -32,17 +32,19 @@
 
 
   // ── Preview font scale ───────────────────────────────────────────────────
-  // ASS fontsize is in 384×288 script-space units. libass scales to video res.
-  // We replicate that scale in the preview: fontSize * (frameWidthPx / 384).
-  // frameWidthPx is the rendered width of the video within the preview wrap.
-  // We derive it from currentTime so it updates after the video loads/resizes.
-  const ASS_SCRIPT_W = 384
+  // libass scales fontSize by (videoHeight / scriptHeight), where scriptHeight
+  // defaults to 288. This is height-based, not width-based — so the correct
+  // formula is frameHeight / 288, regardless of video aspect ratio.
+  //
+  // Using frameWidth/384 overestimates by ~1.33× on 16:9 videos (1280×720,
+  // 1920×1080) because 384/288 ≠ 16/9, making the preview too small.
+  const ASS_SCRIPT_H = 288
   let previewFontScale = $derived((() => {
     // Touch currentTime so this re-evaluates after video metadata loads
     void currentTime
     const frame = getFrameRect()
-    if (!frame || frame.width === 0) return 1
-    return frame.width / ASS_SCRIPT_W
+    if (!frame || frame.height === 0) return 1
+    return frame.height / ASS_SCRIPT_H
   })())
 
   // Typewriter preview — compute revealed chars from currentTime
@@ -68,7 +70,7 @@
 
   // Active word index — which rawSub token is active at currentTime
   let activeWordIndexDerived = $derived((() => {
-    if (templateVal?.activeWordColor === templateVal?.primaryColor) return -1
+    if (!templateVal?.lineBgEnabled && templateVal?.activeWordColor === templateVal?.primaryColor) return -1
     const raw: any[] = sessionVal?.rawSubs ?? []
     const tMs = currentTime * 1000
     return raw.findIndex((sub: any) => {
@@ -80,7 +82,8 @@
 
   // Words of the active sub, with indices into rawSubs to check active state
   let activeSubWords = $derived((() => {
-    const needsHighlight = templateVal?.activeWordColor !== templateVal?.primaryColor
+    const needsHighlight = templateVal?.lineBgEnabled ||
+      (templateVal?.activeWordColor && templateVal.activeWordColor !== templateVal.primaryColor)
     if (!activeSub || !sessionVal?.rawSubs || !needsHighlight) return null
     // Find which rawSubs fall within this display sub's time range
     const subStartMs = srtToSeconds(activeSub.start) * 1000
@@ -168,7 +171,7 @@
   let customFont = $state(false)
   // Sub-sidebar state: null = main rail visible, 'customize' = sub-sidebar open
   let subSidebar = $state<'customize' | null>(null)
-  type CSection = 'text' | 'layout' | 'animation' | 'background'
+  type CSection = 'text' | 'layout' | 'animation' | 'activeword'
   let customSection = $state<CSection>('text')
   $effect(() => { if (templateVal?.fontName && !SYSTEM_FONTS.includes(templateVal.fontName)) customFont = true })
   function handleFontSelect(e: Event) {
@@ -459,16 +462,18 @@
                 {ef?.outline??2}px -{ef?.outline??2}px 0 {ef?.outlineColor??'#000'},
                 -{ef?.outline??2}px {ef?.outline??2}px 0 {ef?.outlineColor??'#000'},
                 {ef?.outline??2}px {ef?.outline??2}px 0 {ef?.outlineColor??'#000'};
-                {(ef as any)?.lineBgEnabled ? 'background:' + ((ef as any)?.lineBgColor ?? '#000') + ';padding:' + ((ef as any)?.lineBgPaddingY ?? 0.2) + 'em ' + ((ef as any)?.lineBgPaddingX ?? 0.5) + 'em;border-radius:' + ((ef as any)?.lineBgRounded ? '0.4em' : '0') + ';' : ''}
                 {previewShadowStyle}
                 {getAnimationStyle(templateVal?.animation)}">
-                  {#if activeSubWords}
+  <!-- active word rendering — ver cambio 2 -->
+                  
+                    {#if activeSubWords && (templateVal?.lineBgEnabled || (templateVal?.activeWordColor && templateVal.activeWordColor !== templateVal.primaryColor))}
                     {#each activeSubWords as {word, isActive}, wi}
-                      {#if wi > 0}&nbsp;{/if}{#if isActive}<span class="aw-active-word" style="color:{templateVal?.activeWordColor ?? ef?.primaryColor};">{word}</span>{:else}{word}{/if}
+                      {#if wi > 0}&nbsp;{/if}{#if isActive}<span class="aw-active-word" style="color:{templateVal?.activeWordColor ?? ef?.primaryColor};{templateVal?.lineBgEnabled ? 'background:' + (templateVal?.activeWordBgColor ?? '#ffb900') + ';padding:' + (templateVal?.activeWordBgPaddingY ?? 0.2) + 'em ' + (templateVal?.activeWordBgPaddingX ?? 0.25) + 'em;border-radius:' + (templateVal?.activeWordBgRounded ? '0.4em' : '0') + ';' : ''}">{word}</span>{:else}{word}{/if}
                     {/each}
                   {:else}
                     {previewText}
                   {/if}
+
                 </span>
 
                 <!-- Right resize handle -->
@@ -577,10 +582,10 @@
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
               <span>Anim</span>
             </button>
-            <!-- Background sub-tab -->
-            <button class="rail-btn" class:active={customSection==='background'} onclick={()=>customSection='background'} title="Background">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="3" width="20" height="18" rx="2"/><path d="M2 9h20"/></svg>
-              <span>BG</span>
+            <!-- Active Word sub-tab -->
+            <button class="rail-btn" class:active={customSection==='activeword'} onclick={()=>customSection='activeword'} title="Active Word">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="7" width="20" height="10" rx="2"/><path d="M7 12h10M12 9v6"/></svg>
+              <span>Word</span>
             </button>
           </div>
 
@@ -656,15 +661,6 @@
                 <div class="color-row">
                   <input type="color" value={templateVal.primaryColor} oninput={(e)=>updateActiveTemplate({primaryColor:e.currentTarget.value})} />
                   <span class="color-value">{templateVal.primaryColor} / 100%</span>
-                </div>
-
-                <!-- Active Word Color -->
-                <div class="s-lbl">Active Word Color</div>
-                <div class="color-row">
-                  <input type="color"
-                    value={(templateVal as any).activeWordColor ?? templateVal.primaryColor}
-                    oninput={(e)=>updateActiveTemplate({activeWordColor:e.currentTarget.value} as any)} />
-                  <span class="color-value">{(templateVal as any).activeWordColor ?? templateVal.primaryColor} / 100%</span>
                 </div>
 
                 <!-- Text Transform -->
@@ -783,67 +779,88 @@
               </div>
             {/if}
 
-            {#if customSection === 'background'}
-              <div class="panel-hdr"><span class="panel-title">Background</span></div>
+            {#if customSection === 'activeword'}
+              <div class="panel-hdr"><span class="panel-title">Active Word</span></div>
               <div class="panel-body">
 
                 <!-- Live preview -->
-                <div class="bg-preview" style="
-                  font-family:{templateVal.fontName};
-                  font-size:1.1rem;
-                  font-weight:{templateVal.bold ? 'bold' : 'normal'};
-                  color:{templateVal.primaryColor};
-                  {(templateVal as any).lineBgEnabled
-                    ? 'background:' + ((templateVal as any).lineBgColor ?? '#000') + ';padding:' + ((templateVal as any).lineBgPaddingY ?? 0.2) + 'em ' + ((templateVal as any).lineBgPaddingX ?? 0.5) + 'em;border-radius:' + ((templateVal as any).lineBgRounded ? '0.4em' : '0') + ';'
-                    : 'background:transparent;padding:.4em .75em;outline:1px dashed var(--color-border);'}
-                ">subtitle text</div>
+                <div class="aw-preview">
+                  <span class="aw-prev-word" style="
+                    color:{(templateVal as any).activeWordColor ?? templateVal.primaryColor};
+                    font-family:{templateVal.fontName};
+                    font-weight:{templateVal.bold ? 'bold' : 'normal'};
+                    font-style:{templateVal.italic ? 'italic' : 'normal'};
+                  ">
+                    {#if (templateVal as any).lineBgEnabled}
+                      <span class="aw-prev-bg" style="
+                        background:{(templateVal as any).activeWordBgColor ?? '#ffb900'};
+                        padding:{((templateVal as any).activeWordBgPaddingY ?? 0.2)}em {((templateVal as any).activeWordBgPaddingX ?? 0.25)}em;
+                        border-radius:{(templateVal as any).activeWordBgRounded ? '0.4em' : '0'};
+                      ">YOUR</span>
+                    {:else}
+                      YOUR
+                    {/if}
+                  </span>
+                  <span class="aw-prev-word" style="
+                    color:{templateVal.primaryColor};
+                    font-family:{templateVal.fontName};
+                    font-weight:{templateVal.bold ? 'bold' : 'normal'};
+                  "> VOICE</span>
+                </div>
 
-                <!-- Enable toggle -->
-                <label class="toggle-row" style="margin-top:.5rem">
-                  <span class="toggle-lbl">Line Background</span>
-                  <button class="toggle-switch"
-                    class:on={(templateVal as any).lineBgEnabled}
-                    onclick={()=>updateActiveTemplate({lineBgEnabled:!(templateVal as any).lineBgEnabled} as any)}>
-                    <span class="toggle-thumb"></span>
-                  </button>
-                </label>
+                <!-- Active word text color -->
+                <div class="s-lbl">Active Word Color</div>
+                <div class="color-row">
+                  <input type="color"
+                    value={(templateVal as any).activeWordColor ?? templateVal.primaryColor}
+                    oninput={(e)=>updateActiveTemplate({activeWordColor:e.currentTarget.value} as any)} />
+                  <span class="color-value">{(templateVal as any).activeWordColor ?? templateVal.primaryColor} / 100%</span>
+                </div>
 
-                {#if (templateVal as any).lineBgEnabled}
-                  <!-- Color -->
-                  <div class="s-lbl">Color</div>
-                  <div class="color-row">
-                    <input type="color"
-                      value={(templateVal as any).lineBgColor ?? '#000000'}
-                      oninput={(e)=>updateActiveTemplate({lineBgColor:e.currentTarget.value} as any)} />
-                    <span class="color-value">{(templateVal as any).lineBgColor ?? '#000000'} / 100%</span>
+                <!-- Active word background -->
+                <div class="s-lbl" style="margin-top:.6rem">Active Word Background</div>
+                <div class="section-card">
+                  <div class="section-card-hdr">
+                    <span>Background</span>
+                    <button class="toggle-switch toggle-switch-sm"
+                      class:on={(templateVal as any).lineBgEnabled}
+                      onclick={()=>updateActiveTemplate({lineBgEnabled:!(templateVal as any).lineBgEnabled} as any)}>
+                      <span class="toggle-thumb"></span>
+                    </button>
                   </div>
-
-                  <!-- Padding -->
-                  <div class="s-lbl" style="margin-top:.5rem">Padding</div>
-                  <div class="field-row">
-                    <label>Horiz</label>
-                    <input type="range" min="0" max="2" step="0.05"
-                      value={(templateVal as any).lineBgPaddingX ?? 0.5}
-                      oninput={(e)=>updateActiveTemplate({lineBgPaddingX:Number(e.currentTarget.value)} as any)} />
-                    <span class="rval">{((templateVal as any).lineBgPaddingX ?? 0.5).toFixed(2)}</span>
-                  </div>
-                  <div class="field-row">
-                    <label>Vert</label>
-                    <input type="range" min="0" max="1" step="0.05"
-                      value={(templateVal as any).lineBgPaddingY ?? 0.2}
-                      oninput={(e)=>updateActiveTemplate({lineBgPaddingY:Number(e.currentTarget.value)} as any)} />
-                    <span class="rval">{((templateVal as any).lineBgPaddingY ?? 0.2).toFixed(2)}</span>
-                  </div>
-
-                  <!-- Corners -->
-                  <div class="s-lbl">Corners</div>
-                  <div class="chip-row">
-                    <button class="chip-btn" class:active={!((templateVal as any).lineBgRounded)}
-                      onclick={()=>updateActiveTemplate({lineBgRounded:false} as any)}>Sharp</button>
-                    <button class="chip-btn" class:active={(templateVal as any).lineBgRounded}
-                      onclick={()=>updateActiveTemplate({lineBgRounded:true} as any)}>Rounded</button>
-                  </div>
-                {/if}
+                  {#if (templateVal as any).lineBgEnabled}
+                    <div class="color-row">
+                      <input type="color"
+                        value={(templateVal as any).activeWordBgColor ?? '#ffb900'}
+                        oninput={(e)=>updateActiveTemplate({activeWordBgColor:e.currentTarget.value} as any)} />
+                      <span class="color-value">{(templateVal as any).activeWordBgColor ?? '#ffb900'} / 100%</span>
+                    </div>
+                    <div class="field-row" style="margin-top:.4rem">
+                      <label>Padding X</label>
+                      <input type="range" min="0" max="1" step="0.05"
+                        value={(templateVal as any).activeWordBgPaddingX ?? 0.25}
+                        oninput={(e)=>updateActiveTemplate({activeWordBgPaddingX:Number(e.currentTarget.value)} as any)} />
+                      <span class="rval">{((templateVal as any).activeWordBgPaddingX ?? 0.25).toFixed(2)}</span>
+                    </div>
+                    <div class="field-row">
+                      <label>Padding Y</label>
+                      <input type="range" min="0" max="1" step="0.05"
+                        value={(templateVal as any).activeWordBgPaddingY ?? 0.2}
+                        oninput={(e)=>updateActiveTemplate({activeWordBgPaddingY:Number(e.currentTarget.value)} as any)} />
+                      <span class="rval">{((templateVal as any).activeWordBgPaddingY ?? 0.2).toFixed(2)}</span>
+                    </div>
+                    <!-- Rounded vs sharp corners -->
+                    <div class="field-row" style="margin-top:.2rem">
+                      <label style="font-size:.7rem;color:var(--color-text-muted);">Corners</label>
+                      <div class="chip-row" style="flex:1">
+                        <button class="chip-btn" class:active={!((templateVal as any).activeWordBgRounded)}
+                          onclick={()=>updateActiveTemplate({activeWordBgRounded:false} as any)}>Sharp</button>
+                        <button class="chip-btn" class:active={(templateVal as any).activeWordBgRounded}
+                          onclick={()=>updateActiveTemplate({activeWordBgRounded:true} as any)}>Rounded</button>
+                      </div>
+                    </div>
+                  {/if}
+                </div>
 
               </div>
             {/if}
@@ -1129,8 +1146,10 @@
   .section-card{border:1px solid var(--color-border);border-radius:8px;padding:.55rem .65rem;display:flex;flex-direction:column;gap:.4rem;background:var(--color-surface)}
   .section-card-hdr{display:flex;align-items:center;justify-content:space-between;font-size:.75rem;color:var(--color-text);font-weight:500}
   /* Active Word preview */
+  .aw-preview{display:flex;align-items:center;justify-content:center;padding:.9rem .5rem;border-radius:8px;background:#111;gap:.25em;margin-bottom:.25rem}
+  .aw-prev-word{font-size:1.3rem;font-weight:700;line-height:1.3;white-space:nowrap}
+  .aw-prev-bg{display:inline;line-height:inherit}
   .aw-active-word{display:inline;line-height:inherit;white-space:nowrap}
-  .bg-preview{display:flex;align-items:center;justify-content:center;min-height:2.5rem;border-radius:6px;margin-bottom:.25rem;white-space:nowrap;transition:background .15s,padding .15s}
   /* Remove old sub-tabs now replaced by sub-sidebar rail */
   @keyframes sub-fade{from{opacity:0}to{opacity:1}}
   @keyframes sub-pop{from{transform:scale(0.5);opacity:0}to{transform:scale(1);opacity:1}}
