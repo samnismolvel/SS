@@ -40,11 +40,18 @@
   // 1920×1080) because 384/288 ≠ 16/9, making the preview too small.
   const ASS_SCRIPT_H = 288
   let previewFontScale = $derived((() => {
-    // Touch currentTime so this re-evaluates after video metadata loads
     void currentTime
     const frame = getFrameRect()
     if (!frame || frame.height === 0) return 1
     return frame.height / ASS_SCRIPT_H
+  })())
+
+  // Frame pixel width — used to give sub-outer a stable pixel width so that
+  // overlayWidthPct resolves against the frame, not the element's own content.
+  let frameWidthPx = $derived((() => {
+    void currentTime
+    const frame = getFrameRect()
+    return frame ? frame.width : 0
   })())
 
   // Typewriter preview — compute revealed chars from currentTime
@@ -431,7 +438,7 @@
 
             <!-- Outer positioner — handles drag-to-position -->
             <div class="sub-outer"
-              style="position:absolute;{getOverlayPositionStyle()}"
+              style="position:absolute;{getOverlayPositionStyle()}{frameWidthPx > 0 ? 'width:' + frameWidthPx + 'px;' : ''}align-items:{getTextAlign(effectiveAlignment) === 'left' ? 'flex-start' : getTextAlign(effectiveAlignment) === 'right' ? 'flex-end' : 'center'};"
               onpointerdown={onOuterPointerDown}
               onpointermove={onOuterPointerMove}
               onpointerup={onOuterPointerUp}
@@ -441,7 +448,8 @@
 
               <!-- Constrained text box with side handles -->
               <div class="sub-box"
-                style="width:{overlayWidthPct}%;text-align:{getTextAlign(effectiveAlignment)};cursor:{isDragging?'grabbing':'grab'};">
+                style="width:{overlayWidthPct}%;text-align:{getTextAlign(effectiveAlignment)};cursor:{isDragging?'grabbing':'grab'};"
+                onpointerdown={(e) => { if (!isResizing) { e.stopPropagation(); onSubPointerDown(e) } }}>>
 
                 <!-- Left resize handle -->
                 <div class="resize-handle resize-left"
@@ -1001,7 +1009,7 @@
   .video-wrap{flex:1;position:relative;background:#000;display:flex;align-items:center;justify-content:center;overflow:hidden}
   .video{width:100%;height:100%;object-fit:contain;display:block}.no-video{color:#666;font-size:.9rem}
   /* ── Subtitle overlay ── */
-  .sub-outer{pointer-events:auto;display:inline-flex;flex-direction:column;align-items:center;gap:0}
+  .sub-outer{pointer-events:auto;display:flex;flex-direction:column;align-items:center;gap:0}
   .sub-box{position:relative;display:inline-block;min-width:60px;box-sizing:border-box;padding:0 18px}
   .sub-box:hover .resize-handle{opacity:1}
   .sub-text{display:block;line-height:1.35;white-space:pre-wrap;word-break:break-word;padding:2px 0}
