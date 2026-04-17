@@ -38,10 +38,7 @@ export interface Template {
   // Active word highlight (color only — no background)
   activeWordColor: string
   // Line background — opaque box behind each subtitle line
-  lineBgEnabled: boolean
-  lineBgColor: string
-  lineBgPaddingX: number    // em units, horizontal padding inside the box
-  lineBgPaddingY: number    // em units, vertical padding inside the box
+ 
   // Shadow
   shadowEnabled: boolean
   shadowColor: string
@@ -88,7 +85,9 @@ export interface QueueItem {
   error: string | null
   mode: QueueItemMode       // template = auto-burn, manual = open editor
   templateId?: string       // which template to use if mode === 'template'
-  srtContent?: string       // stored after transcription, before burn/edit
+  srtContent?: string  
+  // en QueueItem
+  language?: string   // "auto" | "es" | "en" | etc.     // stored after transcription, before burn/edit
 }
 
 // ─── Editor Session ──────────────────────────────────────────────────────────

@@ -114,7 +114,8 @@ async fn process_video(
     app: tauri::AppHandle,
     video_path: String,
     _output_path: String,
-    skip_editor: bool
+    skip_editor: bool,
+    language: Option<String>,  // <-- agrega esto
 ) -> Result<String, String> {
     let resource_path = app.path().resource_dir()
         .map_err(|_| "Could not locate app resources".to_string())?;
@@ -161,9 +162,11 @@ async fn process_video(
     emit_progress(&app, "transcribing", "Transcribing audio (this may take a while)...");
     #[cfg_attr(not(target_os = "windows"), allow(unused_mut))]
     let mut whisper_cmd = Command::new(&whisper_path);
+    let lang = language.as_deref().unwrap_or("auto");
     whisper_cmd.args([
         "-m", model_path.to_str().unwrap(),
         "-f", audio_path.to_str().unwrap(),
+        "-l", lang,          // <-- agrega esto
         "-ojf",
         "-of", json_path.to_str().unwrap().trim_end_matches(".json")
     ]);

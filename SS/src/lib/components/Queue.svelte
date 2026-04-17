@@ -6,7 +6,7 @@
   import {
     queue, processing, currentVideoIndex, currentStep, currentMessage,
     processingPhase, addToQueue, removeFromQueue, moveItem, clearCompleted,
-    updateQueueItem, setItemMode, setItemTemplate, resetProgress
+    updateQueueItem, setItemMode, setItemTemplate, setItemLanguage, resetProgress  // <-- agrega setItemLanguage
   } from '$lib/stores/queue'
   import { openSession } from '$lib/stores/editor'
   import { allTemplates } from '$lib/stores/templates'
@@ -14,6 +14,19 @@
   import type { ProgressEvent, QueueItem, Template } from '$lib/types'
 
   const STEPS = ['extracting', 'transcribing', 'burning', 'done'] as const
+
+  const LANGUAGES = [
+    { code: 'auto', label: '🌐 Auto-detect' },
+    { code: 'es',   label: '🇪🇸 Español' },
+    { code: 'en',   label: '🇺🇸 English' },
+    { code: 'pt',   label: '🇧🇷 Português' },
+    { code: 'fr',   label: '🇫🇷 Français' },
+    { code: 'de',   label: '🇩🇪 Deutsch' },
+    { code: 'it',   label: '🇮🇹 Italiano' },
+    { code: 'zh',   label: '🇨🇳 中文' },
+    { code: 'ja',   label: '🇯🇵 日本語' },
+    { code: 'ru',   label: '🇷🇺 Русский' },
+  ] as const
 
   function stepIndex(step: string) {
     return STEPS.indexOf(step as typeof STEPS[number])
@@ -72,7 +85,8 @@
         const srt = await invoke<string>('process_video', {
           videoPath: queueVal[i].inputPath,
           outputPath: queueVal[i].outputPath,
-          skipEditor: true
+          skipEditor: true,
+          language: queueVal[i].language ?? 'auto'
         })
         if (!srt || srt.length === 0) throw new Error('No transcription returned')
         updateQueueItem(queueVal[i].id, { srtContent: srt, status: 'pending' })
@@ -186,6 +200,17 @@
                 <button class="mode-tab" class:active={item.mode === 'template'}
                   onclick={() => setItemMode(item.id, 'template')} disabled={processingVal}>Template</button>
               </div>
+
+                <!-- NUEVO: selector de idioma -->
+              <select class="template-select lang-select"
+                value={item.language ?? 'auto'}
+                onchange={(e) => setItemLanguage(item.id, e.currentTarget.value)}
+                disabled={processingVal}>
+                {#each LANGUAGES as lang}
+                  <option value={lang.code}>{lang.label}</option>
+                {/each}
+              </select>
+
               {#if item.mode === 'template'}
                 <select class="template-select"
                   value={item.templateId ?? templatesVal[0]?.id}
@@ -230,6 +255,9 @@
 </div>
 
 <style>
+  .lang-select {
+    max-width: 160px;
+  }
   .queue-view { display: flex; flex-direction: column; gap: 1.5rem; height: 100%; }
   .queue-header { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
 

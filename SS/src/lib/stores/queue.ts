@@ -31,8 +31,15 @@ export function addToQueue(paths: string[]) {
       status: 'pending' as const,
       error: null,
       mode: 'manual' as QueueItemMode,
+      language: 'auto'
     }))
   ])
+}
+
+export function setItemLanguage(id: string, language: string) {
+  queue.update(q => q.map(item =>
+    item.id === id ? { ...item, language } : item
+  ))
 }
 
 export function removeFromQueue(id: string) {
