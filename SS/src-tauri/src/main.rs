@@ -166,7 +166,9 @@ async fn process_video(
     whisper_cmd.args([
         "-m", model_path.to_str().unwrap(),
         "-f", audio_path.to_str().unwrap(),
-        "-l", lang,          // <-- agrega esto
+        "-l", lang,
+        "--split-on-word",   // corta en palabras, no sub-tokens
+        "--max-len", "1",    // 1 palabra por segmento (para tus timestamps por token)
         "-ojf",
         "-of", json_path.to_str().unwrap().trim_end_matches(".json")
     ]);
