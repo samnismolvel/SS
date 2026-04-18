@@ -176,28 +176,9 @@ function buildStyleLine(name: string, t: EffectiveStyle): string {
   const primary   = hexToAss(t.primaryColor)
   const secondary = hexToAss(t.secondaryColor)
   const outline   = hexToAss(t.outlineColor)
+  const back      = hexToAss(t.backColor, 128)
   const bold      = t.bold ? -1 : 0
   const italic    = t.italic ? -1 : 0
-
-  if ((t as any).lineBgEnabled) {
-    // BorderStyle 3 = opaque box behind the text.
-    // BackColour (field 8) is the box fill color.
-    // In BorderStyle=3, \bord controls the size of the box padding on all sides
-    // (libass extends the box by \bord pixels in every direction around the glyphs).
-    // We bake a base \bord=0 here and apply the real padding per-event via inline \bord.
-    const bgColor = hexToAss((t as any).lineBgColor ?? '#000000', 0)
-    return [
-      'Style: ' + name,
-      t.fontName, t.fontSize,
-      primary, secondary, outline, bgColor,
-      bold, italic, 0, 0,
-      t.scaleX, t.scaleY, t.spacing, 0,
-      3, 0, 0, t.alignment,
-      t.marginL, t.marginR, t.marginV, 1,
-    ].join(',')
-  }
-
-  const back = hexToAss(t.backColor, 128)
   return [
     'Style: ' + name,
     t.fontName, t.fontSize,
@@ -424,16 +405,11 @@ function buildPosTag(template: Template): string {
 // base event plus one Layer 1 event per word, both anchored with identical \pos
 // to prevent libass collision avoidance from displacing them.
 //
-// Line background:
-// When lineBgEnabled, the Default style uses BorderStyle 3 (opaque box).
-// The \bord inline tag per-event controls the padding around the text.
-
 function buildPlainEvents(subtitles: Subtitle[], template: Template, rawSubs: Subtitle[] = []): string[] {
   const events: string[] = []
   const syncOffset = template.syncOffset ?? 50
 
   const needsWordHighlight = (template.activeWordColor !== template.primaryColor)
-  const lineBgEnabled      = (template as any).lineBgEnabled as boolean | undefined
 
   // Convert each display subtitle into a Line for timing correction.
   const lines: Line[] = subtitles
@@ -481,26 +457,6 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template, rawSubs: Su
     const text        = transformed.replace(/\{/g, '\\{').replace(/\}/g, '\\}')
     const durationMs  = line.endMs - line.startMs
     const posTag      = buildPosTag(template)
-    const durationMs_ = durationMs  // alias for clarity
-
-    // Line background padding: when lineBgEnabled, the style has BorderStyle=3.
-    // In BorderStyle=3, \bord N expands the opaque box by N script-pixels on all
-    // sides around the glyphs — this IS the padding. We compute it from the
-    // user's paddingX/Y sliders (em-relative), converting to script-space pixels.
-    // \be N blurs the box edges: \be0 = sharp corners, \be2+ = soft/rounded look.
-    const lineBgPad = lineBgEnabled
-      ? (() => {
-          const fs   = style.fontSize ?? template.fontSize ?? 24
-          const padX = Math.max(1, Math.round(((template as any).lineBgPaddingX ?? 0.5) * fs))
-          const padY = Math.max(1, Math.round(((template as any).lineBgPaddingY ?? 0.2) * fs))
-          // Use the average for a single uniform \bord value (ASS BorderStyle=3
-          // does not support independent X/Y box expansion in standard libass).
-          const bord    = Math.round((padX + padY) / 2)
-          const rounded = (template as any).lineBgRounded ?? false
-          const be      = rounded ? '\\be3' : '\\be0'
-          return '{\\bord' + bord + be + '}'
-        })()
-      : ''
 
     const inlineTags = buildInlineTags(style, template)
     const tags       = posTag + inlineTags
@@ -517,13 +473,13 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template, rawSubs: Su
       events.push(...buildTypewriterEvents(
         text, start, end,
         line.startMs, line.endMs,
-        lineBgPad + tags
+        tags
       ))
       continue
     }
 
     if (!needsWordHighlight) {
-      events.push('Dialogue: 0,' + start + ',' + end + ',Default,,0,0,0,,' + animTag + lineBgPad + tags + text)
+      events.push('Dialogue: 0,' + start + ',' + end + ',Default,,0,0,0,,' + animTag + tags + text)
       continue
     }
 
@@ -554,7 +510,7 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template, rawSubs: Su
     })
 
     // Layer 0: base line
-    events.push('Dialogue: 0,' + start + ',' + end + ',Default,,0,0,0,,' + animTag + lineBgPad + alignPosTag + tagsNoAn + text)
+    events.push('Dialogue: 0,' + start + ',' + end + ',Default,,0,0,0,,' + animTag + alignPosTag + tagsNoAn + text)
 
     const segStartMs = line.startMs
     const segEndMs   = line.endMs
@@ -592,7 +548,7 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template, rawSubs: Su
         }
       }
 
-      events.push('Dialogue: 1,' + wStart + ',' + wEnd + ',Default,,0,0,0,,' + lineBgPad + alignPosTag + tagsNoAn + lineText)
+      events.push('Dialogue: 1,' + wStart + ',' + wEnd + ',Default,,0,0,0,,' + alignPosTag + tagsNoAn + lineText)
     }
   }
 
@@ -685,12 +641,10 @@ export function extractPauseGroups(rawSubs: Subtitle[]): PauseGroups {
 
   for (let i = 0; i < tokens.length; i++) {
     if (clauseBuf.length > 0) {
-      const gap     = tokens[i].startMs - clauseBuf[clauseBuf.length - 1].endMs
-      const prevRaw = clauseBuf[clauseBuf.length - 1].rawWord
-      // Break clause on timing gap OR sentence-ending punctuation on previous token.
-      // This ensures ratio=1.0 never merges across sentence boundaries.
-      const hasSentenceEnd = /[.!?]$/.test(prevRaw.trim())
-      if (gap >= CLAUSE_CUT_MS || hasSentenceEnd) flushClause()
+      const gap = tokens[i].startMs - clauseBuf[clauseBuf.length - 1].endMs
+      // Break clause on timing gap only — punctuation does not force a break.
+      // The user controls text appearance via hidePunctuation at burn time.
+      if (gap >= CLAUSE_CUT_MS) flushClause()
     }
     clauseBuf.push(tokens[i])
   }

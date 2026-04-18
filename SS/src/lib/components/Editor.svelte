@@ -77,7 +77,7 @@
 
   // Active word index — which rawSub token is active at currentTime
   let activeWordIndexDerived = $derived((() => {
-    if (!templateVal?.lineBgEnabled && templateVal?.activeWordColor === templateVal?.primaryColor) return -1
+    if (templateVal?.activeWordColor === templateVal?.primaryColor) return -1
     const raw: any[] = sessionVal?.rawSubs ?? []
     const tMs = currentTime * 1000
     return raw.findIndex((sub: any) => {
@@ -89,7 +89,7 @@
 
   // Words of the active sub, with indices into rawSubs to check active state
   let activeSubWords = $derived((() => {
-    const needsHighlight = templateVal?.lineBgEnabled ||
+    const needsHighlight =
       (templateVal?.activeWordColor && templateVal.activeWordColor !== templateVal.primaryColor)
     if (!activeSub || !sessionVal?.rawSubs || !needsHighlight) return null
     // Find which rawSubs fall within this display sub's time range
@@ -153,6 +153,23 @@
     seekTo(srtToSeconds(sub.start))
     const i = items.indexOf(sub); if (i !== -1) selectSegment(i)
     if (videoEl && playing) { videoEl.pause(); playing = false }
+  }
+
+  // Cap-list DOM ref — used to scroll the selected segment into view
+  let capListEl = $state(null as HTMLDivElement | null)
+
+  function openInCaptions(sub: any) {
+    // Ensure we're on the main rail (not sub-sidebar) and captions panel
+    subSidebar = null
+    activePanel = 'captions'
+    seekToSegment(sub)
+    // Scroll the segment into view after the panel has rendered
+    requestAnimationFrame(() => {
+      const i = items.indexOf(sub)
+      if (i === -1 || !capListEl) return
+      const el = capListEl.querySelectorAll('.cap-item')[i] as HTMLElement | undefined
+      el?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    })
   }
   function formatTime(s: number) { return `${Math.floor(s/60)}:${Math.floor(s%60).toString().padStart(2,'0')}` }
 
@@ -444,7 +461,8 @@
               onpointerup={onOuterPointerUp}
               onpointercancel={onOuterPointerUp}
               onmouseenter={() => overlayHovered = true}
-              onmouseleave={() => overlayHovered = false}>
+              onmouseleave={() => overlayHovered = false}
+              ondblclick={() => openInCaptions(d)}>
 
               <!-- Constrained text box with side handles -->
               <div class="sub-box"
@@ -474,13 +492,13 @@
                 {getAnimationStyle(templateVal?.animation)}">
   <!-- active word rendering — ver cambio 2 -->
                   
-                    {#if activeSubWords && (templateVal?.lineBgEnabled || (templateVal?.activeWordColor && templateVal.activeWordColor !== templateVal.primaryColor))}
-                    {#each activeSubWords as {word, isActive}, wi}
-                      {#if wi > 0}&nbsp;{/if}{#if isActive}<span class="aw-active-word" style="color:{templateVal?.activeWordColor ?? ef?.primaryColor};{templateVal?.lineBgEnabled ? 'background:' + (templateVal?.activeWordBgColor ?? '#ffb900') + ';padding:' + (templateVal?.activeWordBgPaddingY ?? 0.2) + 'em ' + (templateVal?.activeWordBgPaddingX ?? 0.25) + 'em;border-radius:' + (templateVal?.activeWordBgRounded ? '0.4em' : '0') + ';' : ''}">{word}</span>{:else}{word}{/if}
-                    {/each}
-                  {:else}
-                    {previewText}
-                  {/if}
+                    {#if activeSubWords && templateVal?.activeWordColor && templateVal.activeWordColor !== templateVal.primaryColor}
+                      {#each activeSubWords as {word, isActive}, wi}
+                        {#if wi > 0}&nbsp;{/if}{#if isActive}<span class="aw-active-word" style="color:{templateVal.activeWordColor};">{word}</span>{:else}{word}{/if}
+                      {/each}
+                    {:else}
+                      {previewText}
+                    {/if}
 
                 </span>
 
@@ -798,17 +816,7 @@
                     font-family:{templateVal.fontName};
                     font-weight:{templateVal.bold ? 'bold' : 'normal'};
                     font-style:{templateVal.italic ? 'italic' : 'normal'};
-                  ">
-                    {#if (templateVal as any).lineBgEnabled}
-                      <span class="aw-prev-bg" style="
-                        background:{(templateVal as any).activeWordBgColor ?? '#ffb900'};
-                        padding:{((templateVal as any).activeWordBgPaddingY ?? 0.2)}em {((templateVal as any).activeWordBgPaddingX ?? 0.25)}em;
-                        border-radius:{(templateVal as any).activeWordBgRounded ? '0.4em' : '0'};
-                      ">YOUR</span>
-                    {:else}
-                      YOUR
-                    {/if}
-                  </span>
+                  ">YOUR</span>
                   <span class="aw-prev-word" style="
                     color:{templateVal.primaryColor};
                     font-family:{templateVal.fontName};
@@ -823,51 +831,6 @@
                     value={(templateVal as any).activeWordColor ?? templateVal.primaryColor}
                     oninput={(e)=>updateActiveTemplate({activeWordColor:e.currentTarget.value} as any)} />
                   <span class="color-value">{(templateVal as any).activeWordColor ?? templateVal.primaryColor} / 100%</span>
-                </div>
-
-                <!-- Active word background -->
-                <div class="s-lbl" style="margin-top:.6rem">Active Word Background</div>
-                <div class="section-card">
-                  <div class="section-card-hdr">
-                    <span>Background</span>
-                    <button class="toggle-switch toggle-switch-sm"
-                      class:on={(templateVal as any).lineBgEnabled}
-                      onclick={()=>updateActiveTemplate({lineBgEnabled:!(templateVal as any).lineBgEnabled} as any)}>
-                      <span class="toggle-thumb"></span>
-                    </button>
-                  </div>
-                  {#if (templateVal as any).lineBgEnabled}
-                    <div class="color-row">
-                      <input type="color"
-                        value={(templateVal as any).activeWordBgColor ?? '#ffb900'}
-                        oninput={(e)=>updateActiveTemplate({activeWordBgColor:e.currentTarget.value} as any)} />
-                      <span class="color-value">{(templateVal as any).activeWordBgColor ?? '#ffb900'} / 100%</span>
-                    </div>
-                    <div class="field-row" style="margin-top:.4rem">
-                      <label>Padding X</label>
-                      <input type="range" min="0" max="1" step="0.05"
-                        value={(templateVal as any).activeWordBgPaddingX ?? 0.25}
-                        oninput={(e)=>updateActiveTemplate({activeWordBgPaddingX:Number(e.currentTarget.value)} as any)} />
-                      <span class="rval">{((templateVal as any).activeWordBgPaddingX ?? 0.25).toFixed(2)}</span>
-                    </div>
-                    <div class="field-row">
-                      <label>Padding Y</label>
-                      <input type="range" min="0" max="1" step="0.05"
-                        value={(templateVal as any).activeWordBgPaddingY ?? 0.2}
-                        oninput={(e)=>updateActiveTemplate({activeWordBgPaddingY:Number(e.currentTarget.value)} as any)} />
-                      <span class="rval">{((templateVal as any).activeWordBgPaddingY ?? 0.2).toFixed(2)}</span>
-                    </div>
-                    <!-- Rounded vs sharp corners -->
-                    <div class="field-row" style="margin-top:.2rem">
-                      <label style="font-size:.7rem;color:var(--color-text-muted);">Corners</label>
-                      <div class="chip-row" style="flex:1">
-                        <button class="chip-btn" class:active={!((templateVal as any).activeWordBgRounded)}
-                          onclick={()=>updateActiveTemplate({activeWordBgRounded:false} as any)}>Sharp</button>
-                        <button class="chip-btn" class:active={(templateVal as any).activeWordBgRounded}
-                          onclick={()=>updateActiveTemplate({activeWordBgRounded:true} as any)}>Rounded</button>
-                      </div>
-                    </div>
-                  {/if}
                 </div>
 
               </div>
@@ -955,7 +918,7 @@
               </div>
             </div>
           {/if}
-          <div class="cap-list">
+          <div class="cap-list" bind:this={capListEl}>
             {#each items as sub,i}
               <div class="cap-item" class:active={selIdx===i} onclick={()=>seekToSegment(sub)} role="button" tabindex="0" onkeydown={(e)=>e.key==='Enter'&&seekToSegment(sub)}>
                 <span class="cap-num">#{sub.index}</span>
