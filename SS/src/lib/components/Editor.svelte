@@ -467,7 +467,7 @@
               <!-- Constrained text box with side handles -->
               <div class="sub-box"
                 style="width:{overlayWidthPct}%;text-align:{getTextAlign(effectiveAlignment)};cursor:{isDragging?'grabbing':'grab'};"
-                onpointerdown={(e) => { if (!isResizing) { e.stopPropagation(); onSubPointerDown(e) } }}>>
+                onpointerdown={(e) => { if (!isResizing) { e.stopPropagation(); onSubPointerDown(e) } }}>
 
                 <!-- Left resize handle -->
                 <div class="resize-handle resize-left"
@@ -1119,7 +1119,6 @@
   /* Active Word preview */
   .aw-preview{display:flex;align-items:center;justify-content:center;padding:.9rem .5rem;border-radius:8px;background:#111;gap:.25em;margin-bottom:.25rem}
   .aw-prev-word{font-size:1.3rem;font-weight:700;line-height:1.3;white-space:nowrap}
-  .aw-prev-bg{display:inline;line-height:inherit}
   .aw-active-word{display:inline;line-height:inherit;white-space:nowrap}
   /* Remove old sub-tabs now replaced by sub-sidebar rail */
   @keyframes sub-fade{from{opacity:0}to{opacity:1}}

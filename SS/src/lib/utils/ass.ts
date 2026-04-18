@@ -152,12 +152,33 @@ function buildTokens(subtitles: Subtitle[]): Token[] {
     }
   }
 
-  return merged
+  // Merge standalone punctuation tokens (e.g. "," "." "!") emitted by whisper
+  // into the previous token so punctuation is preserved in segment text.
+  // Without this they get filtered by isValidWord and disappear silently.
+  const withPunct: Token[] = []
+  for (const token of merged) {
+    const isPunct = /^[^\w]+$/.test(token.word.trim())
+    if (isPunct && withPunct.length > 0) {
+      const prev = withPunct[withPunct.length - 1]
+      withPunct[withPunct.length - 1] = {
+        ...prev,
+        word:    prev.word + token.word.trim(),
+        rawWord: prev.rawWord + token.rawWord.trim(),
+        endSrt:  token.endSrt,
+        endMs:   token.endMs,
+      }
+    } else {
+      withPunct.push(token)
+    }
+  }
+
+  return withPunct
     .map(t => ({
       ...t,
       rawWord: t.word,
-      // Keep trailing punctuation in `word` so it appears in the subtitle text
-      // and hidePunctuation can strip it. Only strip leading non-word chars.
+      // Strip only leading non-word chars (e.g. whisper sometimes emits '"word').
+      // Trailing punctuation is intentionally kept — hidePunctuation removes it
+      // at burn/preview time when the user enables that option.
       word: t.word.replace(/^[^\w]+/, '').trim(),
     }))
     .filter(t => isValidWord(t.word))
