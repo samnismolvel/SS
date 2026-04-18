@@ -663,11 +663,14 @@ export function extractPauseGroups(rawSubs: Subtitle[]): PauseGroups {
   for (let i = 0; i < tokens.length; i++) {
     if (clauseBuf.length > 0) {
       const gap = tokens[i].startMs - clauseBuf[clauseBuf.length - 1].endMs
-      // Break clause on timing gap only — punctuation does not force a break.
-      // The user controls text appearance via hidePunctuation at burn time.
       if (gap >= CLAUSE_CUT_MS) flushClause()
     }
     clauseBuf.push(tokens[i])
+    // After pushing: if this token ends a sentence (.!?), flush the clause.
+    // This makes ratio=1.0 produce one segment per sentence rather than merging
+    // everything. The word field already has punctuation merged in (e.g. "suit.")
+    // so this check is reliable. hidePunctuation strips it at render/burn time.
+    if (/[.!?]$/.test(tokens[i].word.trim())) flushClause()
   }
   flushClause()
 
