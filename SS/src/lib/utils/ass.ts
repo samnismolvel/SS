@@ -670,7 +670,7 @@ export function extractPauseGroups(rawSubs: Subtitle[]): PauseGroups {
     // This makes ratio=1.0 produce one segment per sentence rather than merging
     // everything. The word field already has punctuation merged in (e.g. "suit.")
     // so this check is reliable. hidePunctuation strips it at render/burn time.
-    if (/[.!?]$/.test(tokens[i].word.trim())) flushClause()
+    if (/[.!?,;]$/.test(tokens[i].word.trim())) flushClause()
   }
   flushClause()
 
