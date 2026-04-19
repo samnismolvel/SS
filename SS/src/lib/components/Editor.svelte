@@ -3,6 +3,7 @@
   import { activeTemplate, updateActiveTemplate, allTemplates, setActiveTemplate, saveActiveAsTemplate } from '$lib/stores/templates'
   import { buildAss, parseSRT } from '$lib/utils/ass'
   import { convertFileSrc } from '@tauri-apps/api/core'
+  import WordTimeline from './WordTimeline.svelte'
   import type { Alignment, AnimationMode } from '$lib/types'
 
   interface Props {
@@ -567,6 +568,18 @@
             </div>
             {/key}
           {/if}
+
+          <!-- Timeline de palabras -->
+          {#if sessionVal?.rawSubs?.length && duration > 0}
+            <WordTimeline
+              rawSubs={sessionVal.rawSubs}
+              currentTime={currentTime}
+              duration={duration}
+              onseek={(t) => seekTo(t)}
+              onchange={(updated) => session.update((s: any) => s ? { ...s, rawSubs: updated } : null)}
+            />
+          {/if}
+
           <div class="video-controls">
             <button class="play-btn" onclick={togglePlay}>{playing?'⏸':'▶'}</button>
             <span class="time">{formatTime(currentTime)} / {formatTime(duration)}</span>
