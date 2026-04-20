@@ -420,105 +420,147 @@
   )
 
   // ── Word timeline ──────────────────────────────────────────────────────────
-  // rawSubs from the session give us one token per whisper word with precise
-  // start/end timestamps. We display them as proportional-width boxes on a
-  // scrolling track, with a fixed playhead at the centre.
+  // Playhead behaviour (DAW-style):
+  //   - While currentTime * PX_PER_SEC < half the timeline width, the playhead
+  //     walks rightward and the track stays still (translateX = 0).
+  //   - Once the playhead reaches the midpoint, it stays fixed and the track
+  //     scrolls left to keep up.
+  //
+  // Drag modes per handle:
+  //   body  → move the whole token (shift start+end together)
+  //   left  → resize: adjust start, snap previous token end
+  //   right → resize: adjust end, snap next token start
 
-  const TL_PX_PER_SEC = 120   // pixels per second of audio in the timeline
-  const TL_HEIGHT     = 64    // px height of the timeline strip
+  const TL_PX_PER_SEC = 120
 
   let timelineEl = $state(null as HTMLDivElement | null)
 
-  // Flat token list from rawSubs
   let tlTokens = $derived((() => {
     const raw: any[] = sessionVal?.rawSubs ?? []
     return raw.map((s: any) => ({
       start: srtToSeconds(s.start),
       end:   srtToSeconds(s.end),
       text:  s.text,
-      sub:   s,
     }))
   })())
 
-  // Translate: keep playhead fixed at 40% of timeline width, scroll content
-  let tlTranslateX = $derived((() => {
+  // DAW-style playhead + scroll logic
+  let tlPlayheadPx = $derived((() => {
     if (!timelineEl) return 0
-    const cx = timelineEl.clientWidth * 0.4
-    return cx - currentTime * TL_PX_PER_SEC
+    const half = timelineEl.clientWidth * 0.5
+    const posPx = currentTime * TL_PX_PER_SEC
+    return Math.min(posPx, half)
   })())
 
-  // Drag state for adjusting token boundaries
-  let tlDragging     = $state(false)
-  let tlDragIdx      = $state(-1)
-  let tlDragSide     = $state<'left'|'right'>('right')
-  let tlDragStartX   = $state(0)
-  let tlDragStartSec = $state(0)
+  let tlTrackOffsetX = $derived((() => {
+    if (!timelineEl) return 0
+    const half  = timelineEl.clientWidth * 0.5
+    const posPx = currentTime * TL_PX_PER_SEC
+    // Once the playhead would exceed half, shift the track left
+    return posPx > half ? -(posPx - half) : 0
+  })())
 
-  function tlPointerDown(e: PointerEvent, idx: number, side: 'left'|'right') {
+  // Drag state
+  // mode: 'move' | 'left' | 'right'
+  type TlMode = 'move' | 'left' | 'right'
+  let tlDragging      = $state(false)
+  let tlDragIdx       = $state(-1)
+  let tlDragMode      = $state<TlMode>('move')
+  let tlDragStartX    = $state(0)
+  let tlDragStartSec  = $state(0)   // for move: original start; for edge: original edge value
+  let tlDragHasMoved  = $state(false)
+
+  function tlPointerDown(e: PointerEvent, idx: number, mode: TlMode) {
     e.preventDefault(); e.stopPropagation()
     tlDragging     = true
     tlDragIdx      = idx
-    tlDragSide     = side
+    tlDragMode     = mode
     tlDragStartX   = e.clientX
-    tlDragStartSec = side === 'right' ? tlTokens[idx].end : tlTokens[idx].start
+    tlDragHasMoved = false
+    if (mode === 'right') tlDragStartSec = tlTokens[idx].end
+    else                  tlDragStartSec = tlTokens[idx].start
     ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
   }
 
   function tlPointerMove(e: PointerEvent) {
     if (!tlDragging || tlDragIdx < 0) return
     e.preventDefault()
-    const deltaSec = (e.clientX - tlDragStartX) / TL_PX_PER_SEC
-    const newSec   = Math.max(0, tlDragStartSec + deltaSec)
+    const rawDelta = e.clientX - tlDragStartX
+    // Require at least 3px movement before committing — prevents jitter on click
+    if (Math.abs(rawDelta) < 3 && !tlDragHasMoved) return
+    tlDragHasMoved = true
+    const deltaSec = rawDelta / TL_PX_PER_SEC
     const tok      = tlTokens[tlDragIdx]
 
-    if (tlDragSide === 'right') {
-      // Clamp: can't go past next token's start or before own start+50ms
-      const maxSec = tlDragIdx < tlTokens.length - 1 ? tlTokens[tlDragIdx + 1].start - 0.05 : (duration || 9999)
-      const clamped = Math.min(maxSec, Math.max(tok.start + 0.05, newSec))
+    if (tlDragMode === 'move') {
+      // Shift both start and end by the same delta
+      const newStart  = tlDragStartSec + deltaSec
+      const tokenDur  = tok.end - tok.start
+      const minStart  = tlDragIdx > 0 ? tlTokens[tlDragIdx - 1].end : 0
+      const maxStart  = tlDragIdx < tlTokens.length - 1
+                        ? tlTokens[tlDragIdx + 1].start - tokenDur
+                        : (duration || 9999) - tokenDur
+      const cStart    = Math.max(minStart, Math.min(maxStart, newStart))
+      session.update((s: any) => {
+        if (!s) return null
+        const rawSubs = [...s.rawSubs]
+        rawSubs[tlDragIdx] = {
+          ...rawSubs[tlDragIdx],
+          start: secToSrt(cStart),
+          end:   secToSrt(cStart + tokenDur),
+        }
+        return { ...s, rawSubs, isDirty: true }
+      })
+
+    } else if (tlDragMode === 'right') {
+      const newEnd  = tlDragStartSec + deltaSec
+      const maxSec  = tlDragIdx < tlTokens.length - 1 ? tlTokens[tlDragIdx + 1].start - 0.03 : (duration || 9999)
+      const clamped = Math.min(maxSec, Math.max(tok.start + 0.05, newEnd))
       session.update((s: any) => {
         if (!s) return null
         const rawSubs = [...s.rawSubs]
         rawSubs[tlDragIdx] = { ...rawSubs[tlDragIdx], end: secToSrt(clamped) }
-        // Snap next token start to match
-        if (tlDragIdx < rawSubs.length - 1) {
+        if (tlDragIdx < rawSubs.length - 1)
           rawSubs[tlDragIdx + 1] = { ...rawSubs[tlDragIdx + 1], start: secToSrt(clamped) }
-        }
         return { ...s, rawSubs, isDirty: true }
       })
+
     } else {
-      const minSec = tlDragIdx > 0 ? tlTokens[tlDragIdx - 1].end + 0.05 : 0
-      const clamped = Math.max(minSec, Math.min(tok.end - 0.05, newSec))
+      // left edge
+      const newStart = tlDragStartSec + deltaSec
+      const minSec   = tlDragIdx > 0 ? tlTokens[tlDragIdx - 1].end + 0.03 : 0
+      const clamped  = Math.max(minSec, Math.min(tok.end - 0.05, newStart))
       session.update((s: any) => {
         if (!s) return null
         const rawSubs = [...s.rawSubs]
         rawSubs[tlDragIdx] = { ...rawSubs[tlDragIdx], start: secToSrt(clamped) }
-        if (tlDragIdx > 0) {
+        if (tlDragIdx > 0)
           rawSubs[tlDragIdx - 1] = { ...rawSubs[tlDragIdx - 1], end: secToSrt(clamped) }
-        }
         return { ...s, rawSubs, isDirty: true }
       })
     }
   }
 
-  function tlPointerUp() { tlDragging = false; tlDragIdx = -1 }
+  function tlPointerUp() {
+    if (!tlDragHasMoved && !tlDragging) return
+    tlDragging = false; tlDragIdx = -1; tlDragHasMoved = false
+  }
 
   function secToSrt(sec: number): string {
     const ms  = Math.round(sec * 1000)
     const h   = Math.floor(ms / 3600000)
     const m   = Math.floor((ms % 3600000) / 60000)
-    const s   = Math.floor((ms % 60000) / 1000)
+    const s   = Math.floor((ms % 60000)  / 1000)
     const mil = ms % 1000
     return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')},${String(mil).padStart(3,'0')}`
   }
 
-  // Seek on word click (only if not dragging)
   function tlSeek(e: MouseEvent, tok: any) {
-    if (tlDragging) return
+    if (tlDragHasMoved) return   // was a drag, not a click
     e.stopPropagation()
     seekTo(tok.start)
   }
 
-  // Active token index
   let tlActiveIdx = $derived(tlTokens.findIndex(t => currentTime >= t.start && currentTime < t.end))
 </script>
 
@@ -689,11 +731,11 @@
           onpointerup={tlPointerUp}
           onpointercancel={tlPointerUp}>
 
-          <!-- Fixed playhead -->
-          <div class="tl-playhead"></div>
+          <!-- DAW-style playhead: moves right until midpoint, then stays fixed -->
+          <div class="tl-playhead" style="left:{tlPlayheadPx}px"></div>
 
-          <!-- Scrolling track -->
-          <div class="tl-track" style="transform:translateX({tlTranslateX}px);width:{Math.ceil(duration * TL_PX_PER_SEC) + 400}px">
+          <!-- Scrolling track — only shifts once playhead reaches midpoint -->
+          <div class="tl-track" style="transform:translateX({tlTrackOffsetX}px);width:{Math.ceil(duration * TL_PX_PER_SEC) + 400}px">
 
             <!-- Time ruler -->
             <div class="tl-ruler">
@@ -708,22 +750,23 @@
             <div class="tl-words">
               {#each tlTokens as tok, i}
                 {@const left  = tok.start * TL_PX_PER_SEC}
-                {@const width = Math.max(4, (tok.end - tok.start) * TL_PX_PER_SEC)}
+                {@const width = Math.max(6, (tok.end - tok.start) * TL_PX_PER_SEC)}
                 {@const isActive = i === tlActiveIdx}
                 <div
                   class="tl-word"
                   class:tl-active={isActive}
                   style="left:{left}px;width:{width}px"
                   onclick={(e) => tlSeek(e, tok)}
+                  onpointerdown={(e) => tlPointerDown(e, i, 'move')}
                   role="button" tabindex="0">
                   <span class="tl-word-txt">{tok.text}</span>
-                  <!-- Left drag handle -->
+                  <!-- Left resize handle -->
                   <div class="tl-drag tl-drag-l"
-                    onpointerdown={(e) => tlPointerDown(e, i, 'left')}
+                    onpointerdown={(e) => { e.stopPropagation(); tlPointerDown(e, i, 'left') }}
                     role="separator"></div>
-                  <!-- Right drag handle -->
+                  <!-- Right resize handle -->
                   <div class="tl-drag tl-drag-r"
-                    onpointerdown={(e) => tlPointerDown(e, i, 'right')}
+                    onpointerdown={(e) => { e.stopPropagation(); tlPointerDown(e, i, 'right') }}
                     role="separator"></div>
                 </div>
               {/each}
@@ -1284,15 +1327,17 @@
   .tl-wrap{
     position:relative; height:80px; flex-shrink:0;
     background:var(--color-bg); border-top:1px solid var(--color-border);
-    overflow:hidden; cursor:default; user-select:none;
+    overflow:hidden; user-select:none;
   }
+  /* Playhead: position driven by tlPlayheadPx via inline style */
   .tl-playhead{
-    position:absolute; top:0; bottom:0; left:40%; width:2px;
+    position:absolute; top:0; bottom:0; width:2px;
     background:var(--color-accent); z-index:10; pointer-events:none;
+    transform:translateX(-50%);
   }
   .tl-track{position:absolute; top:0; bottom:0; left:0; will-change:transform}
   .tl-ruler{position:absolute; top:0; left:0; right:0; height:18px}
-  .tl-tick{position:absolute; top:0; bottom:0; width:1px; background:rgba(255,255,255,.1)}
+  .tl-tick{position:absolute; top:0; bottom:0; width:1px; background:rgba(255,255,255,.08)}
   .tl-tick-lbl{
     position:absolute; top:2px; left:3px;
     font-size:.58rem; color:var(--color-text-muted); font-family:monospace; white-space:nowrap;
@@ -1301,25 +1346,33 @@
   .tl-word{
     position:absolute; top:0; bottom:0;
     background:var(--color-surface); border:1px solid var(--color-border);
-    border-radius:5px; cursor:pointer; overflow:hidden;
+    border-radius:5px; cursor:grab; overflow:visible;
     display:flex; align-items:center; justify-content:center;
     transition:background .1s, border-color .1s; box-sizing:border-box;
   }
   .tl-word:hover{background:var(--color-surface-hover); border-color:var(--color-text-muted)}
   .tl-word.tl-active{background:var(--color-accent-subtle); border-color:var(--color-accent)}
+  .tl-word:active{cursor:grabbing}
   .tl-word-txt{
     font-size:.65rem; color:var(--color-text); white-space:nowrap;
-    overflow:hidden; text-overflow:ellipsis; padding:0 6px; pointer-events:none;
+    overflow:hidden; text-overflow:ellipsis; padding:0 8px; pointer-events:none;
+    position:relative; z-index:1;
   }
   .tl-word.tl-active .tl-word-txt{color:var(--color-accent); font-weight:600}
+  /* Resize handles — wider (12px) and always slightly visible on hover */
   .tl-drag{
-    position:absolute; top:0; bottom:0; width:8px;
-    cursor:ew-resize; z-index:5; opacity:0; transition:opacity .15s;
-    background:linear-gradient(to right, transparent, rgba(255,255,255,.2));
+    position:absolute; top:0; bottom:0; width:12px;
+    cursor:ew-resize; z-index:5; opacity:0; transition:opacity .12s;
   }
+  .tl-drag::after{
+    content:''; position:absolute; top:20%; bottom:20%; width:3px; border-radius:2px;
+    background:rgba(255,255,255,.5);
+  }
+  .tl-drag-l{left:-1px}
+  .tl-drag-l::after{right:3px}
+  .tl-drag-r{right:-1px}
+  .tl-drag-r::after{left:3px}
   .tl-word:hover .tl-drag{opacity:1}
-  .tl-drag-l{left:0; transform:scaleX(-1)}
-  .tl-drag-r{right:0}
 
 
 </style>
