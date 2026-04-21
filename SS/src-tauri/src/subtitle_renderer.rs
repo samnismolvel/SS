@@ -9,7 +9,7 @@
 //
 // This module is intentionally video-resolution-agnostic: it receives the
 // target frame dimensions and scales everything accordingly.
-
+/*
 use ab_glyph::{Font, FontRef, PxScale, ScaleFont};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
@@ -397,4 +397,4 @@ pub fn build_overlay_filtergraph(frames: &[RenderedFrame]) -> (Vec<String>, Stri
     }
 
     (inputs, filter)
-}
+}*/
