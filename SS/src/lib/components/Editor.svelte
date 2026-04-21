@@ -461,24 +461,32 @@
   })())
 
   // Drag state
-  // mode: 'move' | 'left' | 'right'
   type TlMode = 'move' | 'left' | 'right'
   let tlDragging      = $state(false)
   let tlDragIdx       = $state(-1)
   let tlDragMode      = $state<TlMode>('move')
   let tlDragStartX    = $state(0)
-  let tlDragStartSec  = $state(0)   // for move: original start; for edge: original edge value
   let tlDragHasMoved  = $state(false)
+  // Snapshot of the dragged token's own values at drag start — never update during drag
+  let tlDragOwnStart  = $state(0)
+  let tlDragOwnEnd    = $state(0)
+  // Snapshot of neighbour limits at drag start — fixed walls that don't move
+  let tlDragMinSec    = $state(0)     // hard floor (prev neighbour end, or 0)
+  let tlDragMaxSec    = $state(9999)  // hard ceiling (next neighbour start, or duration)
 
   function tlPointerDown(e: PointerEvent, idx: number, mode: TlMode) {
     e.preventDefault(); e.stopPropagation()
-    tlDragging     = true
-    tlDragIdx      = idx
-    tlDragMode     = mode
-    tlDragStartX   = e.clientX
-    tlDragHasMoved = false
-    if (mode === 'right') tlDragStartSec = tlTokens[idx].end
-    else                  tlDragStartSec = tlTokens[idx].start
+    const tok       = tlTokens[idx]
+    tlDragging      = true
+    tlDragIdx       = idx
+    tlDragMode      = mode
+    tlDragStartX    = e.clientX
+    tlDragHasMoved  = false
+    tlDragOwnStart  = tok.start
+    tlDragOwnEnd    = tok.end
+    // Snapshot fixed limits from neighbours — these don't change during the drag
+    tlDragMinSec    = idx > 0 ? tlTokens[idx - 1].end : 0
+    tlDragMaxSec    = idx < tlTokens.length - 1 ? tlTokens[idx + 1].start : (duration || 9999)
     ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
   }
 
@@ -486,21 +494,15 @@
     if (!tlDragging || tlDragIdx < 0) return
     e.preventDefault()
     const rawDelta = e.clientX - tlDragStartX
-    // Require at least 3px movement before committing — prevents jitter on click
-    if (Math.abs(rawDelta) < 3 && !tlDragHasMoved) return
+    if (Math.abs(rawDelta) < 4 && !tlDragHasMoved) return
     tlDragHasMoved = true
     const deltaSec = rawDelta / TL_PX_PER_SEC
-    const tok      = tlTokens[tlDragIdx]
+    const tokenDur = tlDragOwnEnd - tlDragOwnStart
 
     if (tlDragMode === 'move') {
-      // Shift both start and end by the same delta
-      const newStart  = tlDragStartSec + deltaSec
-      const tokenDur  = tok.end - tok.start
-      const minStart  = tlDragIdx > 0 ? tlTokens[tlDragIdx - 1].end : 0
-      const maxStart  = tlDragIdx < tlTokens.length - 1
-                        ? tlTokens[tlDragIdx + 1].start - tokenDur
-                        : (duration || 9999) - tokenDur
-      const cStart    = Math.max(minStart, Math.min(maxStart, newStart))
+      const newStart = tlDragOwnStart + deltaSec
+      // Clamp entirely within fixed neighbour walls
+      const cStart   = Math.max(tlDragMinSec, Math.min(tlDragMaxSec - tokenDur, newStart))
       session.update((s: any) => {
         if (!s) return null
         const rawSubs = [...s.rawSubs]
@@ -513,29 +515,27 @@
       })
 
     } else if (tlDragMode === 'right') {
-      const newEnd  = tlDragStartSec + deltaSec
-      const maxSec  = tlDragIdx < tlTokens.length - 1 ? tlTokens[tlDragIdx + 1].start - 0.03 : (duration || 9999)
-      const clamped = Math.min(maxSec, Math.max(tok.start + 0.05, newEnd))
+      const newEnd  = tlDragOwnEnd + deltaSec
+      // Hard wall at next neighbour's start (frozen at drag-start snapshot)
+      const clamped = Math.min(tlDragMaxSec - 0.05, Math.max(tlDragOwnStart + 0.1, newEnd))
       session.update((s: any) => {
         if (!s) return null
         const rawSubs = [...s.rawSubs]
+        // Only update this token — neighbours are NOT moved
         rawSubs[tlDragIdx] = { ...rawSubs[tlDragIdx], end: secToSrt(clamped) }
-        if (tlDragIdx < rawSubs.length - 1)
-          rawSubs[tlDragIdx + 1] = { ...rawSubs[tlDragIdx + 1], start: secToSrt(clamped) }
         return { ...s, rawSubs, isDirty: true }
       })
 
     } else {
       // left edge
-      const newStart = tlDragStartSec + deltaSec
-      const minSec   = tlDragIdx > 0 ? tlTokens[tlDragIdx - 1].end + 0.03 : 0
-      const clamped  = Math.max(minSec, Math.min(tok.end - 0.05, newStart))
+      const newStart = tlDragOwnStart + deltaSec
+      // Hard wall at prev neighbour's end (frozen at drag-start snapshot)
+      const clamped  = Math.max(tlDragMinSec + 0.05, Math.min(tlDragOwnEnd - 0.1, newStart))
       session.update((s: any) => {
         if (!s) return null
         const rawSubs = [...s.rawSubs]
+        // Only update this token — neighbours are NOT moved
         rawSubs[tlDragIdx] = { ...rawSubs[tlDragIdx], start: secToSrt(clamped) }
-        if (tlDragIdx > 0)
-          rawSubs[tlDragIdx - 1] = { ...rawSubs[tlDragIdx - 1], end: secToSrt(clamped) }
         return { ...s, rawSubs, isDirty: true }
       })
     }
