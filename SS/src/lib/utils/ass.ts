@@ -569,7 +569,7 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template, rawSubs: Su
         }
       }
 
-      events.push('Dialogue: 1,' + wStart + ',' + wEnd + ',Default,,0,0,0,,' + alignPosTag + tagsNoAn + lineText)
+      events.push('Dialogue: 1,' + wStart + ',' + wEnd + ',Default,,0,0,0,,' + animTag + alignPosTag + tagsNoAn + lineText)
     }
   }
 
