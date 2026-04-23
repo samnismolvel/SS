@@ -14,7 +14,6 @@ use ab_glyph::{Font, FontRef, PxScale, ScaleFont};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use tiny_skia::*;
-use unicode_segmentation::UnicodeSegmentation;
 
 // ─── Data types from the frontend ─────────────────────────────────────────────
 
@@ -234,11 +233,9 @@ pub fn render_segments(
 
             // Rounded corners: 0.4em radius (matching the CSS preview)
             let radius = (0.4 * px_size).min(box_h / 2.0).min(box_w / 2.0);
-            let rrect = RoundRect::from_rect(rect, radius, radius)
-                .unwrap_or_else(|| RoundRect::from_rect(rect, 0.0, 0.0).unwrap());
-
-            let path = PathBuilder::from_round_rect(&rrect);
-            pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+            if let Some(path) = rounded_rect_path(box_x, box_y, box_w, box_h, radius) {
+                pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+            }
         }
 
         // ── Draw text outline ─────────────────────────────────────────────────
@@ -270,6 +267,35 @@ pub fn render_segments(
     Ok(frames)
 }
 
+
+// ─── Rounded rectangle path ───────────────────────────────────────────────────
+// tiny-skia 0.12 removed RoundRect. We build the path manually using cubic
+// bezier approximations of quarter-circle arcs (k ≈ 0.5523).
+
+fn rounded_rect_path(x: f32, y: f32, w: f32, h: f32, r: f32) -> Option<tiny_skia::Path> {
+    let r = r.min(w / 2.0).min(h / 2.0).max(0.0);
+    const K: f32 = 0.5522847498; // cubic bezier arc approximation constant
+    let kr = K * r;
+
+    let mut pb = PathBuilder::new();
+    // Start at top-left corner after the radius
+    pb.move_to(x + r, y);
+    // Top edge → top-right arc
+    pb.line_to(x + w - r, y);
+    pb.cubic_to(x + w - r + kr, y, x + w, y + r - kr, x + w, y + r);
+    // Right edge → bottom-right arc
+    pb.line_to(x + w, y + h - r);
+    pb.cubic_to(x + w, y + h - r + kr, x + w - r + kr, y + h, x + w - r, y + h);
+    // Bottom edge → bottom-left arc
+    pb.line_to(x + r, y + h);
+    pb.cubic_to(x + r - kr, y + h, x, y + h - r + kr, x, y + h - r);
+    // Left edge → top-left arc
+    pb.line_to(x, y + r);
+    pb.cubic_to(x, y + r - kr, x + r - kr, y, x + r, y);
+    pb.close();
+    pb.finish()
+}
+
 // ─── Text drawing primitives ──────────────────────────────────────────────────
 
 /// Rasterise `text` into `pixmap` by walking glyphs manually with ab_glyph.
@@ -298,7 +324,6 @@ fn draw_text_filled(
 
         if let Some(outline) = font.outline_glyph(glyph) {
             let bounds = outline.px_bounds();
-            let mut path_builder = PathBuilder::new();
             outline.draw(|px, py, coverage| {
                 if coverage > 0.05 {
                     let fx = bounds.min.x + px as f32;
@@ -312,7 +337,6 @@ fn draw_text_filled(
                     }
                 }
             });
-            let _ = path_builder;
         }
 
         cursor_x += scaled.h_advance(glyph_id);

@@ -1,7 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod subtitle_renderer;
-use subtitle_renderer::{render_segments, build_overlay_filtergraph, SubtitleSegment, RenderTemplate, srt_to_ms};
+use subtitle_renderer::{render_segments, build_overlay_filtergraph, SubtitleSegment, RenderTemplate};
 
 use std::process::Command;
 use tauri::{Manager, Emitter};
@@ -415,7 +415,6 @@ async fn burn_subtitles_canvas(
         .map_err(|e| format!("Invalid template JSON: {e}"))?;
 
     // Decode font
-    use std::io::Read;
     let font_bytes = base64_decode(&font_data_b64)
         .map_err(|e| format!("Font decode error: {e}"))?;
 
@@ -545,10 +544,10 @@ fn base64_decode(input: &str) -> Result<Vec<u8>, String> {
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .setup(|app| {
+        .setup(|_app| {
             #[cfg(debug_assertions)]
             {
-                let window = app.get_webview_window("main").unwrap();
+                let window = _app.get_webview_window("main").unwrap();
                 window.open_devtools();
             }
             Ok(())
@@ -557,8 +556,6 @@ fn main() {
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
-
-
 
 
 /*#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
