@@ -349,16 +349,20 @@ fn format_timestamp_ms(ms: i64) -> String {
 // ─── get_video_dimensions ─────────────────────────────────────────────────────
 // Uses ffprobe (bundled alongside ffmpeg) to get the pixel dimensions of the
 // input video. Falls back to 1920×1080 if probing fails.
+//
+// Resolves ffprobe from the app resource dir (same location as ffmpeg) so it
+// works with the bundled binary rather than relying on a system install.
 
-fn get_video_dimensions(ffmpeg_path: &std::path::Path, video_path: &str) -> (u32, u32) {
-    let ffprobe = ffmpeg_path.parent()
-        .map(|p| {
-            #[cfg(target_os = "windows")]
-            { p.join("ffprobe.exe") }
-            #[cfg(not(target_os = "windows"))]
-            { p.join("ffprobe") }
-        })
-        .unwrap_or_else(|| std::path::PathBuf::from("ffprobe"));
+fn get_video_dimensions(app: &tauri::AppHandle, video_path: &str) -> (u32, u32) {
+    let resource_path = match app.path().resource_dir() {
+        Ok(p) => p,
+        Err(_) => return (1920, 1080),
+    };
+
+    #[cfg(target_os = "windows")]
+    let ffprobe = resource_path.join("resources/binaries/ffprobe.exe");
+    #[cfg(not(target_os = "windows"))]
+    let ffprobe = resource_path.join("binaries/ffprobe");
 
     let out = Command::new(&ffprobe)
         .args([
@@ -419,7 +423,7 @@ async fn burn_subtitles_canvas(
         .map_err(|e| format!("Font decode error: {e}"))?;
 
     // Detect video dimensions
-    let (vid_w, vid_h) = get_video_dimensions(&ffmpeg_path, &video_path);
+    let (vid_w, vid_h) = get_video_dimensions(&app, &video_path);
 
     // Create a temp directory for the PNG frames
     let temp_dir = std::env::temp_dir().join("ss_canvas_frames");
@@ -473,20 +477,32 @@ async fn burn_subtitles_canvas(
     #[cfg(debug_assertions)]
     eprintln!("Canvas FFmpeg args: {args:?}");
 
-    let status = {
+    let output = {
         #[cfg_attr(not(target_os = "windows"), allow(unused_mut))]
         let mut cmd = Command::new(&ffmpeg_path);
         cmd.args(&args);
         #[cfg(target_os = "windows")]
         cmd.creation_flags(CREATE_NO_WINDOW);
-        cmd.status().map_err(|_| "FFmpeg not found.".to_string())?
+        cmd.output().map_err(|_| "FFmpeg not found.".to_string())?
     };
 
-    // Cleanup temp frames
+    // Cleanup temp frames regardless of success
     let _ = std::fs::remove_dir_all(&temp_dir);
 
-    if !status.success() {
-        return Err("Canvas subtitle burn failed. Check output path.".to_string());
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+        // Write full log to temp file for debugging (always, not just debug builds)
+        let log_path = std::env::temp_dir().join("ss_burn_log.txt");
+        let _ = std::fs::write(&log_path, format!(
+            "=== burn_subtitles_canvas failed ===\n\nArgs:\n{}\n\nFFmpeg stderr:\n{}",
+            args.join(" "),
+            stderr
+        ));
+
+        // Return the last 400 chars of stderr so the UI shows something useful
+        let tail = &stderr[stderr.len().saturating_sub(400)..];
+        return Err(format!("Canvas burn failed: {tail}"));
     }
 
     emit_progress(&app, "done", "Done!");
