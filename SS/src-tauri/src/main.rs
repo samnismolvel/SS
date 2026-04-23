@@ -402,39 +402,55 @@ async fn burn_subtitles_canvas(
     app: tauri::AppHandle,
     video_path: String,
     output_path: String,
-    segments_json: String,   // JSON array of SubtitleSegment
-    template_json: String,   // JSON object of RenderTemplate
-    font_data_b64: String,   // base64-encoded TTF font bytes
+    segments_json: String,
+    template_json: String,
+    font_data_b64: String,
     crop_ratio: Option<String>,
     crop_offset: Option<u32>,
 ) -> Result<(), String> {
-    let ffmpeg_path = get_ffmpeg_path(&app)?;
+    // ── Debug log — escribe en cada etapa ────────────────────────────────────
+    let log_path = std::env::temp_dir().join("ss_burn_log.txt");
+    macro_rules! log {
+        ($($arg:tt)*) => {{
+            let msg = format!($($arg)*);
+            let prev = std::fs::read_to_string(&log_path).unwrap_or_default();
+            let _ = std::fs::write(&log_path, format!("{}{}\n", prev, msg));
+        }};
+    }
+    log!("=== burn_subtitles_canvas start ===");
+    log!("segments_json len: {}", segments_json.len());
+    log!("template_json len: {}", template_json.len());
+    log!("font_data_b64 len: {}", font_data_b64.len());
 
+    let ffmpeg_path = get_ffmpeg_path(&app)?;
     emit_progress(&app, "burning", "Rendering subtitle frames...");
 
-    // Deserialise inputs
     let segments: Vec<SubtitleSegment> = serde_json::from_str(&segments_json)
-        .map_err(|e| format!("Invalid segments JSON: {e}"))?;
+        .map_err(|e| { log!("FAIL segments json: {e}"); format!("Invalid segments JSON: {e}") })?;
+    log!("segments parsed: {}", segments.len());
+
     let tmpl: RenderTemplate = serde_json::from_str(&template_json)
-        .map_err(|e| format!("Invalid template JSON: {e}"))?;
+        .map_err(|e| { log!("FAIL template json: {e}"); format!("Invalid template JSON: {e}") })?;
+    log!("template parsed ok");
 
-    // Decode font
     let font_bytes = base64_decode(&font_data_b64)
-        .map_err(|e| format!("Font decode error: {e}"))?;
+        .map_err(|e| { log!("FAIL font decode: {e}"); format!("Font decode error: {e}") })?;
+    log!("font decoded: {} bytes", font_bytes.len());
 
-    // Detect video dimensions
     let (vid_w, vid_h) = get_video_dimensions(&app, &video_path);
+    log!("video dimensions: {}x{}", vid_w, vid_h);
 
-    // Create a temp directory for the PNG frames
     let temp_dir = std::env::temp_dir().join("ss_canvas_frames");
     let _ = std::fs::remove_dir_all(&temp_dir);
     std::fs::create_dir_all(&temp_dir)
-        .map_err(|e| format!("Cannot create temp dir: {e}"))?;
+        .map_err(|e| { log!("FAIL create temp dir: {e}"); format!("Cannot create temp dir: {e}") })?;
+    log!("temp dir created: {:?}", temp_dir);
 
-    // Render PNGs
     let frames = render_segments(&segments, &tmpl, &font_bytes, vid_w, vid_h, &temp_dir)
-        .map_err(|e| format!("Render error: {e}"))?;
+        .map_err(|e| { log!("FAIL render_segments: {e}"); format!("Render error: {e}") })?;
+    log!("frames rendered: {}", frames.len());
 
+    // ... resto del código sin cambios
     if frames.is_empty() {
         return Err("No subtitle frames were rendered.".to_string());
     }
