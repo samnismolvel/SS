@@ -3,6 +3,7 @@
   import { activeTemplate, updateActiveTemplate, allTemplates, setActiveTemplate, saveActiveAsTemplate } from '$lib/stores/templates'
   import { buildAss, parseSRT } from '$lib/utils/ass'
   import { convertFileSrc } from '@tauri-apps/api/core'
+  import { invoke } from '@tauri-apps/api/core'
   import type { Alignment, AnimationMode } from '$lib/types'
 
   interface Props {
@@ -195,7 +196,7 @@
   let customFont = $state(false)
   // Sub-sidebar state: null = main rail visible, 'customize' = sub-sidebar open
   let subSidebar = $state<'customize' | null>(null)
-  type CSection = 'text' | 'layout' | 'animation' | 'activeword'
+  type CSection = 'text' | 'layout' | 'animation' | 'activeword' | 'background'
   let customSection = $state<CSection>('text')
   $effect(() => { if (templateVal?.fontName && !SYSTEM_FONTS.includes(templateVal.fontName)) customFont = true })
   function handleFontSelect(e: Event) {
@@ -238,10 +239,56 @@
     }
     input.click()
   }
-  function handleBurn() {
-    if (!sessionVal||!templateVal) return
-    onburn({videoPath:sessionVal.videoPath,outputPath:sessionVal.outputPath,assContent:buildAss(sessionVal.subtitles,templateVal,sessionVal.rawSubs??[])})
+  async function handleBurn() {
+    if (!sessionVal || !templateVal || isBurning) return
+    burnError = null
+    isBurning = true
+    try {
+      if ((templateVal as any).lineBgEnabled) {
+        // ── Canvas path ──────────────────────────────────────────────────────
+        // Render backgrounds via tiny-skia in Rust, then overlay with FFmpeg.
+        // Font is loaded from the system font stack via a hidden canvas measurement.
+        // We send the template + segments as JSON; Rust handles the rest.
+        const segmentsJson = JSON.stringify(sessionVal.subtitles)
+        const templateJson = JSON.stringify(templateVal)
+
+        // Load the font bytes: try fetching a bundled fallback first,
+        // then fall back to an empty string (Rust will use a built-in default).
+        let fontDataB64 = ''
+        try {
+          // Attempt to fetch from app assets — works if you've bundled a TTF
+          const resp = await fetch('/fonts/' + templateVal.fontName + '.ttf')
+          if (resp.ok) {
+            const buf  = await resp.arrayBuffer()
+            const u8   = new Uint8Array(buf)
+            let binary = ''
+            u8.forEach(b => binary += String.fromCharCode(b))
+            fontDataB64 = btoa(binary)
+          }
+        } catch { /* font not bundled — Rust will use system fallback */ }
+
+        await invoke('burn_subtitles_canvas', {
+          videoPath:    sessionVal.videoPath,
+          outputPath:   sessionVal.outputPath,
+          segmentsJson,
+          templateJson,
+          fontDataB64,
+        })
+      } else {
+        // ── ASS path (default) ───────────────────────────────────────────────
+        const assContent = buildAss(sessionVal.subtitles, templateVal, sessionVal.rawSubs ?? [])
+        onburn({ videoPath: sessionVal.videoPath, outputPath: sessionVal.outputPath, assContent })
+        return // onburn handles progress events; don't set isBurning=false here
+      }
+    } catch (e: any) {
+      burnError = e?.message ?? String(e)
+    } finally {
+      isBurning = false
+    }
   }
+  let isBurning = $state(false)
+  let burnError = $state<string|null>(null)
+
   function getFileName(p:string) { return p.split(/[\\/]/).pop()??p }
 
   // ── Drag-to-position ──────────────────────────────────────────────────────
@@ -461,32 +508,24 @@
   })())
 
   // Drag state
+  // mode: 'move' | 'left' | 'right'
   type TlMode = 'move' | 'left' | 'right'
   let tlDragging      = $state(false)
   let tlDragIdx       = $state(-1)
   let tlDragMode      = $state<TlMode>('move')
   let tlDragStartX    = $state(0)
+  let tlDragStartSec  = $state(0)   // for move: original start; for edge: original edge value
   let tlDragHasMoved  = $state(false)
-  // Snapshot of the dragged token's own values at drag start — never update during drag
-  let tlDragOwnStart  = $state(0)
-  let tlDragOwnEnd    = $state(0)
-  // Snapshot of neighbour limits at drag start — fixed walls that don't move
-  let tlDragMinSec    = $state(0)     // hard floor (prev neighbour end, or 0)
-  let tlDragMaxSec    = $state(9999)  // hard ceiling (next neighbour start, or duration)
 
   function tlPointerDown(e: PointerEvent, idx: number, mode: TlMode) {
     e.preventDefault(); e.stopPropagation()
-    const tok       = tlTokens[idx]
-    tlDragging      = true
-    tlDragIdx       = idx
-    tlDragMode      = mode
-    tlDragStartX    = e.clientX
-    tlDragHasMoved  = false
-    tlDragOwnStart  = tok.start
-    tlDragOwnEnd    = tok.end
-    // Snapshot fixed limits from neighbours — these don't change during the drag
-    tlDragMinSec    = idx > 0 ? tlTokens[idx - 1].end : 0
-    tlDragMaxSec    = idx < tlTokens.length - 1 ? tlTokens[idx + 1].start : (duration || 9999)
+    tlDragging     = true
+    tlDragIdx      = idx
+    tlDragMode     = mode
+    tlDragStartX   = e.clientX
+    tlDragHasMoved = false
+    if (mode === 'right') tlDragStartSec = tlTokens[idx].end
+    else                  tlDragStartSec = tlTokens[idx].start
     ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
   }
 
@@ -494,15 +533,21 @@
     if (!tlDragging || tlDragIdx < 0) return
     e.preventDefault()
     const rawDelta = e.clientX - tlDragStartX
-    if (Math.abs(rawDelta) < 4 && !tlDragHasMoved) return
+    // Require at least 3px movement before committing — prevents jitter on click
+    if (Math.abs(rawDelta) < 3 && !tlDragHasMoved) return
     tlDragHasMoved = true
     const deltaSec = rawDelta / TL_PX_PER_SEC
-    const tokenDur = tlDragOwnEnd - tlDragOwnStart
+    const tok      = tlTokens[tlDragIdx]
 
     if (tlDragMode === 'move') {
-      const newStart = tlDragOwnStart + deltaSec
-      // Clamp entirely within fixed neighbour walls
-      const cStart   = Math.max(tlDragMinSec, Math.min(tlDragMaxSec - tokenDur, newStart))
+      // Shift both start and end by the same delta
+      const newStart  = tlDragStartSec + deltaSec
+      const tokenDur  = tok.end - tok.start
+      const minStart  = tlDragIdx > 0 ? tlTokens[tlDragIdx - 1].end : 0
+      const maxStart  = tlDragIdx < tlTokens.length - 1
+                        ? tlTokens[tlDragIdx + 1].start - tokenDur
+                        : (duration || 9999) - tokenDur
+      const cStart    = Math.max(minStart, Math.min(maxStart, newStart))
       session.update((s: any) => {
         if (!s) return null
         const rawSubs = [...s.rawSubs]
@@ -515,27 +560,29 @@
       })
 
     } else if (tlDragMode === 'right') {
-      const newEnd  = tlDragOwnEnd + deltaSec
-      // Hard wall at next neighbour's start (frozen at drag-start snapshot)
-      const clamped = Math.min(tlDragMaxSec - 0.05, Math.max(tlDragOwnStart + 0.1, newEnd))
+      const newEnd  = tlDragStartSec + deltaSec
+      const maxSec  = tlDragIdx < tlTokens.length - 1 ? tlTokens[tlDragIdx + 1].start - 0.03 : (duration || 9999)
+      const clamped = Math.min(maxSec, Math.max(tok.start + 0.05, newEnd))
       session.update((s: any) => {
         if (!s) return null
         const rawSubs = [...s.rawSubs]
-        // Only update this token — neighbours are NOT moved
         rawSubs[tlDragIdx] = { ...rawSubs[tlDragIdx], end: secToSrt(clamped) }
+        if (tlDragIdx < rawSubs.length - 1)
+          rawSubs[tlDragIdx + 1] = { ...rawSubs[tlDragIdx + 1], start: secToSrt(clamped) }
         return { ...s, rawSubs, isDirty: true }
       })
 
     } else {
       // left edge
-      const newStart = tlDragOwnStart + deltaSec
-      // Hard wall at prev neighbour's end (frozen at drag-start snapshot)
-      const clamped  = Math.max(tlDragMinSec + 0.05, Math.min(tlDragOwnEnd - 0.1, newStart))
+      const newStart = tlDragStartSec + deltaSec
+      const minSec   = tlDragIdx > 0 ? tlTokens[tlDragIdx - 1].end + 0.03 : 0
+      const clamped  = Math.max(minSec, Math.min(tok.end - 0.05, newStart))
       session.update((s: any) => {
         if (!s) return null
         const rawSubs = [...s.rawSubs]
-        // Only update this token — neighbours are NOT moved
         rawSubs[tlDragIdx] = { ...rawSubs[tlDragIdx], start: secToSrt(clamped) }
+        if (tlDragIdx > 0)
+          rawSubs[tlDragIdx - 1] = { ...rawSubs[tlDragIdx - 1], end: secToSrt(clamped) }
         return { ...s, rawSubs, isDirty: true }
       })
     }
@@ -578,8 +625,9 @@
     <span class="file-name">{getFileName(sessionVal?.videoPath??'')}</span>
     <span class="seg-count">{items.length} segments</span>
     {#if isDirtyVal}<span class="dirty-badge">unsaved</span>{/if}
+    {#if burnError}<span class="burn-error" title={burnError}>⚠ Burn failed</span>{/if}
     <div class="spacer"></div>
-    <button class="btn-burn" onclick={handleBurn}>Burn Subtitles →</button>
+    <button class="btn-burn" onclick={handleBurn} disabled={isBurning}>{isBurning ? 'Burning…' : 'Burn Subtitles →'}</button>
   </div>
 
   <div class="body">
@@ -632,6 +680,9 @@
                 {ef?.outline??2}px -{ef?.outline??2}px 0 {ef?.outlineColor??'#000'},
                 -{ef?.outline??2}px {ef?.outline??2}px 0 {ef?.outlineColor??'#000'},
                 {ef?.outline??2}px {ef?.outline??2}px 0 {ef?.outlineColor??'#000'};
+                {(ef as any)?.lineBgEnabled
+                  ? 'background:' + ((ef as any)?.lineBgColor ?? '#000') + ';padding:' + ((ef as any)?.lineBgPaddingY ?? 0.2) + 'em ' + ((ef as any)?.lineBgPaddingX ?? 0.5) + 'em;border-radius:0.35em;'
+                  : ''}
                 {previewShadowStyle}
                 {getAnimationStyle(templateVal?.animation)}">
   <!-- active word rendering — ver cambio 2 -->
@@ -810,6 +861,11 @@
             <button class="rail-btn" class:active={customSection==='activeword'} onclick={()=>customSection='activeword'} title="Active Word">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="7" width="20" height="10" rx="2"/><path d="M7 12h10M12 9v6"/></svg>
               <span>Word</span>
+            </button>
+            <!-- Background sub-tab -->
+            <button class="rail-btn" class:active={customSection==='background'} onclick={()=>customSection='background'} title="Background">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="3" width="20" height="18" rx="3"/><rect x="5" y="9" width="14" height="9" rx="2" fill="currentColor" opacity=".25"/></svg>
+              <span>BG</span>
             </button>
           </div>
 
@@ -1030,6 +1086,65 @@
                     oninput={(e)=>updateActiveTemplate({activeWordColor:e.currentTarget.value} as any)} />
                   <span class="color-value">{(templateVal as any).activeWordColor ?? templateVal.primaryColor} / 100%</span>
                 </div>
+
+              </div>
+            {/if}
+
+            {#if customSection === 'background'}
+              <div class="panel-hdr"><span class="panel-title">Background</span></div>
+              <div class="panel-body">
+
+                <!-- Live preview -->
+                <div class="bg-preview" style="
+                  font-family:{templateVal.fontName};
+                  font-size:1.05rem;
+                  font-weight:{templateVal.bold ? 'bold' : 'normal'};
+                  color:{templateVal.primaryColor};
+                  text-shadow:-{templateVal.outline}px -{templateVal.outline}px 0 {templateVal.outlineColor},{templateVal.outline}px -{templateVal.outline}px 0 {templateVal.outlineColor},-{templateVal.outline}px {templateVal.outline}px 0 {templateVal.outlineColor},{templateVal.outline}px {templateVal.outline}px 0 {templateVal.outlineColor};
+                  {(templateVal as any).lineBgEnabled
+                    ? 'background:' + ((templateVal as any).lineBgColor ?? '#000') + ';padding:' + ((templateVal as any).lineBgPaddingY ?? 0.2) + 'em ' + ((templateVal as any).lineBgPaddingX ?? 0.5) + 'em;border-radius:0.35em;'
+                    : 'outline:1px dashed var(--color-border);padding:.35em .6em;'}
+                ">subtitle line</div>
+
+                <!-- Enable toggle -->
+                <label class="toggle-row" style="margin-top:.4rem">
+                  <span class="toggle-lbl">Line Background</span>
+                  <button class="toggle-switch"
+                    class:on={(templateVal as any).lineBgEnabled}
+                    onclick={()=>updateActiveTemplate({lineBgEnabled:!(templateVal as any).lineBgEnabled} as any)}>
+                    <span class="toggle-thumb"></span>
+                  </button>
+                </label>
+
+                {#if (templateVal as any).lineBgEnabled}
+                  <div class="canvas-badge">Rendered via Canvas</div>
+
+                  <div class="s-lbl">Color</div>
+                  <div class="color-row">
+                    <input type="color"
+                      value={(templateVal as any).lineBgColor ?? '#000000'}
+                      oninput={(e)=>updateActiveTemplate({lineBgColor:e.currentTarget.value} as any)} />
+                    <span class="color-value">{(templateVal as any).lineBgColor ?? '#000000'}</span>
+                  </div>
+
+                  <div class="s-lbl" style="margin-top:.5rem">Padding</div>
+                  <div class="field-row">
+                    <label>Horiz</label>
+                    <input type="range" min="0" max="2" step="0.05"
+                      value={(templateVal as any).lineBgPaddingX ?? 0.5}
+                      oninput={(e)=>updateActiveTemplate({lineBgPaddingX:Number(e.currentTarget.value)} as any)} />
+                    <span class="rval">{((templateVal as any).lineBgPaddingX ?? 0.5).toFixed(2)}</span>
+                  </div>
+                  <div class="field-row">
+                    <label>Vert</label>
+                    <input type="range" min="0" max="1" step="0.05"
+                      value={(templateVal as any).lineBgPaddingY ?? 0.2}
+                      oninput={(e)=>updateActiveTemplate({lineBgPaddingY:Number(e.currentTarget.value)} as any)} />
+                    <span class="rval">{((templateVal as any).lineBgPaddingY ?? 0.2).toFixed(2)}</span>
+                  </div>
+
+                  <p class="canvas-note">Background is rendered by a canvas engine at burn time. The preview above is accurate.</p>
+                {/if}
 
               </div>
             {/if}
@@ -1316,6 +1431,10 @@
   .section-card-hdr{display:flex;align-items:center;justify-content:space-between;font-size:.75rem;color:var(--color-text);font-weight:500}
   /* Active Word preview */
   .aw-preview{display:flex;align-items:center;justify-content:center;padding:.9rem .5rem;border-radius:8px;background:#111;gap:.25em;margin-bottom:.25rem}
+  .bg-preview{display:flex;align-items:center;justify-content:center;min-height:2.8rem;border-radius:6px;margin-bottom:.4rem;white-space:nowrap;transition:all .15s;background:#111;}
+  .canvas-badge{display:inline-block;font-size:.6rem;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--color-accent);background:var(--color-accent-subtle);border:1px solid var(--color-accent);border-radius:4px;padding:2px 6px;margin:.35rem 0 .1rem;}
+  .canvas-note{font-size:.68rem;color:var(--color-text-muted);margin-top:.5rem;line-height:1.4;}
+  .burn-error{font-size:.7rem;padding:2px 7px;border-radius:20px;background:var(--color-danger-subtle,#3d1a1a);color:var(--color-danger,#f87171);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:160px;}
   .aw-prev-word{font-size:1.3rem;font-weight:700;line-height:1.3;white-space:nowrap}
   .aw-active-word{display:inline;line-height:inherit;white-space:nowrap}
   /* Remove old sub-tabs now replaced by sub-sidebar rail */
