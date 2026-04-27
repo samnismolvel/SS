@@ -229,6 +229,15 @@ pub fn render_segments(
             };
             (bx, by)
         };
+        // En render_segments, justo después de calcular box_x/box_y
+        if (seg.index == 0){
+            let log_path = std::env::temp_dir().join("ss_burn_log.txt");
+            let prev = std::fs::read_to_string(&log_path).unwrap_or_default();
+            let _ = std::fs::write(&log_path, format!(
+                "{}seg #{}: posX={:?} posY={:?} box_x={:.1} box_y={:.1} box_w={:.1} box_h={:.1} video={}x{}\n",
+                prev, seg.index, tmpl.pos_x, tmpl.pos_y, box_x, box_y, box_w, box_h, video_w, video_h
+            ));
+        }
 
         // Create a full-frame transparent pixmap
         let mut pixmap = Pixmap::new(video_w, video_h)
