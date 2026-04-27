@@ -207,38 +207,28 @@ pub fn render_segments(
         };
 
         // Position of the box within the video frame
-        // let available_w = video_w as f32 - margin_l_px - margin_r_px;
+        // posX/posY son % del frame y apuntan al CENTRO del box,
+        // igual que \an5 + \pos en ASS (buildPosTag en ass.ts).
         let (box_x, box_y) = if let (Some(px), Some(py)) = (tmpl.pos_x, tmpl.pos_y) {
-        // Posición libre — posX/posY son % del frame, apuntan al anchor del texto
-        // El anchor horizontal depende del alignment (igual que en CSS/preview)
-        let (h_anchor, _) = alignment_anchors(tmpl.alignment);
-        let anchor_x = (px / 100.0) * video_w as f32;
-        let anchor_y = (py / 100.0) * video_h as f32;
-        let bx = match h_anchor {
-            0 => anchor_x,                  // left-aligned: posX es el borde izquierdo
-            2 => anchor_x - box_w,          // right-aligned: posX es el borde derecho
-            _ => anchor_x - box_w / 2.0,   // center: posX es el centro horizontal
+            let anchor_x = (px / 100.0) * video_w as f32;
+            let anchor_y = (py / 100.0) * video_h as f32;
+            let bx = anchor_x - box_w / 2.0;
+            let by = anchor_y - box_h / 2.0;
+            (bx, by)
+        } else {
+            // Fallback al sistema de alignment + margin
+            let bx = match h_anchor {
+                0 => margin_l_px,
+                2 => video_w as f32 - margin_r_px - box_w,
+                _ => (video_w as f32 - box_w) / 2.0,
+            };
+            let by = match v_anchor {
+                0 => video_h as f32 - margin_v_px - box_h,
+                2 => margin_v_px,
+                _ => (video_h as f32 - box_h) / 2.0,
+            };
+            (bx, by)
         };
-        // posY siempre apunta al borde superior del box (como top en CSS)
-        (bx, anchor_y)
-    } else {
-        // Fallback al sistema de alignment + margin
-        let available_w = video_w as f32 - margin_l_px - margin_r_px;
-        let bx = match h_anchor {
-            0 => margin_l_px,
-            2 => video_w as f32 - margin_r_px - box_w,
-            _ => (video_w as f32 - box_w) / 2.0,
-        };
-        let by = match v_anchor {
-            0 => video_h as f32 - margin_v_px - box_h,
-            2 => margin_v_px,
-            _ => (video_h as f32 - box_h) / 2.0,
-        };
-        (bx, by)
-    };
-
-    let box_x = box_x;
-    let box_y = box_y;
 
         // Create a full-frame transparent pixmap
         let mut pixmap = Pixmap::new(video_w, video_h)

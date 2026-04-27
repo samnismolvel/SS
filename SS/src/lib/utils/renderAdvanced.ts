@@ -1,4 +1,4 @@
-import fs from 'fs'
+/*import fs from 'fs'
 
 async function generateFrames(tokens, template) {
   const frames = []
@@ -99,4 +99,4 @@ ffmpeg ${inputs}
 -map 0:a?
 ${outputPath}
 `
-}
+}*/
