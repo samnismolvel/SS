@@ -256,16 +256,19 @@
         // then fall back to an empty string (Rust will use a built-in default).
         let fontDataB64 = ''
         try {
-          // Attempt to fetch from app assets — works if you've bundled a TTF
-          const resp = await fetch('/fonts/' + templateVal.fontName + '.ttf')
-          if (resp.ok) {
-            const buf  = await resp.arrayBuffer()
-            const u8   = new Uint8Array(buf)
-            let binary = ''
-            u8.forEach(b => binary += String.fromCharCode(b))
-            fontDataB64 = btoa(binary)
+          // Intenta Font Access API (Chromium/Tauri WebView)
+          if ('queryLocalFonts' in window) {
+            const fonts: any[] = await (window as any).queryLocalFonts({ postscriptNames: [templateVal.fontName] })
+            if (fonts.length > 0) {
+              const blob: Blob = await fonts[0].blob()
+              const buf = await blob.arrayBuffer()
+              const u8 = new Uint8Array(buf)
+              let binary = ''
+              u8.forEach(b => binary += String.fromCharCode(b))
+              fontDataB64 = btoa(binary)
+            }
           }
-        } catch { /* font not bundled — Rust will use system fallback */ }
+        } catch { /* Rust usará fuente embebida */ }
 
         await invoke('burn_subtitles_canvas', {
           videoPath:    sessionVal.videoPath,

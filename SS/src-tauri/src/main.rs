@@ -433,8 +433,12 @@ async fn burn_subtitles_canvas(
         .map_err(|e| { log!("FAIL template json: {e}"); format!("Invalid template JSON: {e}") })?;
     log!("template parsed ok");
 
-    let font_bytes = base64_decode(&font_data_b64)
-        .map_err(|e| { log!("FAIL font decode: {e}"); format!("Font decode error: {e}") })?;
+    let font_bytes: Vec<u8> = if font_data_b64.trim().is_empty() {
+        include_bytes!("../fonts/NotoSans-Regular.ttf").to_vec()
+    } else {
+        base64_decode(&font_data_b64)
+            .map_err(|e| format!("Font decode error: {e}"))?
+    };
     log!("font decoded: {} bytes", font_bytes.len());
 
     let (vid_w, vid_h) = get_video_dimensions(&app, &video_path);
