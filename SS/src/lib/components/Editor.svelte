@@ -250,7 +250,14 @@
         // Font is loaded from the system font stack via a hidden canvas measurement.
         // We send the template + segments as JSON; Rust handles the rest.
         const segmentsJson = JSON.stringify(sessionVal.subtitles)
-        const templateJson = JSON.stringify(templateVal)
+        
+        const px = (templateVal as any)?.posX
+        const py = (templateVal as any)?.posY
+        const templateWithPos = {
+          ...templateVal,
+          ...(px != null ? { posX: px, posY: py } : {})
+        }
+        const templateJson = JSON.stringify(templateWithPos)
 
         // Load the font bytes: try fetching a bundled fallback first,
         // then fall back to an empty string (Rust will use a built-in default).
@@ -374,7 +381,7 @@
     let py = Math.max(2, Math.min(98, (rawY / frame.height) * 100))
     snapH = Math.abs(px - 50) < SNAP_PCT; if (snapH) px = 50
     snapV = Math.abs(py - 50) < SNAP_PCT; if (snapV) py = 50
-    updateActiveTemplate({ posX: px, posY: py } as any)
+    updateActiveTemplate({ posX: px ?? null, posY: py ?? null } as any)
   }
 
   function onSubPointerUp() { isDragging = false; snapH = false; snapV = false }
