@@ -433,6 +433,9 @@ async fn burn_subtitles_canvas(
         .map_err(|e| { log!("FAIL template json: {e}"); format!("Invalid template JSON: {e}") })?;
     log!("template parsed ok");
 
+    log!("template_json raw: {}", &template_json[..template_json.len().min(500)]);
+
+
     let font_bytes: Vec<u8> = if font_data_b64.trim().is_empty() {
         include_bytes!("../fonts/NotoSans-Regular.ttf").to_vec()
     } else {
