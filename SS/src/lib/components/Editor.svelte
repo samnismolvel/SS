@@ -4,6 +4,8 @@
   import { buildAss, parseSRT } from '$lib/utils/ass'
   import { convertFileSrc } from '@tauri-apps/api/core'
   import { invoke } from '@tauri-apps/api/core'
+  import { get } from 'svelte/store'
+
   import type { Alignment, AnimationMode } from '$lib/types'
 
   interface Props {
@@ -253,7 +255,9 @@
         
         // posX/posY ya viven en templateVal via updateActiveTemplate.
         // Serializar con replacer para que null se preserve (undefined se omitiría).
-        const templateJson = JSON.stringify(templateVal, (_, v) => v === undefined ? null : v)
+        const currentTemplate = get(activeTemplate)
+        console.log('posX at burn:', currentTemplate.posX, currentTemplate.posY) // debug
+        const templateJson = JSON.stringify(currentTemplate, (_, v) => v === undefined ? null : v)
 
         // Load the font bytes: try fetching a bundled fallback first,
         // then fall back to an empty string (Rust will use a built-in default).
