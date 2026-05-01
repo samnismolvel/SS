@@ -206,31 +206,45 @@ pub fn render_segments(
             (text_w + o * 2.0, text_h + o * 2.0)
         };
 
-        // Position of the box within the video frame.
-        // posX/posY (when set) are % of the video frame pointing to the CENTER
-        // of the box — same convention as \an5 + \pos in ASS / getOverlayPositionStyle.
-        // When null, fall back to alignment + margin (mirrors the CSS preview fallback).
+        // ── Position ──────────────────────────────────────────────────────────
+        // posX/posY (% of video frame) point to the TOP-LEFT of the box,
+        // matching getOverlayPositionStyle which uses transform:translate(-50%,-50%)
+        // so the dragged point is the center — we replicate that here.
+        //
+        // Fallback uses ASS alignment + margin when no drag has occurred.
         let (box_x, box_y) = if let (Some(px), Some(py)) = (tmpl.pos_x, tmpl.pos_y) {
-            let anchor_x = (px / 100.0) * video_w as f32;
-            let anchor_y = (py / 100.0) * video_h as f32;
-            (anchor_x - box_w / 2.0, anchor_y - box_h / 2.0)
+            // User dragged: posX/posY are CENTER of box in % of video dimensions
+            let cx = (px / 100.0) * video_w as f32;
+            let cy = (py / 100.0) * video_h as f32;
+            (cx - box_w / 2.0, cy - box_h / 2.0)
         } else {
-            // Fallback: alignment + margin, identical to the CSS preview mapping.
+            // No drag: use alignment + margin
             let bx = match h_anchor {
-                0 => margin_l_px,                                      // left
-                2 => video_w as f32 - margin_r_px - box_w,            // right
-                _ => (video_w as f32 - box_w) / 2.0,                  // center
+                0 => margin_l_px,
+                2 => video_w as f32 - margin_r_px - box_w,
+                _ => (video_w as f32 - box_w) / 2.0,
             };
             let by = match v_anchor {
-                0 => video_h as f32 - margin_v_px - box_h,            // bottom
-                2 => margin_v_px,                                      // top
-                _ => (video_h as f32 - box_h) / 2.0,                  // middle
+                0 => video_h as f32 - margin_v_px - box_h,  // bottom
+                2 => margin_v_px,                            // top
+                _ => (video_h as f32 - box_h) / 2.0,        // middle
             };
             (bx, by)
         };
 
-    let box_x = box_x;
-    let box_y = box_y;
+        // Debug log para primeros 2 segmentos
+        if seg.index == 0 || seg.index == 1 {
+            let log_path = std::env::temp_dir().join("ss_burn_log.txt");
+            let prev = std::fs::read_to_string(&log_path).unwrap_or_default();
+            let cx = tmpl.pos_x.map(|px| (px / 100.0) * video_w as f32);
+            let cy = tmpl.pos_y.map(|py| (py / 100.0) * video_h as f32);
+            let _ = std::fs::write(&log_path, format!(
+                "{}[seg#{}] posX={:?} posY={:?} | cx={:?} cy={:?} | box_x={:.1} box_y={:.1} | box_w={:.1} box_h={:.1} | video={}x{} | text='{}'
+",
+                prev, seg.index, tmpl.pos_x, tmpl.pos_y, cx, cy,
+                box_x, box_y, box_w, box_h, video_w, video_h, text
+            ));
+        }
 
         // Create a full-frame transparent pixmap
         let mut pixmap = Pixmap::new(video_w, video_h)
