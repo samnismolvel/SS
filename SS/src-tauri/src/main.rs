@@ -398,6 +398,13 @@ fn get_video_dimensions(app: &tauri::AppHandle, video_path: &str) -> (u32, u32) 
 // For plain subtitles the existing `burn_subtitles` (ASS path) is still used.
 
 #[tauri::command]
+fn debug_log(msg: String) {
+    let log_path = std::env::temp_dir().join("ss_burn_log.txt");
+    let prev = std::fs::read_to_string(&log_path).unwrap_or_default();
+    let _ = std::fs::write(&log_path, format!("{}{}\n", prev, msg));
+}
+
+#[tauri::command]
 async fn burn_subtitles_canvas(
     app: tauri::AppHandle,
     video_path: String,
@@ -591,7 +598,7 @@ fn main() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![process_video, burn_subtitles, burn_subtitles_canvas])
+        .invoke_handler(tauri::generate_handler![process_video, burn_subtitles, burn_subtitles_canvas, debug_log])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

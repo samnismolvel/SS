@@ -272,7 +272,7 @@
             }
           }
         } catch { /* Rust usará fuente embebida */ }
-
+        
         await invoke('burn_subtitles_canvas', {
           videoPath:    sessionVal.videoPath,
           outputPath:   sessionVal.outputPath,
@@ -377,13 +377,20 @@
     let py = Math.max(2, Math.min(98, (rawY / frame.height) * 100))
     snapH = Math.abs(px - 50) < SNAP_PCT; if (snapH) px = 50
     snapV = Math.abs(py - 50) < SNAP_PCT; if (snapV) py = 50
+    console.log('[drag] px:', px.toFixed(1), 'py:', py.toFixed(1))
     updateActiveTemplate({ 
       posX: px ?? null, 
       posY: py ?? null 
     } as any)                                   
   }
 
-  function onSubPointerUp() { isDragging = false; snapH = false; snapV = false }
+  function onSubPointerUp() { 
+  isDragging = false; snapH = false; snapV = false
+  // Debug temporal — escribe posX/posY al log después del drag
+  invoke('debug_log', { 
+    msg: `[drag end] posX=${(templateVal as any).posX} posY=${(templateVal as any).posY} templateJson=${JSON.stringify(templateVal, (_, v) => v === undefined ? null : v).substring(0, 200)}`
+  }).catch(() => {})
+}
 
   function resetPosition() { updateActiveTemplate({ posX: null, posY: null } as any) }
 
