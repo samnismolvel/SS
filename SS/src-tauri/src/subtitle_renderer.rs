@@ -209,18 +209,17 @@ pub fn render_segments(
         // Position of the box within the video frame
         // let available_w = video_w as f32 - margin_l_px - margin_r_px;
         let (box_x, box_y) = if let (Some(px), Some(py)) = (tmpl.pos_x, tmpl.pos_y) {
-        // Posición libre — posX/posY son % del frame, apuntan al anchor del texto
-        // El anchor horizontal depende del alignment (igual que en CSS/preview)
-        let (h_anchor, _) = alignment_anchors(tmpl.alignment);
+        // posX/posY are % of the frame and point to the CENTRE of the subtitle
+        // box (matching the preview's transform:translate(-50%,-50%) on sub-outer).
         let anchor_x = (px / 100.0) * video_w as f32;
         let anchor_y = (py / 100.0) * video_h as f32;
-        let bx = match h_anchor {
-            0 => anchor_x,                  // left-aligned: posX es el borde izquierdo
-            2 => anchor_x - box_w,          // right-aligned: posX es el borde derecho
-            _ => anchor_x - box_w / 2.0,   // center: posX es el centro horizontal
-        };
-        // posY siempre apunta al borde superior del box (como top en CSS)
-        (bx, anchor_y)
+        // For all alignments, posX is the horizontal centre of the text box.
+        // (The preview always centres sub-outer on the drag point regardless of
+        //  text alignment, and sub-box sits centred inside sub-outer.)
+        let bx = anchor_x - box_w / 2.0;
+        // posY is the vertical centre of the text box.
+        let by = anchor_y - box_h / 2.0;
+        (bx, by)
     } else {
         // Fallback al sistema de alignment + margin
         let available_w = video_w as f32 - margin_l_px - margin_r_px;
