@@ -39,6 +39,8 @@ export const PRESETS: Template[] = [
     shadowBlur: 0,
     shadowOffsetX: 0,
     shadowOffsetY: 0,
+    posX: null,
+    posY: null,
   },
   {
     id: PRESET_IDS.TIKTOK,
@@ -74,6 +76,8 @@ export const PRESETS: Template[] = [
     shadowBlur: 0,
     shadowOffsetX: 0,
     shadowOffsetY: 0,
+    posX: null,
+    posY: null,
   },
   {
     id: PRESET_IDS.CINEMATIC,
@@ -109,6 +113,8 @@ export const PRESETS: Template[] = [
     shadowBlur: 0,
     shadowOffsetX: 0,
     shadowOffsetY: 0,
+    posX: null,
+    posY: null,
   },
   {
     id: PRESET_IDS.MINIMAL,
@@ -144,6 +150,8 @@ export const PRESETS: Template[] = [
     shadowBlur: 0,
     shadowOffsetX: 0,
     shadowOffsetY: 0,
+    posX: null,
+    posY: null,
   },
   {
     id: PRESET_IDS.KARAOKE,
@@ -179,6 +187,8 @@ export const PRESETS: Template[] = [
     shadowBlur: 0,
     shadowOffsetX: 0,
     shadowOffsetY: 0,
+    posX: null,
+    posY: null,
   },
 ]
 

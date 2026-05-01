@@ -45,6 +45,9 @@ export interface Template {
   shadowBlur: number
   shadowOffsetX: number
   shadowOffsetY: number
+
+  posX: number | null
+  posY: number | null
 }
 
 // ─── Enums / Literals ────────────────────────────────────────────────────────
