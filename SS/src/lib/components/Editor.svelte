@@ -251,12 +251,8 @@
         // We send the template + segments as JSON; Rust handles the rest.
         const segmentsJson = JSON.stringify(sessionVal.subtitles)
         
-        const px = (templateVal as any)?.posX
-        const py = (templateVal as any)?.posY
-        const templateWithPos = {
-          ...templateVal,
-          ...(px != null ? { posX: px, posY: py } : {})
-        }
+        // posX/posY ya viven en templateVal via updateActiveTemplate.
+        // Serializar con replacer para que null se preserve (undefined se omitiría).
         const templateJson = JSON.stringify(templateVal, (_, v) => v === undefined ? null : v)
 
         // Load the font bytes: try fetching a bundled fallback first,
