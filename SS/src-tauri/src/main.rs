@@ -364,11 +364,15 @@ fn get_video_dimensions(app: &tauri::AppHandle, video_path: &str) -> (u32, u32) 
     #[cfg(not(target_os = "windows"))]
     let ffprobe = resource_path.join("binaries/ffprobe");
 
+    // Request width, height AND sample_aspect_ratio so we can compute
+    // display dimensions (= what the viewer sees) instead of storage dimensions.
+    // SAR ≠ 1:1 causes misalignment between the canvas renderer (which works in
+    // display space) and the raw pixel grid of the video stream.
     let out = Command::new(&ffprobe)
         .args([
             "-v", "error",
             "-select_streams", "v:0",
-            "-show_entries", "stream=width,height",
+            "-show_entries", "stream=width,height,sample_aspect_ratio",
             "-of", "csv=p=0",
             video_path,
         ])
@@ -376,11 +380,26 @@ fn get_video_dimensions(app: &tauri::AppHandle, video_path: &str) -> (u32, u32) 
 
     if let Ok(o) = out {
         let s = String::from_utf8_lossy(&o.stdout);
-        let parts: Vec<u32> = s.trim().split(',')
-            .filter_map(|x| x.parse().ok())
-            .collect();
-        if parts.len() == 2 {
-            return (parts[0], parts[1]);
+        // Output is: width,height[,sar_num:sar_den]
+        // SAR field may be missing or "N/A" for square-pixel videos.
+        let line = s.trim();
+        let parts: Vec<&str> = line.split(',').collect();
+        if parts.len() >= 2 {
+            let w: u32 = parts[0].parse().unwrap_or(1920);
+            let h: u32 = parts[1].parse().unwrap_or(1080);
+            // Apply SAR correction if present and non-trivial
+            if parts.len() >= 3 {
+                let sar_parts: Vec<u32> = parts[2].split(':')
+                    .filter_map(|x| x.parse().ok())
+                    .collect();
+                if sar_parts.len() == 2 && sar_parts[1] != 0 && sar_parts[0] != sar_parts[1] {
+                    // Display width = storage width * SAR_num / SAR_den
+                    let display_w = ((w as f64 * sar_parts[0] as f64) / sar_parts[1] as f64)
+                        .round() as u32;
+                    return (display_w, h);
+                }
+            }
+            return (w, h);
         }
     }
     (1920, 1080)
@@ -396,13 +415,6 @@ fn get_video_dimensions(app: &tauri::AppHandle, video_path: &str) -> (u32, u32) 
 // The frontend calls this command when `lineBgEnabled` is true or any feature
 // requires rendering that ASS/libass cannot express (rounded backgrounds, etc.).
 // For plain subtitles the existing `burn_subtitles` (ASS path) is still used.
-
-#[tauri::command]
-fn debug_log(msg: String) {
-    let log_path = std::env::temp_dir().join("ss_burn_log.txt");
-    let prev = std::fs::read_to_string(&log_path).unwrap_or_default();
-    let _ = std::fs::write(&log_path, format!("{}{}\n", prev, msg));
-}
 
 #[tauri::command]
 async fn burn_subtitles_canvas(
@@ -439,10 +451,6 @@ async fn burn_subtitles_canvas(
     let tmpl: RenderTemplate = serde_json::from_str(&template_json)
         .map_err(|e| { log!("FAIL template json: {e}"); format!("Invalid template JSON: {e}") })?;
     log!("template parsed ok");
-
-    log!("template_json raw start: {}", &template_json[..template_json.len().min(500)]);
-    log!("template_json raw END: {}", &template_json[template_json.len().saturating_sub(200)..]);
-
 
     let font_bytes: Vec<u8> = if font_data_b64.trim().is_empty() {
         include_bytes!("../fonts/NotoSans-Regular.ttf").to_vec()
@@ -490,13 +498,23 @@ async fn burn_subtitles_canvas(
     };
 
     // Build the FFmpeg command
-    // -i video first, then all PNG inputs, then filtergraph
+    // -i video first, then all PNG inputs, then filtergraph.
+    //
+    // We pass vid_w/vid_h (display dimensions, SAR-corrected) to FFmpeg via
+    // -vf scale so the PNG overlays match the display frame exactly.
+    // This is the same correction libass applies internally for ASS subtitles.
     let mut args: Vec<String> = vec![
         "-i".to_string(), video_path.clone(),
     ];
     args.extend(extra_inputs);
+    // Append a scale step to the filtergraph so the output is encoded at
+    // display dimensions (SAR-corrected). This must be inside -filter_complex,
+    // not as a separate -vf, because FFmpeg rejects both simultaneously.
+    let vf_scaled = vf_final.replace("[outv]", "[prescale]")
+        + &format!(";[prescale]scale={}:{}[outv]", vid_w, vid_h);
+
     args.extend([
-        "-filter_complex".to_string(), vf_final,
+        "-filter_complex".to_string(), vf_scaled,
         "-map".to_string(), "[outv]".to_string(),
         "-map".to_string(), "0:a?".to_string(),   // copy audio if present
         "-c:v".to_string(), "libx264".to_string(),
@@ -599,7 +617,7 @@ fn main() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![process_video, burn_subtitles, burn_subtitles_canvas, debug_log])
+        .invoke_handler(tauri::generate_handler![process_video, burn_subtitles, burn_subtitles_canvas])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
