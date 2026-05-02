@@ -154,6 +154,20 @@ fn alignment_anchors(al: u8) -> (u8, u8) {
 /// `font_data`: TTF/OTF bytes for the subtitle font.
 ///
 /// Returns one `RenderedFrame` per segment (empty segments are skipped).
+#[derive(Clone, Copy)]
+pub struct FrameInfo {
+    pub offset_x: f32,
+    pub offset_y: f32,
+    pub scale_x:  f32,
+    pub scale_y:  f32,
+}
+
+impl Default for FrameInfo {
+    fn default() -> Self {
+        Self { offset_x: 0.0, offset_y: 0.0, scale_x: 1.0, scale_y: 1.0 }
+    }
+}
+
 pub fn render_segments(
     segments: &[SubtitleSegment],
     tmpl: &RenderTemplate,
@@ -161,6 +175,7 @@ pub fn render_segments(
     video_w: u32,
     video_h: u32,
     out_dir: &Path,
+    frame_info: FrameInfo,
 ) -> Result<Vec<RenderedFrame>, String> {
     let font = FontRef::try_from_slice(font_data)
         .map_err(|e| format!("Failed to load font: {e}"))?;
@@ -206,45 +221,36 @@ pub fn render_segments(
             (text_w + o * 2.0, text_h + o * 2.0)
         };
 
-        // ── Position ──────────────────────────────────────────────────────────
-        // posX/posY (% of video frame) point to the TOP-LEFT of the box,
-        // matching getOverlayPositionStyle which uses transform:translate(-50%,-50%)
-        // so the dragged point is the center — we replicate that here.
+        // ── Position ─────────────────────────────────────────────────────────
+        // posX/posY are % of the VISIBLE content area (excluding letterbox bars).
+        // frame_info maps that visible area within the full video frame:
+        //   content pixel = bar_offset + (pct/100) * content_size
         //
-        // Fallback uses ASS alignment + margin when no drag has occurred.
+        // When null, fall back to alignment + margin relative to content area.
+        let content_w = frame_info.scale_x * video_w as f32;
+        let content_h = frame_info.scale_y * video_h as f32;
+        let bar_left  = frame_info.offset_x * video_w as f32;
+        let bar_top   = frame_info.offset_y * video_h as f32;
+
         let (box_x, box_y) = if let (Some(px), Some(py)) = (tmpl.pos_x, tmpl.pos_y) {
-            // User dragged: posX/posY are CENTER of box in % of video dimensions
-            let cx = (px / 100.0) * video_w as f32;
-            let cy = (py / 100.0) * video_h as f32;
+            // User dragged — posX/posY are % of visible area, anchor = center
+            let cx = bar_left + (px / 100.0) * content_w;
+            let cy = bar_top  + (py / 100.0) * content_h;
             (cx - box_w / 2.0, cy - box_h / 2.0)
         } else {
-            // No drag: use alignment + margin
+            // No drag — alignment + margin relative to visible content area
             let bx = match h_anchor {
-                0 => margin_l_px,
-                2 => video_w as f32 - margin_r_px - box_w,
-                _ => (video_w as f32 - box_w) / 2.0,
+                0 => bar_left + margin_l_px,
+                2 => bar_left + content_w - margin_r_px - box_w,
+                _ => bar_left + (content_w - box_w) / 2.0,
             };
             let by = match v_anchor {
-                0 => video_h as f32 - margin_v_px - box_h,  // bottom
-                2 => margin_v_px,                            // top
-                _ => (video_h as f32 - box_h) / 2.0,        // middle
+                0 => bar_top + content_h - margin_v_px - box_h,  // bottom
+                2 => bar_top + margin_v_px,                       // top
+                _ => bar_top + (content_h - box_h) / 2.0,        // middle
             };
             (bx, by)
         };
-
-        // Debug log para primeros 2 segmentos
-        if seg.index == 0 || seg.index == 1 {
-            let log_path = std::env::temp_dir().join("ss_burn_log.txt");
-            let prev = std::fs::read_to_string(&log_path).unwrap_or_default();
-            let cx = tmpl.pos_x.map(|px| (px / 100.0) * video_w as f32);
-            let cy = tmpl.pos_y.map(|py| (py / 100.0) * video_h as f32);
-            let _ = std::fs::write(&log_path, format!(
-                "{}[seg#{}] posX={:?} posY={:?} | cx={:?} cy={:?} | box_x={:.1} box_y={:.1} | box_w={:.1} box_h={:.1} | video={}x{} | text='{}'
-",
-                prev, seg.index, tmpl.pos_x, tmpl.pos_y, cx, cy,
-                box_x, box_y, box_w, box_h, video_w, video_h, text
-            ));
-        }
 
         // Create a full-frame transparent pixmap
         let mut pixmap = Pixmap::new(video_w, video_h)

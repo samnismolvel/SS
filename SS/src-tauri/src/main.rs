@@ -1,7 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod subtitle_renderer;
-use subtitle_renderer::{render_segments, build_overlay_filtergraph, SubtitleSegment, RenderTemplate};
+use subtitle_renderer::{render_segments, build_overlay_filtergraph, SubtitleSegment, RenderTemplate, FrameInfo};
 
 use std::process::Command;
 use tauri::{Manager, Emitter};
@@ -364,15 +364,11 @@ fn get_video_dimensions(app: &tauri::AppHandle, video_path: &str) -> (u32, u32) 
     #[cfg(not(target_os = "windows"))]
     let ffprobe = resource_path.join("binaries/ffprobe");
 
-    // Request width, height AND sample_aspect_ratio so we can compute
-    // display dimensions (= what the viewer sees) instead of storage dimensions.
-    // SAR ≠ 1:1 causes misalignment between the canvas renderer (which works in
-    // display space) and the raw pixel grid of the video stream.
     let out = Command::new(&ffprobe)
         .args([
             "-v", "error",
             "-select_streams", "v:0",
-            "-show_entries", "stream=width,height,sample_aspect_ratio",
+            "-show_entries", "stream=width,height",
             "-of", "csv=p=0",
             video_path,
         ])
@@ -380,26 +376,11 @@ fn get_video_dimensions(app: &tauri::AppHandle, video_path: &str) -> (u32, u32) 
 
     if let Ok(o) = out {
         let s = String::from_utf8_lossy(&o.stdout);
-        // Output is: width,height[,sar_num:sar_den]
-        // SAR field may be missing or "N/A" for square-pixel videos.
-        let line = s.trim();
-        let parts: Vec<&str> = line.split(',').collect();
-        if parts.len() >= 2 {
-            let w: u32 = parts[0].parse().unwrap_or(1920);
-            let h: u32 = parts[1].parse().unwrap_or(1080);
-            // Apply SAR correction if present and non-trivial
-            if parts.len() >= 3 {
-                let sar_parts: Vec<u32> = parts[2].split(':')
-                    .filter_map(|x| x.parse().ok())
-                    .collect();
-                if sar_parts.len() == 2 && sar_parts[1] != 0 && sar_parts[0] != sar_parts[1] {
-                    // Display width = storage width * SAR_num / SAR_den
-                    let display_w = ((w as f64 * sar_parts[0] as f64) / sar_parts[1] as f64)
-                        .round() as u32;
-                    return (display_w, h);
-                }
-            }
-            return (w, h);
+        let parts: Vec<u32> = s.trim().split(',')
+            .filter_map(|x| x.parse().ok())
+            .collect();
+        if parts.len() == 2 {
+            return (parts[0], parts[1]);
         }
     }
     (1920, 1080)
@@ -426,6 +407,7 @@ async fn burn_subtitles_canvas(
     font_data_b64: String,
     crop_ratio: Option<String>,
     crop_offset: Option<u32>,
+    frame_info_json: Option<String>,
 ) -> Result<(), String> {
     // ── Debug log — escribe en cada etapa ────────────────────────────────────
     let log_path = std::env::temp_dir().join("ss_burn_log.txt");
@@ -463,13 +445,31 @@ async fn burn_subtitles_canvas(
     let (vid_w, vid_h) = get_video_dimensions(&app, &video_path);
     log!("video dimensions: {}x{}", vid_w, vid_h);
 
+    // Deserialise FrameInfo from the frontend JSON.
+    // The struct lives in subtitle_renderer but we parse it here via a local
+    // helper since FrameInfo doesn't derive Deserialize (it's a pure Rust type).
+    let frame_info = {
+        #[derive(serde::Deserialize)]
+        struct FrameInfoJson { offset_x: f32, offset_y: f32, scale_x: f32, scale_y: f32 }
+        let fi = frame_info_json
+            .as_deref()
+            .and_then(|s| serde_json::from_str::<FrameInfoJson>(s).ok());
+        match fi {
+            Some(f) => FrameInfo { offset_x: f.offset_x, offset_y: f.offset_y,
+                                   scale_x: f.scale_x,   scale_y: f.scale_y },
+            None    => FrameInfo::default(),
+        }
+    };
+    log!("frame_info: offsetX={:.4} offsetY={:.4} scaleX={:.4} scaleY={:.4}",
+         frame_info.offset_x, frame_info.offset_y, frame_info.scale_x, frame_info.scale_y);
+
     let temp_dir = std::env::temp_dir().join("ss_canvas_frames");
     let _ = std::fs::remove_dir_all(&temp_dir);
     std::fs::create_dir_all(&temp_dir)
         .map_err(|e| { log!("FAIL create temp dir: {e}"); format!("Cannot create temp dir: {e}") })?;
     log!("temp dir created: {:?}", temp_dir);
 
-    let frames = render_segments(&segments, &tmpl, &font_bytes, vid_w, vid_h, &temp_dir)
+    let frames = render_segments(&segments, &tmpl, &font_bytes, vid_w, vid_h, &temp_dir, frame_info)
         .map_err(|e| { log!("FAIL render_segments: {e}"); format!("Render error: {e}") })?;
     log!("frames rendered: {}", frames.len());
 
@@ -498,23 +498,13 @@ async fn burn_subtitles_canvas(
     };
 
     // Build the FFmpeg command
-    // -i video first, then all PNG inputs, then filtergraph.
-    //
-    // We pass vid_w/vid_h (display dimensions, SAR-corrected) to FFmpeg via
-    // -vf scale so the PNG overlays match the display frame exactly.
-    // This is the same correction libass applies internally for ASS subtitles.
+    // -i video first, then all PNG inputs, then filtergraph
     let mut args: Vec<String> = vec![
         "-i".to_string(), video_path.clone(),
     ];
     args.extend(extra_inputs);
-    // Append a scale step to the filtergraph so the output is encoded at
-    // display dimensions (SAR-corrected). This must be inside -filter_complex,
-    // not as a separate -vf, because FFmpeg rejects both simultaneously.
-    let vf_scaled = vf_final.replace("[outv]", "[prescale]")
-        + &format!(";[prescale]scale={}:{}[outv]", vid_w, vid_h);
-
     args.extend([
-        "-filter_complex".to_string(), vf_scaled,
+        "-filter_complex".to_string(), vf_final,
         "-map".to_string(), "[outv]".to_string(),
         "-map".to_string(), "0:a?".to_string(),   // copy audio if present
         "-c:v".to_string(), "libx264".to_string(),

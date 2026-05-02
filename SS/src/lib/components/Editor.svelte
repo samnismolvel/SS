@@ -4,8 +4,6 @@
   import { buildAss, parseSRT } from '$lib/utils/ass'
   import { convertFileSrc } from '@tauri-apps/api/core'
   import { invoke } from '@tauri-apps/api/core'
-  import { get } from 'svelte/store'
-
   import type { Alignment, AnimationMode } from '$lib/types'
 
   interface Props {
@@ -255,9 +253,7 @@
         
         // posX/posY ya viven en templateVal via updateActiveTemplate.
         // Serializar con replacer para que null se preserve (undefined se omitiría).
-        const currentTemplate = get(activeTemplate)
-        console.log('posX at burn:', currentTemplate.posX, currentTemplate.posY) // debug
-        const templateJson = JSON.stringify(currentTemplate, (_, v) => v === undefined ? null : v)
+        const templateJson = JSON.stringify(templateVal, (_, v) => v === undefined ? null : v)
 
         // Load the font bytes: try fetching a bundled fallback first,
         // then fall back to an empty string (Rust will use a built-in default).
@@ -276,13 +272,26 @@
             }
           }
         } catch { /* Rust usará fuente embebida */ }
-        
+
+        // Compute frame info: the visible content area within the video wrapper.
+        // posX/posY are % of this visible area — Rust needs the offset and scale
+        // relative to the full video frame to place subtitles correctly.
+        const frame = getFrameRect()
+        const wrap  = videoWrapEl?.getBoundingClientRect()
+        const frameInfo = (frame && wrap) ? {
+          offsetX: (frame.left - wrap.left) / wrap.width,
+          offsetY: (frame.top  - wrap.top)  / wrap.height,
+          scaleX:  frame.width  / wrap.width,
+          scaleY:  frame.height / wrap.height,
+        } : { offsetX: 0, offsetY: 0, scaleX: 1, scaleY: 1 }
+
         await invoke('burn_subtitles_canvas', {
-          videoPath:    sessionVal.videoPath,
-          outputPath:   sessionVal.outputPath,
+          videoPath:     sessionVal.videoPath,
+          outputPath:    sessionVal.outputPath,
           segmentsJson,
           templateJson,
           fontDataB64,
+          frameInfoJson: JSON.stringify(frameInfo),
         })
       } else {
         // ── ASS path (default) ───────────────────────────────────────────────
@@ -381,20 +390,13 @@
     let py = Math.max(2, Math.min(98, (rawY / frame.height) * 100))
     snapH = Math.abs(px - 50) < SNAP_PCT; if (snapH) px = 50
     snapV = Math.abs(py - 50) < SNAP_PCT; if (snapV) py = 50
-    console.log('[drag] px:', px.toFixed(1), 'py:', py.toFixed(1))
     updateActiveTemplate({ 
       posX: px ?? null, 
       posY: py ?? null 
     } as any)                                   
   }
 
-  function onSubPointerUp() { 
-  isDragging = false; snapH = false; snapV = false
-  // Debug temporal — escribe posX/posY al log después del drag
-  invoke('debug_log', { 
-    msg: `[drag end] posX=${(templateVal as any).posX} posY=${(templateVal as any).posY} templateJson=${JSON.stringify(templateVal, (_, v) => v === undefined ? null : v).substring(0, 200)}`
-  }).catch(() => {})
-}
+  function onSubPointerUp() { isDragging = false; snapH = false; snapV = false }
 
   function resetPosition() { updateActiveTemplate({ posX: null, posY: null } as any) }
 
