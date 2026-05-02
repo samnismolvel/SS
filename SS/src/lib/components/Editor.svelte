@@ -276,14 +276,21 @@
         // Compute frame info: the visible content area within the video wrapper.
         // posX/posY are % of this visible area — Rust needs the offset and scale
         // relative to the full video frame to place subtitles correctly.
+        // En handleBurn, justo antes del invoke, reemplaza el bloque de frameInfo con:
         const frame = getFrameRect()
         const wrap  = videoWrapEl?.getBoundingClientRect()
+
+        // Log para debug
+        invoke('debug_log', { msg: `[frameInfo] frame=${JSON.stringify(frame)} wrap=${JSON.stringify(wrap)} videoWrapEl=${!!videoWrapEl} videoEl.videoWidth=${videoEl?.videoWidth}` }).catch(()=>{})
+
         const frameInfo = (frame && wrap) ? {
           offsetX: (frame.left - wrap.left) / wrap.width,
           offsetY: (frame.top  - wrap.top)  / wrap.height,
           scaleX:  frame.width  / wrap.width,
           scaleY:  frame.height / wrap.height,
         } : { offsetX: 0, offsetY: 0, scaleX: 1, scaleY: 1 }
+
+        invoke('debug_log', { msg: `[frameInfo computed] ${JSON.stringify(frameInfo)}` }).catch(()=>{})
 
         await invoke('burn_subtitles_canvas', {
           videoPath:     sessionVal.videoPath,
