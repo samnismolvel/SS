@@ -298,9 +298,9 @@
           scaleY:  frame.height / wrap.height,
         } : { offsetX: 0, offsetY: 0, scaleX: 1, scaleY: 1 }
 
-        invoke('debug_log', {
-           msg: `[frameInfo computed] ${JSON.stringify(frameInfo)}`
-        }).catch(()=>{})
+        invoke('debug_log', { 
+          msg: '[frameInfo computed] ' + JSON.stringify(frameInfo)
+        }).catch(() => {})
 
         await invoke('burn_subtitles_canvas', {
           videoPath:     sessionVal.videoPath,
