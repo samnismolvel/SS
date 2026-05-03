@@ -439,8 +439,6 @@ async fn burn_subtitles_canvas(
 
     let ffmpeg_path = get_ffmpeg_path(&app)?;
     emit_progress(&app, "burning", "Rendering subtitle frames...");
-    log!("video dimensions: {}x{} | frame_info: offsetX={:.4} offsetY={:.4} scaleX={:.4} scaleY={:.4}",
-         vid_w, vid_h, frame_info.offset_x, frame_info.offset_y, frame_info.scale_x, frame_info.scale_y);
 
     let segments: Vec<SubtitleSegment> = serde_json::from_str(&segments_json)
         .map_err(|e| { log!("FAIL segments json: {e}"); format!("Invalid segments JSON: {e}") })?;
@@ -474,7 +472,8 @@ async fn burn_subtitles_canvas(
             None => subtitle_renderer::FrameInfo::default(),
         }
     };
-    log!("video dimensions: {}x{}", vid_w, vid_h);
+    log!("video dimensions: {}x{} | frame_info: offsetX={:.4} offsetY={:.4} scaleX={:.4} scaleY={:.4}",
+         vid_w, vid_h, frame_info.offset_x, frame_info.offset_y, frame_info.scale_x, frame_info.scale_y);
 
     let temp_dir = std::env::temp_dir().join("ss_canvas_frames");
     let _ = std::fs::remove_dir_all(&temp_dir);
