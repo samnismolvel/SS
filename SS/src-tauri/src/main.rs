@@ -1,7 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod subtitle_renderer;
-use subtitle_renderer::{render_segments, build_overlay_filtergraph, SubtitleSegment, RenderTemplate, FrameInfo};
+use subtitle_renderer::{render_segments, build_overlay_filtergraph, SubtitleSegment, RenderTemplate};
 
 use std::process::Command;
 use tauri::{Manager, Emitter};
@@ -369,18 +369,20 @@ fn get_video_dimensions(app: &tauri::AppHandle, video_path: &str) -> (u32, u32) 
             "-v", "error",
             "-select_streams", "v:0",
             "-show_entries", "stream=width,height",
-            "-of", "csv=p=0",
+            "-of", "json",
             video_path,
         ])
         .output();
 
     if let Ok(o) = out {
         let s = String::from_utf8_lossy(&o.stdout);
-        let parts: Vec<u32> = s.trim().split(',')
-            .filter_map(|x| x.parse().ok())
-            .collect();
-        if parts.len() == 2 {
-            return (parts[0], parts[1]);
+        let json: serde_json::Value = serde_json::from_str(&s).unwrap_or_default();
+        if let Some(stream) = json["streams"].get(0) {
+            let w = stream["width"].as_u64().unwrap_or(0) as u32;
+            let h = stream["height"].as_u64().unwrap_or(0) as u32;
+            if w > 0 && h > 0 {
+                return (w, h);
+            }
         }
     }
     (1920, 1080)
@@ -396,6 +398,18 @@ fn get_video_dimensions(app: &tauri::AppHandle, video_path: &str) -> (u32, u32) 
 // The frontend calls this command when `lineBgEnabled` is true or any feature
 // requires rendering that ASS/libass cannot express (rounded backgrounds, etc.).
 // For plain subtitles the existing `burn_subtitles` (ASS path) is still used.
+
+#[derive(Clone, Copy)]
+struct FrameInfo {
+    offset_x: f32,
+    offset_y: f32,
+    scale_x:  f32,
+    scale_y:  f32,
+}
+
+impl Default for FrameInfo {
+    fn default() -> Self { Self { offset_x: 0.0, offset_y: 0.0, scale_x: 1.0, scale_y: 1.0 } }
+}
 
 #[tauri::command]
 async fn burn_subtitles_canvas(
@@ -425,6 +439,8 @@ async fn burn_subtitles_canvas(
 
     let ffmpeg_path = get_ffmpeg_path(&app)?;
     emit_progress(&app, "burning", "Rendering subtitle frames...");
+    log!("video dimensions: {}x{} | frame_info: offsetX={:.4} offsetY={:.4} scaleX={:.4} scaleY={:.4}",
+         vid_w, vid_h, frame_info.offset_x, frame_info.offset_y, frame_info.scale_x, frame_info.scale_y);
 
     let segments: Vec<SubtitleSegment> = serde_json::from_str(&segments_json)
         .map_err(|e| { log!("FAIL segments json: {e}"); format!("Invalid segments JSON: {e}") })?;
@@ -443,25 +459,22 @@ async fn burn_subtitles_canvas(
     log!("font decoded: {} bytes", font_bytes.len());
 
     let (vid_w, vid_h) = get_video_dimensions(&app, &video_path);
-    log!("video dimensions: {}x{}", vid_w, vid_h);
 
-    // Deserialise FrameInfo from the frontend JSON.
-    // The struct lives in subtitle_renderer but we parse it here via a local
-    // helper since FrameInfo doesn't derive Deserialize (it's a pure Rust type).
+    // Deserialise frame info — describes visible content area within the full frame
     let frame_info = {
         #[derive(serde::Deserialize)]
-        struct FrameInfoJson { offset_x: f32, offset_y: f32, scale_x: f32, scale_y: f32 }
-        let fi = frame_info_json
-            .as_deref()
-            .and_then(|s| serde_json::from_str::<FrameInfoJson>(s).ok());
+        struct Fi { offset_x: f32, offset_y: f32, scale_x: f32, scale_y: f32 }
+        let fi = frame_info_json.as_deref()
+            .and_then(|s| serde_json::from_str::<Fi>(s).ok());
         match fi {
-            Some(f) => FrameInfo { offset_x: f.offset_x, offset_y: f.offset_y,
-                                   scale_x: f.scale_x,   scale_y: f.scale_y },
-            None    => FrameInfo::default(),
+            Some(f) => subtitle_renderer::FrameInfo {
+                offset_x: f.offset_x, offset_y: f.offset_y,
+                scale_x: f.scale_x,   scale_y: f.scale_y,
+            },
+            None => subtitle_renderer::FrameInfo::default(),
         }
     };
-    log!("frame_info: offsetX={:.4} offsetY={:.4} scaleX={:.4} scaleY={:.4}",
-         frame_info.offset_x, frame_info.offset_y, frame_info.scale_x, frame_info.scale_y);
+    log!("video dimensions: {}x{}", vid_w, vid_h);
 
     let temp_dir = std::env::temp_dir().join("ss_canvas_frames");
     let _ = std::fs::remove_dir_all(&temp_dir);

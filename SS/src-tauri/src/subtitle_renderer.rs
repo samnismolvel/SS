@@ -163,9 +163,7 @@ pub struct FrameInfo {
 }
 
 impl Default for FrameInfo {
-    fn default() -> Self {
-        Self { offset_x: 0.0, offset_y: 0.0, scale_x: 1.0, scale_y: 1.0 }
-    }
+    fn default() -> Self { Self { offset_x: 0.0, offset_y: 0.0, scale_x: 1.0, scale_y: 1.0 } }
 }
 
 pub fn render_segments(
@@ -223,17 +221,15 @@ pub fn render_segments(
 
         // ── Position ─────────────────────────────────────────────────────────
         // posX/posY are % of the VISIBLE content area (excluding letterbox bars).
-        // frame_info maps that visible area within the full video frame:
-        //   content pixel = bar_offset + (pct/100) * content_size
-        //
-        // When null, fall back to alignment + margin relative to content area.
-        let content_w = frame_info.scale_x * video_w as f32;
-        let content_h = frame_info.scale_y * video_h as f32;
+        // frame_info maps that visible area to the full video frame:
+        //   pixel = bar_offset + (pct/100) * content_size
+        let content_w = frame_info.scale_x  * video_w as f32;
+        let content_h = frame_info.scale_y  * video_h as f32;
         let bar_left  = frame_info.offset_x * video_w as f32;
         let bar_top   = frame_info.offset_y * video_h as f32;
 
         let (box_x, box_y) = if let (Some(px), Some(py)) = (tmpl.pos_x, tmpl.pos_y) {
-            // User dragged — posX/posY are % of visible area, anchor = center
+            // User dragged — center anchor, relative to visible content area
             let cx = bar_left + (px / 100.0) * content_w;
             let cy = bar_top  + (py / 100.0) * content_h;
             (cx - box_w / 2.0, cy - box_h / 2.0)
@@ -251,6 +247,21 @@ pub fn render_segments(
             };
             (bx, by)
         };
+
+        // Debug log — primeros 2 segmentos
+        if seg.index == 0 || seg.index == 1 {
+            let log_path = std::env::temp_dir().join("ss_burn_log.txt");
+            let prev = std::fs::read_to_string(&log_path).unwrap_or_default();
+            let _ = std::fs::write(&log_path, format!(
+                "{}[seg#{}] posX={:?} posY={:?} | content={}x{} bar=({},{}) | box=({:.0},{:.0}) size=({:.0},{:.0}) | video={}x{}
+",
+                prev, seg.index, tmpl.pos_x, tmpl.pos_y,
+                content_w as u32, content_h as u32,
+                bar_left as u32, bar_top as u32,
+                box_x, box_y, box_w, box_h,
+                video_w, video_h
+            ));
+        }
 
         // Create a full-frame transparent pixmap
         let mut pixmap = Pixmap::new(video_w, video_h)
