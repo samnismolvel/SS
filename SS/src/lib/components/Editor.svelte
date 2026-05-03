@@ -280,35 +280,27 @@
         const frame = getFrameRect()
         const wrap  = videoWrapEl?.getBoundingClientRect()
 
-        // If getFrameRect() returns null (videoWidth not ready), compute manually
-        // using the video element's natural dimensions as fallback.
-        let frameInfo: { offsetX: number, offsetY: number, scaleX: number, scaleY: number }
-        if (frame && wrap && wrap.width > 0 && wrap.height > 0) {
-          frameInfo = {
-            offsetX: (frame.left - wrap.left) / wrap.width,
-            offsetY: (frame.top  - wrap.top)  / wrap.height,
-            scaleX:  frame.width  / wrap.width,
-            scaleY:  frame.height / wrap.height,
-          }
-        } else if (videoEl && videoEl.videoWidth > 0 && videoWrapEl) {
-          // Fallback: compute from natural video dimensions
-          const w2 = videoWrapEl.getBoundingClientRect()
-          const vAR = videoEl.videoWidth / videoEl.videoHeight
-          const wAR = w2.width / w2.height
-          let fw: number, fh: number
-          if (vAR > wAR) { fw = w2.width;  fh = w2.width  / vAR }
-          else           { fh = w2.height; fw = w2.height * vAR }
-          frameInfo = {
-            offsetX: (w2.width  - fw) / 2 / w2.width,
-            offsetY: (w2.height - fh) / 2 / w2.height,
-            scaleX:  fw / w2.width,
-            scaleY:  fh / w2.height,
-          }
-        } else {
-          frameInfo = { offsetX: 0, offsetY: 0, scaleX: 1, scaleY: 1 }
-        }
+        // Log para debug
+        invoke('debug_log', { 
+          msg: '[frameInfo] w=' + (wrap?.width ?? 'null') + 
+              ' h=' + (wrap?.height ?? 'null') + 
+              ' fw=' + (frame?.width ?? 'null') + 
+              ' fh=' + (frame?.height ?? 'null') +
+              ' ft=' + (frame?.top ?? 'null') +
+              ' wt=' + (wrap?.top ?? 'null') +
+              ' videoW=' + (videoEl?.videoWidth ?? 'null')
+        }).catch(() => {})
 
+        const frameInfo = (frame && wrap) ? {
+          offsetX: (frame.left - wrap.left) / wrap.width,
+          offsetY: (frame.top  - wrap.top)  / wrap.height,
+          scaleX:  frame.width  / wrap.width,
+          scaleY:  frame.height / wrap.height,
+        } : { offsetX: 0, offsetY: 0, scaleX: 1, scaleY: 1 }
 
+        invoke('debug_log', { 
+          msg: '[frameInfo computed] ' + JSON.stringify(frameInfo)
+        }).catch(() => {})
 
         await invoke('burn_subtitles_canvas', {
           videoPath:     sessionVal.videoPath,
@@ -317,6 +309,8 @@
           templateJson,
           fontDataB64,
           frameInfoJson: JSON.stringify(frameInfo),
+          videoNativeW:  videoEl?.videoWidth  ?? 0,
+          videoNativeH:  videoEl?.videoHeight ?? 0,
         })
       } else {
         // ── ASS path (default) ───────────────────────────────────────────────

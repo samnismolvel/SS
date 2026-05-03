@@ -161,7 +161,6 @@ pub struct FrameInfo {
     pub scale_x:  f32,
     pub scale_y:  f32,
 }
-
 impl Default for FrameInfo {
     fn default() -> Self { Self { offset_x: 0.0, offset_y: 0.0, scale_x: 1.0, scale_y: 1.0 } }
 }
@@ -220,35 +219,31 @@ pub fn render_segments(
         };
 
         // ── Position ─────────────────────────────────────────────────────────
-        // posX/posY are % of the VISIBLE content area (excluding letterbox bars).
-        // frame_info maps that visible area to the full video frame:
-        //   pixel = bar_offset + (pct/100) * content_size
+        // posX/posY are % of the VISIBLE content area (frame_info maps it to
+        // full video pixel coordinates). When null, use alignment + margin.
         let content_w = frame_info.scale_x  * video_w as f32;
         let content_h = frame_info.scale_y  * video_h as f32;
         let bar_left  = frame_info.offset_x * video_w as f32;
         let bar_top   = frame_info.offset_y * video_h as f32;
 
         let (box_x, box_y) = if let (Some(px), Some(py)) = (tmpl.pos_x, tmpl.pos_y) {
-            // User dragged — center anchor, relative to visible content area
             let cx = bar_left + (px / 100.0) * content_w;
             let cy = bar_top  + (py / 100.0) * content_h;
             (cx - box_w / 2.0, cy - box_h / 2.0)
         } else {
-            // No drag — alignment + margin relative to visible content area
             let bx = match h_anchor {
                 0 => bar_left + margin_l_px,
                 2 => bar_left + content_w - margin_r_px - box_w,
                 _ => bar_left + (content_w - box_w) / 2.0,
             };
             let by = match v_anchor {
-                0 => bar_top + content_h - margin_v_px - box_h,  // bottom
-                2 => bar_top + margin_v_px,                       // top
-                _ => bar_top + (content_h - box_h) / 2.0,        // middle
+                0 => bar_top + content_h - margin_v_px - box_h,
+                2 => bar_top + margin_v_px,
+                _ => bar_top + (content_h - box_h) / 2.0,
             };
             (bx, by)
         };
 
-        // Debug log — primeros 2 segmentos
         if seg.index == 0 || seg.index == 1 {
             let log_path = std::env::temp_dir().join("ss_burn_log.txt");
             let prev = std::fs::read_to_string(&log_path).unwrap_or_default();
@@ -256,10 +251,8 @@ pub fn render_segments(
                 "{}[seg#{}] posX={:?} posY={:?} | content={}x{} bar=({},{}) | box=({:.0},{:.0}) size=({:.0},{:.0}) | video={}x{}
 ",
                 prev, seg.index, tmpl.pos_x, tmpl.pos_y,
-                content_w as u32, content_h as u32,
-                bar_left as u32, bar_top as u32,
-                box_x, box_y, box_w, box_h,
-                video_w, video_h
+                content_w as u32, content_h as u32, bar_left as u32, bar_top as u32,
+                box_x, box_y, box_w, box_h, video_w, video_h
             ));
         }
 

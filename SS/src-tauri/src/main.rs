@@ -369,20 +369,18 @@ fn get_video_dimensions(app: &tauri::AppHandle, video_path: &str) -> (u32, u32) 
             "-v", "error",
             "-select_streams", "v:0",
             "-show_entries", "stream=width,height",
-            "-of", "json",
+            "-of", "csv=p=0",
             video_path,
         ])
         .output();
 
     if let Ok(o) = out {
         let s = String::from_utf8_lossy(&o.stdout);
-        let json: serde_json::Value = serde_json::from_str(&s).unwrap_or_default();
-        if let Some(stream) = json["streams"].get(0) {
-            let w = stream["width"].as_u64().unwrap_or(0) as u32;
-            let h = stream["height"].as_u64().unwrap_or(0) as u32;
-            if w > 0 && h > 0 {
-                return (w, h);
-            }
+        let parts: Vec<u32> = s.trim().split(',')
+            .filter_map(|x| x.parse().ok())
+            .collect();
+        if parts.len() == 2 {
+            return (parts[0], parts[1]);
         }
     }
     (1920, 1080)
@@ -399,18 +397,6 @@ fn get_video_dimensions(app: &tauri::AppHandle, video_path: &str) -> (u32, u32) 
 // requires rendering that ASS/libass cannot express (rounded backgrounds, etc.).
 // For plain subtitles the existing `burn_subtitles` (ASS path) is still used.
 
-#[derive(Clone, Copy)]
-struct FrameInfo {
-    offset_x: f32,
-    offset_y: f32,
-    scale_x:  f32,
-    scale_y:  f32,
-}
-
-impl Default for FrameInfo {
-    fn default() -> Self { Self { offset_x: 0.0, offset_y: 0.0, scale_x: 1.0, scale_y: 1.0 } }
-}
-
 #[tauri::command]
 async fn burn_subtitles_canvas(
     app: tauri::AppHandle,
@@ -422,6 +408,8 @@ async fn burn_subtitles_canvas(
     crop_ratio: Option<String>,
     crop_offset: Option<u32>,
     frame_info_json: Option<String>,
+    video_native_w: Option<u32>,
+    video_native_h: Option<u32>,
 ) -> Result<(), String> {
     // ── Debug log — escribe en cada etapa ────────────────────────────────────
     let log_path = std::env::temp_dir().join("ss_burn_log.txt");
@@ -456,7 +444,12 @@ async fn burn_subtitles_canvas(
     };
     log!("font decoded: {} bytes", font_bytes.len());
 
-    let (vid_w, vid_h) = get_video_dimensions(&app, &video_path);
+    // Use native dimensions from the frontend video element (always correct).
+    // Fall back to ffprobe only if the frontend couldn't provide them.
+    let (vid_w, vid_h) = match (video_native_w, video_native_h) {
+        (Some(w), Some(h)) if w > 0 && h > 0 => (w, h),
+        _ => get_video_dimensions(&app, &video_path),
+    };
 
     // Deserialise frame info — describes visible content area within the full frame
     let frame_info = {
