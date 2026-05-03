@@ -281,7 +281,15 @@
         const wrap  = videoWrapEl?.getBoundingClientRect()
 
         // Log para debug
-        invoke('debug_log', { msg: `[frameInfo] frame=${JSON.stringify(frame)} wrap=${JSON.stringify(wrap)} videoWrapEl=${!!videoWrapEl} videoEl.videoWidth=${videoEl?.videoWidth}` }).catch(()=>{})
+        invoke('debug_log', { 
+          msg: '[frameInfo] w=' + (wrap?.width ?? 'null') + 
+              ' h=' + (wrap?.height ?? 'null') + 
+              ' fw=' + (frame?.width ?? 'null') + 
+              ' fh=' + (frame?.height ?? 'null') +
+              ' ft=' + (frame?.top ?? 'null') +
+              ' wt=' + (wrap?.top ?? 'null') +
+              ' videoW=' + (videoEl?.videoWidth ?? 'null')
+        }).catch(() => {})
 
         const frameInfo = (frame && wrap) ? {
           offsetX: (frame.left - wrap.left) / wrap.width,
@@ -290,7 +298,9 @@
           scaleY:  frame.height / wrap.height,
         } : { offsetX: 0, offsetY: 0, scaleX: 1, scaleY: 1 }
 
-        invoke('debug_log', { msg: `[frameInfo computed] ${JSON.stringify(frameInfo)}` }).catch(()=>{})
+        invoke('debug_log', {
+           msg: `[frameInfo computed] ${JSON.stringify(frameInfo)}`
+        }).catch(()=>{})
 
         await invoke('burn_subtitles_canvas', {
           videoPath:     sessionVal.videoPath,
