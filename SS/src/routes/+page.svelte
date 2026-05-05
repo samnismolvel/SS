@@ -23,11 +23,18 @@ $effect(() => {
 
   function toggleDark() { dark = !dark }
 
-  async function handleBurn(detail: { videoPath: string; outputPath: string; assContent: string }) {
-    const { videoPath, outputPath, assContent } = detail
+  async function handleBurn(detail: { videoPath: string; outputPath: string; assContent: string; canvasDone?: boolean }) {
+    const { videoPath, outputPath, assContent, canvasDone } = detail
     const item = queueVal[currentIdxVal]
     closeSession()
     processing.set(true)
+
+    if (canvasDone) {
+      // Canvas burn already happened in the Editor — just mark done and continue
+      updateQueueItem(item.id, { status: 'done' })
+      await queueRef.continueManual(item.id)
+      return
+    }
 
     try {
       await invoke('burn_subtitles', { videoPath, outputPath, assContent })

@@ -7,7 +7,7 @@
   import type { Alignment, AnimationMode } from '$lib/types'
 
   interface Props {
-    onburn: (detail: { videoPath: string; outputPath: string; assContent: string }) => void
+    onburn: (detail: { videoPath: string; outputPath: string; assContent: string; canvasDone?: boolean }) => void
     oncancel: () => void
   }
   let { onburn, oncancel }: Props = $props()
@@ -312,6 +312,9 @@
           videoNativeW:  videoEl?.videoWidth  ?? 0,
           videoNativeH:  videoEl?.videoHeight ?? 0,
         })
+        // Notify parent — canvasDone=true skips the ASS burn and navigates back
+        onburn({ videoPath: sessionVal.videoPath, outputPath: sessionVal.outputPath, assContent: '', canvasDone: true })
+        return
       } else {
         // ── ASS path (default) ───────────────────────────────────────────────
         const assContent = buildAss(sessionVal.subtitles, templateVal, sessionVal.rawSubs ?? [])
