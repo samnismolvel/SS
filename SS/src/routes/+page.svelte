@@ -30,9 +30,17 @@ $effect(() => {
     processing.set(true)
 
     if (canvasDone) {
-      // Canvas burn already happened in the Editor — just mark done and continue
-      updateQueueItem(item.id, { status: 'done' })
-      await queueRef.continueManual(item.id)
+      // Canvas burn is running in the background — listen for the Rust 'done'
+      // progress event to mark the item done and continue the queue.
+      const { listen } = await import('@tauri-apps/api/event')
+      const unlisten = await listen('progress', (ev: any) => {
+        if (ev.payload?.step === 'done') {
+          unlisten()
+          updateQueueItem(item.id, { status: 'done' })
+          processing.set(false)
+          queueRef.continueManual(item.id)
+        }
+      })
       return
     }
 

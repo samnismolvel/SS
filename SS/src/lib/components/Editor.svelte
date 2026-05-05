@@ -7,7 +7,8 @@
   import type { Alignment, AnimationMode } from '$lib/types'
 
   interface Props {
-    onburn: (detail: { videoPath: string; outputPath: string; assContent: string; canvasDone?: boolean }) => void
+    onburn: (detail: { videoPath: string; outputPath: string; assContent: string, canvasDone?: boolean }) => void
+
     oncancel: () => void
   }
   let { onburn, oncancel }: Props = $props()
@@ -302,18 +303,21 @@
           msg: '[frameInfo computed] ' + JSON.stringify(frameInfo)
         }).catch(() => {})
 
-        await invoke('burn_subtitles_canvas', {
-          videoPath:     sessionVal.videoPath,
-          outputPath:    sessionVal.outputPath,
+        // Navigate back immediately — same UX as ASS path.
+        // Canvas burn runs in the background via fire-and-forget.
+        const _vp = sessionVal.videoPath
+        const _op = sessionVal.outputPath
+        onburn({ videoPath: _vp, outputPath: _op, assContent: '', canvasDone: true })
+        invoke('burn_subtitles_canvas', {
+          videoPath:     _vp,
+          outputPath:    _op,
           segmentsJson,
           templateJson,
           fontDataB64,
           frameInfoJson: JSON.stringify(frameInfo),
           videoNativeW:  videoEl?.videoWidth  ?? 0,
           videoNativeH:  videoEl?.videoHeight ?? 0,
-        })
-        // Notify parent — canvasDone=true skips the ASS burn and navigates back
-        onburn({ videoPath: sessionVal.videoPath, outputPath: sessionVal.outputPath, assContent: '', canvasDone: true })
+        }).catch((e: any) => console.error('[canvas burn]', e))
         return
       } else {
         // ── ASS path (default) ───────────────────────────────────────────────
