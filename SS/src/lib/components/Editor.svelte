@@ -245,7 +245,7 @@
     burnError = null
     isBurning = true
     try {
-      if ((templateVal as any).lineBgEnabled) {
+      if ((templateVal as any).lineBgEnabled || (templateVal as any).activeBgEnabled) {
         // ── Canvas path ──────────────────────────────────────────────────────
         // Render backgrounds via tiny-skia in Rust, then overlay with FFmpeg.
         // Font is loaded from the system font stack via a hidden canvas measurement.
@@ -307,6 +307,7 @@
         // Canvas burn runs in the background via fire-and-forget.
         const _vp = sessionVal.videoPath
         const _op = sessionVal.outputPath
+        const rawSubsJson = JSON.stringify(sessionVal.rawSubs ?? [])
         onburn({ videoPath: _vp, outputPath: _op, assContent: '', canvasDone: true })
         invoke('burn_subtitles_canvas', {
           videoPath:     _vp,
@@ -317,6 +318,7 @@
           frameInfoJson: JSON.stringify(frameInfo),
           videoNativeW:  videoEl?.videoWidth  ?? 0,
           videoNativeH:  videoEl?.videoHeight ?? 0,
+          rawSubsJson,
         }).catch((e: any) => console.error('[canvas burn]', e))
         return
       } else {
@@ -1192,6 +1194,26 @@
                   </div>
 
                   <p class="canvas-note">Background is rendered by a canvas engine at burn time. The preview above is accurate.</p>
+
+                  <!-- Active word background toggle -->
+                  <label class="toggle-row" style="margin-top:.8rem">
+                    <span class="toggle-lbl">Active Word Only</span>
+                    <button class="toggle-switch"
+                      class:on={(templateVal as any).activeBgEnabled}
+                      onclick={()=>updateActiveTemplate({activeBgEnabled:!(templateVal as any).activeBgEnabled} as any)}>
+                      <span class="toggle-thumb"></span>
+                    </button>
+                  </label>
+                  {#if (templateVal as any).activeBgEnabled}
+                    <p class="canvas-note" style="margin-top:.25rem">Background follows only the active word. Requires raw word timestamps.</p>
+                    <div class="s-lbl" style="margin-top:.4rem">Active BG Color</div>
+                    <div class="color-row">
+                      <input type="color"
+                        value={(templateVal as any).activeBgColor ?? '#FFCC00'}
+                        oninput={(e)=>updateActiveTemplate({activeBgColor:e.currentTarget.value} as any)} />
+                      <span class="color-value">{(templateVal as any).activeBgColor ?? '#FFCC00'}</span>
+                    </div>
+                  {/if}
                 {/if}
 
               </div>

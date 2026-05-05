@@ -48,6 +48,10 @@ export interface Template {
 
   posX: number | null
   posY: number | null
+
+  // Active word background — highlights only the currently-spoken word
+  activeBgEnabled: boolean
+  activeBgColor: string
 }
 
 // ─── Enums / Literals ────────────────────────────────────────────────────────

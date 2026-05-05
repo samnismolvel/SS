@@ -41,6 +41,8 @@ export const PRESETS: Template[] = [
     shadowOffsetY: 0,
     posX: null,
     posY: null,
+    activeBgEnabled: false,
+    activeBgColor: '#FFCC00',
   },
   {
     id: PRESET_IDS.TIKTOK,
@@ -78,6 +80,8 @@ export const PRESETS: Template[] = [
     shadowOffsetY: 0,
     posX: null,
     posY: null,
+    activeBgEnabled: false,
+    activeBgColor: '#FFCC00',
   },
   {
     id: PRESET_IDS.CINEMATIC,
@@ -115,6 +119,8 @@ export const PRESETS: Template[] = [
     shadowOffsetY: 0,
     posX: null,
     posY: null,
+    activeBgEnabled: false,
+    activeBgColor: '#FFCC00',
   },
   {
     id: PRESET_IDS.MINIMAL,
@@ -152,6 +158,8 @@ export const PRESETS: Template[] = [
     shadowOffsetY: 0,
     posX: null,
     posY: null,
+    activeBgEnabled: false,
+    activeBgColor: '#FFCC00',
   },
   {
     id: PRESET_IDS.KARAOKE,
@@ -189,6 +197,8 @@ export const PRESETS: Template[] = [
     shadowOffsetY: 0,
     posX: null,
     posY: null,
+    activeBgEnabled: false,
+    activeBgColor: '#FFCC00',
   },
 ]
 
