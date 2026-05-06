@@ -307,8 +307,8 @@
         // Canvas burn runs in the background via fire-and-forget.
         const _vp = sessionVal.videoPath
         const _op = sessionVal.outputPath
-        const rawSubsJson = JSON.stringify(sessionVal.rawSubs ?? [])
         onburn({ videoPath: _vp, outputPath: _op, assContent: '', canvasDone: true })
+        const rawSubsJson = JSON.stringify(sessionVal.rawSubs ?? [])
         invoke('burn_subtitles_canvas', {
           videoPath:     _vp,
           outputPath:    _op,
@@ -737,9 +737,12 @@
                 {getAnimationStyle(templateVal?.animation)}">
   <!-- active word rendering — ver cambio 2 -->
                   
-                    {#if activeSubWords && templateVal?.activeWordColor && templateVal.activeWordColor !== templateVal.primaryColor}
+                    {#if activeSubWords && ((templateVal?.activeWordColor && templateVal.activeWordColor !== templateVal.primaryColor) || (templateVal as any).activeBgEnabled)}
                       {#each activeSubWords as {word, isActive}, wi}
-                        {#if wi > 0}&nbsp;{/if}{#if isActive}<span class="aw-active-word" style="color:{templateVal.activeWordColor};">{word}</span>{:else}{word}{/if}
+                        {#if wi > 0}&nbsp;{/if}{#if isActive}<span class="aw-active-word" style="
+                          color:{(templateVal as any).activeBgEnabled ? templateVal.primaryColor : templateVal.activeWordColor};
+                          {(templateVal as any).activeBgEnabled ? 'background:' + ((templateVal as any).activeBgColor ?? '#FFCC00') + ';padding:' + ((templateVal as any).lineBgPaddingY ?? 0.2) + 'em ' + ((templateVal as any).lineBgPaddingX ?? 0.5) + 'em;border-radius:0.35em;' : ''}
+                        ">{word}</span>{:else}{word}{/if}
                       {/each}
                     {:else}
                       {previewText}
@@ -1167,8 +1170,6 @@
                 </label>
 
                 {#if (templateVal as any).lineBgEnabled}
-                  <div class="canvas-badge">Rendered via Canvas</div>
-
                   <div class="s-lbl">Color</div>
                   <div class="color-row">
                     <input type="color"
@@ -1192,28 +1193,31 @@
                       oninput={(e)=>updateActiveTemplate({lineBgPaddingY:Number(e.currentTarget.value)} as any)} />
                     <span class="rval">{((templateVal as any).lineBgPaddingY ?? 0.2).toFixed(2)}</span>
                   </div>
+                {/if}
 
+                <!-- Active Word Background — independent toggle -->
+                <label class="toggle-row" style="margin-top:.8rem">
+                  <span class="toggle-lbl">Active Word BG</span>
+                  <button class="toggle-switch"
+                    class:on={(templateVal as any).activeBgEnabled}
+                    onclick={()=>updateActiveTemplate({activeBgEnabled:!(templateVal as any).activeBgEnabled} as any)}>
+                    <span class="toggle-thumb"></span>
+                  </button>
+                </label>
+
+                {#if (templateVal as any).activeBgEnabled}
+                  <div class="s-lbl">Color</div>
+                  <div class="color-row">
+                    <input type="color"
+                      value={(templateVal as any).activeBgColor ?? '#FFCC00'}
+                      oninput={(e)=>updateActiveTemplate({activeBgColor:e.currentTarget.value} as any)} />
+                    <span class="color-value">{(templateVal as any).activeBgColor ?? '#FFCC00'}</span>
+                  </div>
+                {/if}
+
+                {#if (templateVal as any).lineBgEnabled || (templateVal as any).activeBgEnabled}
+                  <div class="canvas-badge" style="margin-top:.6rem">Rendered via Canvas</div>
                   <p class="canvas-note">Background is rendered by a canvas engine at burn time. The preview above is accurate.</p>
-
-                  <!-- Active word background toggle -->
-                  <label class="toggle-row" style="margin-top:.8rem">
-                    <span class="toggle-lbl">Active Word Only</span>
-                    <button class="toggle-switch"
-                      class:on={(templateVal as any).activeBgEnabled}
-                      onclick={()=>updateActiveTemplate({activeBgEnabled:!(templateVal as any).activeBgEnabled} as any)}>
-                      <span class="toggle-thumb"></span>
-                    </button>
-                  </label>
-                  {#if (templateVal as any).activeBgEnabled}
-                    <p class="canvas-note" style="margin-top:.25rem">Background follows only the active word. Requires raw word timestamps.</p>
-                    <div class="s-lbl" style="margin-top:.4rem">Active BG Color</div>
-                    <div class="color-row">
-                      <input type="color"
-                        value={(templateVal as any).activeBgColor ?? '#FFCC00'}
-                        oninput={(e)=>updateActiveTemplate({activeBgColor:e.currentTarget.value} as any)} />
-                      <span class="color-value">{(templateVal as any).activeBgColor ?? '#FFCC00'}</span>
-                    </div>
-                  {/if}
                 {/if}
 
               </div>
