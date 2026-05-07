@@ -1,7 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod subtitle_renderer;
-use subtitle_renderer::{render_segments, build_overlay_filtergraph, SubtitleSegment, RenderTemplate, FrameInfo, WordToken};
+use subtitle_renderer::{render_segments, build_overlay_filtergraph, SubtitleSegment, RenderTemplate};
 
 use std::process::Command;
 use tauri::{Manager, Emitter};
@@ -410,7 +410,6 @@ async fn burn_subtitles_canvas(
     frame_info_json: Option<String>,
     video_native_w: Option<u32>,
     video_native_h: Option<u32>,
-    raw_subs_json: Option<String>,
 ) -> Result<(), String> {
     // ── Debug log — escribe en cada etapa ────────────────────────────────────
     let log_path = std::env::temp_dir().join("ss_burn_log.txt");
@@ -475,14 +474,7 @@ async fn burn_subtitles_canvas(
         .map_err(|e| { log!("FAIL create temp dir: {e}"); format!("Cannot create temp dir: {e}") })?;
     log!("temp dir created: {:?}", temp_dir);
 
-    // Deserialise raw word-level tokens for active-word background mode
-    let word_tokens: Vec<WordToken> = raw_subs_json
-        .as_deref()
-        .and_then(|s| serde_json::from_str(s).ok())
-        .unwrap_or_default();
-    log!("word_tokens: {}", word_tokens.len());
-
-    let frames = render_segments(&segments, &tmpl, &font_bytes, vid_w, vid_h, &temp_dir, frame_info, &word_tokens)
+    let frames = render_segments(&segments, &tmpl, &font_bytes, vid_w, vid_h, &temp_dir, frame_info)
         .map_err(|e| { log!("FAIL render_segments: {e}"); format!("Render error: {e}") })?;
     log!("frames rendered: {}", frames.len());
 
@@ -529,30 +521,49 @@ async fn burn_subtitles_canvas(
     #[cfg(debug_assertions)]
     eprintln!("Canvas FFmpeg args: {args:?}");
 
+    log!("FFmpeg args count: {} | filtergraph len: {}", args.len(),
+         args.iter().find(|a| a.contains("overlay") || a.contains("batch"))
+             .map(|s| s.len()).unwrap_or(0));
+    log!("output path: {}", output_path);
+
     let output = {
         #[cfg_attr(not(target_os = "windows"), allow(unused_mut))]
         let mut cmd = Command::new(&ffmpeg_path);
         cmd.args(&args);
         #[cfg(target_os = "windows")]
         cmd.creation_flags(CREATE_NO_WINDOW);
-        cmd.output().map_err(|_| "FFmpeg not found.".to_string())?
+        cmd.output().map_err(|e| {
+            let msg = format!("FFmpeg launch failed: {e}");
+            let log_path = std::env::temp_dir().join("ss_burn_log.txt");
+            let prev = std::fs::read_to_string(&log_path).unwrap_or_default();
+            let _ = std::fs::write(&log_path, format!("{}{}
+", prev, msg));
+            msg
+        })?
     };
+
+    log!("FFmpeg exit code: {:?}", output.status.code());
 
     // Cleanup temp frames regardless of success
     let _ = std::fs::remove_dir_all(&temp_dir);
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-
-        // Write full log to temp file for debugging (always, not just debug builds)
         let log_path = std::env::temp_dir().join("ss_burn_log.txt");
+        let prev = std::fs::read_to_string(&log_path).unwrap_or_default();
         let _ = std::fs::write(&log_path, format!(
-            "=== burn_subtitles_canvas failed ===\n\nArgs:\n{}\n\nFFmpeg stderr:\n{}",
-            args.join(" "),
-            stderr
-        ));
+            "{}=== FFmpeg failed ===
+Args:
+{}
 
-        // Return the last 400 chars of stderr so the UI shows something useful
+Stderr (last 800):
+{}
+",
+            prev,
+            args.join(" \
+  "),
+            &stderr[stderr.len().saturating_sub(800)..]
+        ));
         let tail = &stderr[stderr.len().saturating_sub(400)..];
         return Err(format!("Canvas burn failed: {tail}"));
     }
