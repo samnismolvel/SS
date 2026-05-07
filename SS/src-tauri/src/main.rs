@@ -1,7 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod subtitle_renderer;
-use subtitle_renderer::{render_segments, build_overlay_filtergraph, SubtitleSegment, RenderTemplate};
+use subtitle_renderer::{render_segments, build_overlay_filtergraph, SubtitleSegment, RenderTemplate, WordToken};
 
 use std::process::Command;
 use tauri::{Manager, Emitter};
@@ -410,6 +410,7 @@ async fn burn_subtitles_canvas(
     frame_info_json: Option<String>,
     video_native_w: Option<u32>,
     video_native_h: Option<u32>,
+    raw_subs_json: Option<String>,
 ) -> Result<(), String> {
     // ── Debug log — escribe en cada etapa ────────────────────────────────────
     let log_path = std::env::temp_dir().join("ss_burn_log.txt");
@@ -474,7 +475,15 @@ async fn burn_subtitles_canvas(
         .map_err(|e| { log!("FAIL create temp dir: {e}"); format!("Cannot create temp dir: {e}") })?;
     log!("temp dir created: {:?}", temp_dir);
 
-    let frames = render_segments(&segments, &tmpl, &font_bytes, vid_w, vid_h, &temp_dir, frame_info)
+    // Deserialise raw word-level tokens for active-word background mode
+    let word_tokens: Vec<WordToken> = raw_subs_json
+        .as_deref()
+        .and_then(|s| serde_json::from_str(s).ok())
+        .unwrap_or_default();
+    log!("word_tokens: {}", word_tokens.len());
+
+    let frames = render_segments(&segments, &tmpl, &font_bytes, vid_w, vid_h, &temp_dir, frame_info, &word_tokens)
+
         .map_err(|e| { log!("FAIL render_segments: {e}"); format!("Render error: {e}") })?;
     log!("frames rendered: {}", frames.len());
 
