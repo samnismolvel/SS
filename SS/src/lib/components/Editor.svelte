@@ -308,8 +308,9 @@
         // Canvas burn runs in the background via fire-and-forget.
         const _vp = sessionVal.videoPath
         const _op = sessionVal.outputPath
-        onburn({ videoPath: _vp, outputPath: _op, assContent: '', canvasDone: true })
         const rawSubsJson = JSON.stringify(sessionVal.rawSubs ?? [])
+        onburn({ videoPath: _vp, outputPath: _op, assContent: '', canvasDone: true })
+        
         invoke('burn_subtitles_canvas', {
           videoPath:     _vp,
           outputPath:    _op,
