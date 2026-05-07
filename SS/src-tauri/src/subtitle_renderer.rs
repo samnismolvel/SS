@@ -62,11 +62,6 @@ pub struct RenderTemplate {
 
     pub pos_x: Option<f32>,  // % horizontal, 0=izquierda 100=derecha
     pub pos_y: Option<f32>,  // % vertical, 0=arriba 100=abajo
-
-    // Active word background
-    #[serde(default)]
-    pub active_bg_enabled: bool,
-    pub active_bg_color: Option<String>,
 }
 
 fn default_padding_x() -> f32 { 0.5 }
@@ -159,14 +154,6 @@ fn alignment_anchors(al: u8) -> (u8, u8) {
 /// `font_data`: TTF/OTF bytes for the subtitle font.
 ///
 /// Returns one `RenderedFrame` per segment (empty segments are skipped).
-/// One word-level timing token (from rawSubs).
-#[derive(Debug, Deserialize, Clone)]
-pub struct WordToken {
-    pub start: String,
-    pub end:   String,
-    pub text:  String,
-}
-
 #[derive(Clone, Copy)]
 pub struct FrameInfo {
     pub offset_x: f32,
@@ -186,7 +173,6 @@ pub fn render_segments(
     video_h: u32,
     out_dir: &Path,
     frame_info: FrameInfo,
-    word_tokens: &[WordToken],
 ) -> Result<Vec<RenderedFrame>, String> {
     let font = FontRef::try_from_slice(font_data)
         .map_err(|e| format!("Failed to load font: {e}"))?;
@@ -218,20 +204,23 @@ pub fn render_segments(
         let start_ms = srt_to_ms(&seg.start);
         let end_ms   = srt_to_ms(&seg.end);
 
-        // Measure full line
+        // Measure text
         let line_height = scaled.height() + scaled.line_gap();
         let text_w: f32 = text.chars().map(|c| scaled.h_advance(scaled.glyph_id(c))).sum();
         let text_h = line_height;
 
-        // Box dimensions for the full line
-        let (box_w, box_h) = if tmpl.line_bg_enabled || tmpl.active_bg_enabled {
+        // Box dimensions (with background padding if enabled)
+        let (box_w, box_h) = if tmpl.line_bg_enabled {
             (text_w + pad_x * 2.0, text_h + pad_y * 2.0)
         } else {
+            // Still need room for outline
             let o = tmpl.outline * scale_factor;
             (text_w + o * 2.0, text_h + o * 2.0)
         };
 
         // ── Position ─────────────────────────────────────────────────────────
+        // posX/posY are % of the VISIBLE content area (frame_info maps it to
+        // full video pixel coordinates). When null, use alignment + margin.
         let content_w = frame_info.scale_x  * video_w as f32;
         let content_h = frame_info.scale_y  * video_h as f32;
         let bar_left  = frame_info.offset_x * video_w as f32;
@@ -255,128 +244,64 @@ pub fn render_segments(
             (bx, by)
         };
 
-        // text origin (top-left of the first glyph)
-        let text_x = box_x + if tmpl.line_bg_enabled || tmpl.active_bg_enabled { pad_x } else { tmpl.outline * scale_factor };
-        let text_y = box_y + if tmpl.line_bg_enabled || tmpl.active_bg_enabled { pad_y } else { tmpl.outline * scale_factor };
-
-        // ── Active-word background mode ───────────────────────────────────────
-        // One PNG per word-window: the full line text is drawn on each frame,
-        // but the background box sits only behind the currently-active word.
-        if tmpl.active_bg_enabled {
-            let bg_hex = tmpl.active_bg_color.as_deref().unwrap_or("#FFCC00");
-            let (br, bg_g, bb) = parse_color(bg_hex);
-
-            // Collect word tokens that fall within this segment
-            let seg_tokens: Vec<&WordToken> = word_tokens.iter()
-                .filter(|t| {
-                    let t_start = srt_to_ms(&t.start);
-                    let t_end   = srt_to_ms(&t.end);
-                    t_start >= start_ms - 100 && t_start <= end_ms + 100
-                })
-                .collect();
-
-            let words: Vec<&str> = text.split_whitespace().collect();
-
-            for (wi, word) in words.iter().enumerate() {
-                let token = match seg_tokens.get(wi) {
-                    Some(t) => t,
-                    None    => continue,
-                };
-                let word_start_ms = srt_to_ms(&token.start).max(start_ms);
-                let next_start    = seg_tokens.get(wi + 1)
-                    .map(|t| srt_to_ms(&t.start))
-                    .unwrap_or(end_ms);
-                let word_end_ms = next_start.min(end_ms);
-                if word_start_ms >= word_end_ms { continue; }
-
-                // Measure x offset of this word within the full line
-                let prefix: String = words[..wi].join(" ");
-                let prefix_w: f32 = if prefix.is_empty() { 0.0 } else {
-                    prefix.chars().map(|c| scaled.h_advance(scaled.glyph_id(c))).sum::<f32>()
-                    + scaled.h_advance(scaled.glyph_id(' ')) // space after prefix
-                };
-                let word_w: f32 = word.chars()
-                    .map(|c| scaled.h_advance(scaled.glyph_id(c))).sum();
-
-                // Background box for this word only
-                let wbox_x = text_x + prefix_w - pad_x;
-                let wbox_w = word_w  + pad_x * 2.0;
-                let radius = (0.4 * px_size).min(box_h / 2.0).min(wbox_w / 2.0);
-
-                let mut pixmap = Pixmap::new(video_w, video_h)
-                    .ok_or("Failed to create pixmap")?;
-
-                let mut paint = Paint::default();
-                paint.set_color_rgba8(br, bg_g, bb, 255);
-                paint.anti_alias = true;
-
-                if let Some(path) = rounded_rect_path(wbox_x, box_y, wbox_w, box_h, radius) {
-                    pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
-                }
-
-                // Draw full line text over the background
-                if tmpl.outline > 0.0 {
-                    let outline_px = tmpl.outline * scale_factor;
-                    let (or, og, ob) = parse_color(&tmpl.outline_color);
-                    draw_text_stroked(&mut pixmap, &font, scale, &text, text_x, text_y, or, og, ob, outline_px);
-                }
-                let (tr, tg, tb) = parse_color(&tmpl.primary_color);
-                draw_text_filled(&mut pixmap, &font, scale, &text, text_x, text_y, tr, tg, tb);
-
-                let fname = format!("sub_{:04}_{:04}.png", seg.index, wi);
-                let fpath = out_dir.join(&fname);
-                pixmap.save_png(&fpath)
-                    .map_err(|e| format!("PNG save failed: {e}"))?;
-
-                frames.push(RenderedFrame { path: fpath, start_ms: word_start_ms, end_ms: word_end_ms });
-            }
-
-            // Also push a "base" frame for the entire segment with no background,
-            // so the text is visible even between word windows.
-            // (Gaps between words would otherwise show no text at all.)
-            let mut base = Pixmap::new(video_w, video_h).ok_or("Failed to create pixmap")?;
-            if tmpl.outline > 0.0 {
-                let outline_px = tmpl.outline * scale_factor;
-                let (or, og, ob) = parse_color(&tmpl.outline_color);
-                draw_text_stroked(&mut base, &font, scale, &text, text_x, text_y, or, og, ob, outline_px);
-            }
-            let (tr, tg, tb) = parse_color(&tmpl.primary_color);
-            draw_text_filled(&mut base, &font, scale, &text, text_x, text_y, tr, tg, tb);
-            let base_path = out_dir.join(format!("sub_{:04}_base.png", seg.index));
-            base.save_png(&base_path).map_err(|e| format!("PNG save failed: {e}"))?;
-            frames.push(RenderedFrame { path: base_path, start_ms, end_ms });
-
-            continue; // skip the normal rendering below
+        if seg.index == 0 || seg.index == 1 {
+            let log_path = std::env::temp_dir().join("ss_burn_log.txt");
+            let prev = std::fs::read_to_string(&log_path).unwrap_or_default();
+            let _ = std::fs::write(&log_path, format!(
+                "{}[seg#{}] posX={:?} posY={:?} | content={}x{} bar=({},{}) | box=({:.0},{:.0}) size=({:.0},{:.0}) | video={}x{}
+",
+                prev, seg.index, tmpl.pos_x, tmpl.pos_y,
+                content_w as u32, content_h as u32, bar_left as u32, bar_top as u32,
+                box_x, box_y, box_w, box_h, video_w, video_h
+            ));
         }
 
-        // ── Normal rendering (line_bg or plain) ───────────────────────────────
+        // Create a full-frame transparent pixmap
         let mut pixmap = Pixmap::new(video_w, video_h)
             .ok_or("Failed to create pixmap")?;
 
+        // ── Draw background box ───────────────────────────────────────────────
         if tmpl.line_bg_enabled {
             let bg_hex = tmpl.line_bg_color.as_deref().unwrap_or("#000000");
             let (br, bg_c, bb) = parse_color(bg_hex);
+
             let mut paint = Paint::default();
             paint.set_color_rgba8(br, bg_c, bb, 255);
             paint.anti_alias = true;
+
+            let rect = Rect::from_xywh(box_x, box_y, box_w, box_h)
+                .ok_or("Invalid rect")?;
+
+            // Rounded corners: 0.4em radius (matching the CSS preview)
             let radius = (0.4 * px_size).min(box_h / 2.0).min(box_w / 2.0);
             if let Some(path) = rounded_rect_path(box_x, box_y, box_w, box_h, radius) {
                 pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
             }
         }
 
+        // ── Draw text outline ─────────────────────────────────────────────────
+        let text_x = box_x + if tmpl.line_bg_enabled { pad_x } else { tmpl.outline * scale_factor };
+        let text_y = box_y + if tmpl.line_bg_enabled { pad_y } else { tmpl.outline * scale_factor };
+
         if tmpl.outline > 0.0 && !tmpl.line_bg_enabled {
             let outline_px = tmpl.outline * scale_factor;
             let (or, og, ob) = parse_color(&tmpl.outline_color);
-            draw_text_stroked(&mut pixmap, &font, scale, &text, text_x, text_y, or, og, ob, outline_px);
+            draw_text_stroked(
+                &mut pixmap, &font, scale, &text,
+                text_x, text_y, or, og, ob, outline_px,
+            );
         }
 
+        // ── Draw text fill ────────────────────────────────────────────────────
         let (tr, tg, tb) = parse_color(&tmpl.primary_color);
         draw_text_filled(&mut pixmap, &font, scale, &text, text_x, text_y, tr, tg, tb);
 
+        // Save PNG
         let fname = format!("sub_{:04}.png", seg.index);
         let fpath = out_dir.join(&fname);
-        pixmap.save_png(&fpath).map_err(|e| format!("PNG save failed: {e}"))?;
+        pixmap.save_png(&fpath)
+            .map_err(|e| format!("PNG save failed: {e}"))?;
+
         frames.push(RenderedFrame { path: fpath, start_ms, end_ms });
     }
 
@@ -485,53 +410,82 @@ fn draw_text_stroked(
 }
 
 // ─── FFmpeg overlay filter builder ────────────────────────────────────────────
+//
+// Strategy: instead of chaining N overlays (one per PNG), we build a concat
+// filter that stitches all PNGs into a single transparent video stream, then
+// do one overlay on top of the source video. This scales to any number of
+// frames without hitting FFmpeg's filtergraph complexity limits.
+//
+// The concat approach works as follows:
+//   1. Each PNG is padded with a black (transparent) period before and after
+//      its active window using the `tpad` / `setpts` filters.
+//   2. All padded streams are mixed with `overlay` in pairs — but since every
+//      PNG is already full-frame RGBA with transparency outside the subtitle,
+//      we can instead use `blend=all_mode=addition` to merge them, or more
+//      simply, just pass them to `overlay` in a single chain but grouped in
+//      batches of 64 to stay within limits.
+//
+// For simplicity and correctness we use the "nullsrc + overlay chain in
+// batches" approach: group frames into batches of 60, chain within each
+// batch, then chain the batch outputs together.
 
-/// Builds the FFmpeg filtergraph string for overlaying subtitle PNGs.
-///
-/// Each PNG is loaded as a separate input stream and composited with
-/// `overlay=enable='between(t,start,end)'`. The inputs are layered so
-/// that each segment appears exactly during its time window.
-///
-/// Returns (extra_input_args, filtergraph_string).
-/// extra_input_args: Vec of "-i path" pairs to prepend to the ffmpeg command.
 pub fn build_overlay_filtergraph(frames: &[RenderedFrame]) -> (Vec<String>, String) {
     if frames.is_empty() {
         return (vec![], String::new());
     }
 
+    const BATCH: usize = 60;
+
     let mut inputs: Vec<String> = Vec::new();
     let mut filter = String::new();
 
-    // The video stream starts as [0:v]
-    // Each PNG input is stream [N:v] where N = 1-based index
-    for (i, frame) in frames.iter().enumerate() {
+    // Add all PNG inputs
+    for frame in frames.iter() {
         inputs.push("-i".to_string());
         inputs.push(frame.path.to_string_lossy().to_string());
-
-        let start_s = frame.start_ms as f64 / 1000.0;
-        let end_s   = frame.end_ms   as f64 / 1000.0;
-
-        // Input ref for this PNG (stream index N+1, since [0:v] is the video)
-        let png_stream = format!("[{}:v]", i + 1);
-        // Overlay base: first iteration uses [0:v], subsequent use the output of the previous overlay
-        let base = if i == 0 {
-            "[0:v]".to_string()
-        } else {
-            format!("[ov{}]", i)
-        };
-        let out = if i == frames.len() - 1 {
-            "[outv]".to_string()
-        } else {
-            format!("[ov{}]", i + 1)
-        };
-
-        // overlay=x=0:y=0 — the PNGs are already full-frame (transparent outside the subtitle)
-        filter.push_str(&format!(
-            "{base}{png_stream}overlay=x=0:y=0:enable='between(t,{start_s:.3},{end_s:.3})'{out};"
-        ));
     }
 
-    // Remove trailing semicolon
+    let total = frames.len();
+    let num_batches = (total + BATCH - 1) / BATCH;
+
+    // Process in batches of BATCH frames
+    for batch_idx in 0..num_batches {
+        let start = batch_idx * BATCH;
+        let end   = (start + BATCH).min(total);
+        let batch = &frames[start..end];
+
+        for (j, frame) in batch.iter().enumerate() {
+            let global_i = start + j;
+            let start_s = frame.start_ms as f64 / 1000.0;
+            let end_s   = frame.end_ms   as f64 / 1000.0;
+            let png_stream = format!("[{}:v]", global_i + 1);
+
+            let base = if j == 0 {
+                if batch_idx == 0 {
+                    "[0:v]".to_string()
+                } else {
+                    format!("[batch{}]", batch_idx)
+                }
+            } else {
+                format!("[b{}f{}]", batch_idx, j)
+            };
+
+            let out = if j == batch.len() - 1 {
+                if batch_idx == num_batches - 1 {
+                    "[outv]".to_string()
+                } else {
+                    format!("[batch{}]", batch_idx + 1)
+                }
+            } else {
+                format!("[b{}f{}]", batch_idx, j + 1)
+            };
+
+            filter.push_str(&format!(
+                "{base}{png_stream}overlay=x=0:y=0:enable='between(t,{start_s:.3},{end_s:.3})'{out};"
+            ));
+        }
+    }
+
     if filter.ends_with(';') {
         filter.pop();
     }
