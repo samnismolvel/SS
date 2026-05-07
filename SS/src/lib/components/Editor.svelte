@@ -93,6 +93,7 @@
   let activeSubWords = $derived((() => {
     const needsHighlight =
       (templateVal?.activeWordColor && templateVal.activeWordColor !== templateVal.primaryColor)
+      || (templateVal as any).activeBgEnabled
     if (!activeSub || !sessionVal?.rawSubs || !needsHighlight) return null
     // Find which rawSubs fall within this display sub's time range
     const subStartMs = srtToSeconds(activeSub.start) * 1000
@@ -307,9 +308,8 @@
         // Canvas burn runs in the background via fire-and-forget.
         const _vp = sessionVal.videoPath
         const _op = sessionVal.outputPath
-        const rawSubsJson = JSON.stringify(sessionVal.rawSubs ?? [])
         onburn({ videoPath: _vp, outputPath: _op, assContent: '', canvasDone: true })
-        
+        const rawSubsJson = JSON.stringify(sessionVal.rawSubs ?? [])
         invoke('burn_subtitles_canvas', {
           videoPath:     _vp,
           outputPath:    _op,
@@ -738,10 +738,10 @@
                 {getAnimationStyle(templateVal?.animation)}">
   <!-- active word rendering — ver cambio 2 -->
                   
-                    {#if activeSubWords && ((templateVal?.activeWordColor && templateVal.activeWordColor !== templateVal.primaryColor) || (templateVal as any).activeBgEnabled)}
+                    {#if activeSubWords}
                       {#each activeSubWords as {word, isActive}, wi}
                         {#if wi > 0}&nbsp;{/if}{#if isActive}<span class="aw-active-word" style="
-                          color:{(templateVal as any).activeBgEnabled ? templateVal.primaryColor : templateVal.activeWordColor};
+                          color:{(templateVal as any).activeBgEnabled ? (templateVal?.primaryColor ?? '#fff') : (templateVal?.activeWordColor ?? '#fff')};
                           {(templateVal as any).activeBgEnabled ? 'background:' + ((templateVal as any).activeBgColor ?? '#FFCC00') + ';padding:' + ((templateVal as any).lineBgPaddingY ?? 0.2) + 'em ' + ((templateVal as any).lineBgPaddingX ?? 0.5) + 'em;border-radius:0.35em;' : ''}
                         ">{word}</span>{:else}{word}{/if}
                       {/each}
@@ -1178,7 +1178,6 @@
                       oninput={(e)=>updateActiveTemplate({lineBgColor:e.currentTarget.value} as any)} />
                     <span class="color-value">{(templateVal as any).lineBgColor ?? '#000000'}</span>
                   </div>
-
                   <div class="s-lbl" style="margin-top:.5rem">Padding</div>
                   <div class="field-row">
                     <label>Horiz</label>
@@ -1196,7 +1195,7 @@
                   </div>
                 {/if}
 
-                <!-- Active Word Background — independent toggle -->
+                <!-- Active Word BG — independent from line bg -->
                 <label class="toggle-row" style="margin-top:.8rem">
                   <span class="toggle-lbl">Active Word BG</span>
                   <button class="toggle-switch"
@@ -1205,7 +1204,6 @@
                     <span class="toggle-thumb"></span>
                   </button>
                 </label>
-
                 {#if (templateVal as any).activeBgEnabled}
                   <div class="s-lbl">Color</div>
                   <div class="color-row">
