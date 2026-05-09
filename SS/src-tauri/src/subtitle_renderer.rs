@@ -486,67 +486,12 @@ fn draw_text_stroked(
 
 // ─── FFmpeg overlay filter builder ────────────────────────────────────────────
 //
-// Frames are processed in batches of 60 to avoid FFmpeg filtergraph complexity
-// limits. Each batch chains up to 60 overlay operations and feeds into the next.
+// Returns (extra_input_args, filtergraph_string).
+// With the image-sequence approach, this is trivially simple:
+// the subtitle track is already a video file, so we just overlay it.
 
-pub fn build_overlay_filtergraph(frames: &[RenderedFrame]) -> (Vec<String>, String) {
-    if frames.is_empty() {
-        return (vec![], String::new());
-    }
-
-    const BATCH: usize = 60;
-
-    let mut inputs: Vec<String> = Vec::new();
-    let mut filter = String::new();
-
-    for frame in frames.iter() {
-        inputs.push("-i".to_string());
-        inputs.push(frame.path.to_string_lossy().to_string());
-    }
-
-    let total = frames.len();
-    let num_batches = (total + BATCH - 1) / BATCH;
-
-    for batch_idx in 0..num_batches {
-        let start = batch_idx * BATCH;
-        let end   = (start + BATCH).min(total);
-        let batch = &frames[start..end];
-
-        for (j, frame) in batch.iter().enumerate() {
-            let global_i = start + j;
-            let start_s = frame.start_ms as f64 / 1000.0;
-            let end_s   = frame.end_ms   as f64 / 1000.0;
-            let png_stream = format!("[{}:v]", global_i + 1);
-
-            let base = if j == 0 {
-                if batch_idx == 0 {
-                    "[0:v]".to_string()
-                } else {
-                    format!("[batch{}]", batch_idx)
-                }
-            } else {
-                format!("[b{}f{}]", batch_idx, j)
-            };
-
-            let out = if j == batch.len() - 1 {
-                if batch_idx == num_batches - 1 {
-                    "[outv]".to_string()
-                } else {
-                    format!("[batch{}]", batch_idx + 1)
-                }
-            } else {
-                format!("[b{}f{}]", batch_idx, j + 1)
-            };
-
-            filter.push_str(&format!(
-                "{base}{png_stream}overlay=x=0:y=0:enable='between(t,{start_s:.3},{end_s:.3})'{out};"
-            ));
-        }
-    }
-
-    if filter.ends_with(';') {
-        filter.pop();
-    }
-
-    (inputs, filter)
+pub fn build_overlay_filtergraph(_frames: &[RenderedFrame]) -> (Vec<String>, String) {
+    // No longer used — see burn_subtitles_canvas in main.rs which uses
+    // the concat-demuxer approach instead.
+    (vec![], String::new())
 }
