@@ -537,26 +537,30 @@ duration {:.6}
     let ratio_str  = crop_ratio.as_deref().unwrap_or("original");
     let offset_val = crop_offset.unwrap_or(50);
 
+    // overlay composites RGBA PNGs onto the video — format=yuv420p converts
+    // the result to what libx264 requires. Without it Windows players reject the file.
     let vf = match crop_filter(ratio_str, offset_val) {
         Some(crop) => format!(
-            "[0:v]{crop}[base];[base][1:v]overlay=x=0:y=0:format=auto[outv]"
+            "[0:v]{crop}[base];[base][1:v]overlay=x=0:y=0:format=auto,format=yuv420p[outv]"
         ),
         None => format!(
-            "[0:v][1:v]overlay=x=0:y=0:format=auto[pre];[pre]scale={}:{}[outv]",
+            "[0:v][1:v]overlay=x=0:y=0:format=auto[pre];[pre]scale={}:{},format=yuv420p[outv]",
             vid_w, vid_h
         ),
     };
 
     let args: Vec<String> = vec![
-        "-i".to_string(),    video_path.clone(),
-        "-f".to_string(),    "concat".to_string(),
-        "-safe".to_string(), "0".to_string(),
-        "-i".to_string(),    concat_path.to_string_lossy().to_string(),
+        "-i".to_string(),      video_path.clone(),
+        "-f".to_string(),      "concat".to_string(),
+        "-safe".to_string(),   "0".to_string(),
+        "-i".to_string(),      concat_path.to_string_lossy().to_string(),
         "-filter_complex".to_string(), vf,
-        "-map".to_string(),  "[outv]".to_string(),
-        "-map".to_string(),  "0:a?".to_string(),
-        "-c:v".to_string(),  "libx264".to_string(),
-        "-c:a".to_string(),  "copy".to_string(),
+        "-map".to_string(),    "[outv]".to_string(),
+        "-map".to_string(),    "0:a?".to_string(),
+        "-c:v".to_string(),    "libx264".to_string(),
+        "-crf".to_string(),    "18".to_string(),
+        "-preset".to_string(), "fast".to_string(),
+        "-c:a".to_string(),    "copy".to_string(),
         "-y".to_string(),
         output_path.clone(),
     ];
