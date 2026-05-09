@@ -74,6 +74,7 @@ fn default_padding_y() -> f32 { 0.2 }
 
 /// One rendered PNG slot: a file on disk + the time window it covers.
 #[derive(Debug)]
+#[derive(Clone)]
 pub struct RenderedFrame {
     pub path: PathBuf,
     pub start_ms: i64,
@@ -270,7 +271,7 @@ pub fn render_segments(
             let seg_tokens: Vec<&WordToken> = word_tokens.iter()
                 .filter(|t| {
                     let t_start = srt_to_ms(&t.start);
-                    let t_end   = srt_to_ms(&t.end);
+                    let _t_end  = srt_to_ms(&t.end);
                     t_start >= start_ms - 100 && t_start <= end_ms + 100
                 })
                 .collect();
@@ -485,13 +486,56 @@ fn draw_text_stroked(
 }
 
 // ─── FFmpeg overlay filter builder ────────────────────────────────────────────
-//
-// Returns (extra_input_args, filtergraph_string).
-// With the image-sequence approach, this is trivially simple:
-// the subtitle track is already a video file, so we just overlay it.
 
-pub fn build_overlay_filtergraph(_frames: &[RenderedFrame]) -> (Vec<String>, String) {
-    // No longer used — see burn_subtitles_canvas in main.rs which uses
-    // the concat-demuxer approach instead.
-    (vec![], String::new())
+/// Builds the FFmpeg filtergraph string for overlaying subtitle PNGs.
+///
+/// Each PNG is loaded as a separate input stream and composited with
+/// `overlay=enable='between(t,start,end)'`. The inputs are layered so
+/// that each segment appears exactly during its time window.
+///
+/// Returns (extra_input_args, filtergraph_string).
+/// extra_input_args: Vec of "-i path" pairs to prepend to the ffmpeg command.
+pub fn build_overlay_filtergraph(frames: &[RenderedFrame]) -> (Vec<String>, String) {
+    if frames.is_empty() {
+        return (vec![], String::new());
+    }
+
+    let mut inputs: Vec<String> = Vec::new();
+    let mut filter = String::new();
+
+    // The video stream starts as [0:v]
+    // Each PNG input is stream [N:v] where N = 1-based index
+    for (i, frame) in frames.iter().enumerate() {
+        inputs.push("-i".to_string());
+        inputs.push(frame.path.to_string_lossy().to_string());
+
+        let start_s = frame.start_ms as f64 / 1000.0;
+        let end_s   = frame.end_ms   as f64 / 1000.0;
+
+        // Input ref for this PNG (stream index N+1, since [0:v] is the video)
+        let png_stream = format!("[{}:v]", i + 1);
+        // Overlay base: first iteration uses [0:v], subsequent use the output of the previous overlay
+        let base = if i == 0 {
+            "[0:v]".to_string()
+        } else {
+            format!("[ov{}]", i)
+        };
+        let out = if i == frames.len() - 1 {
+            "[outv]".to_string()
+        } else {
+            format!("[ov{}]", i + 1)
+        };
+
+        // overlay=x=0:y=0 — the PNGs are already full-frame (transparent outside the subtitle)
+        filter.push_str(&format!(
+            "{base}{png_stream}overlay=x=0:y=0:enable='between(t,{start_s:.3},{end_s:.3})'{out};"
+        ));
+    }
+
+    // Remove trailing semicolon
+    if filter.ends_with(';') {
+        filter.pop();
+    }
+
+    (inputs, filter)
 }
