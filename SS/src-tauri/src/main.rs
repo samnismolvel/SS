@@ -493,6 +493,17 @@ async fn burn_subtitles_canvas(
     emit_progress(&app, "burning", "Compositing subtitle frames...");
 
     // ── Concat demuxer approach ───────────────────────────────────────────────
+    // Generate a fully transparent PNG for gap periods (no text visible).
+    let blank_path = temp_dir.join("blank.png");
+    {
+        let mut blank = tiny_skia::Pixmap::new(vid_w, vid_h)
+            .ok_or("Failed to create blank pixmap")?;
+        // Leave all pixels at default (transparent black RGBA 0,0,0,0)
+        blank.save_png(&blank_path)
+            .map_err(|e| format!("Failed to save blank PNG: {e}"))?;
+    }
+    let blank_str = blank_path.to_string_lossy().replace('\\', "/");
+
     let concat_path = temp_dir.join("subs.txt");
     {
         let mut script = String::new();
@@ -501,28 +512,27 @@ async fn burn_subtitles_canvas(
 
         let mut prev_end: i64 = 0;
         for frame in &sorted {
-            if frame.start_ms > prev_end && !sorted.is_empty() {
+            // Fill gap with transparent blank frame
+            if frame.start_ms > prev_end {
                 let gap_s = (frame.start_ms - prev_end) as f64 / 1000.0;
                 if gap_s > 0.001 {
                     script.push_str(&format!(
-                        "file '{}'
-duration {:.6}
-",
-                        sorted[0].path.to_string_lossy().replace('\\', "/"),
-                        gap_s
+                        "file '{blank_str}'
+duration {gap_s:.6}
+"
                     ));
                 }
             }
             let dur_s = ((frame.end_ms - frame.start_ms) as f64 / 1000.0).max(0.001);
             script.push_str(&format!(
                 "file '{}'
-duration {:.6}
+duration {dur_s:.6}
 ",
-                frame.path.to_string_lossy().replace('\\', "/"),
-                dur_s
+                frame.path.to_string_lossy().replace('\\', "/")
             ));
             prev_end = frame.end_ms;
         }
+        // Concat demuxer requires the last entry without a duration
         if let Some(last) = sorted.last() {
             script.push_str(&format!(
                 "file '{}'
