@@ -492,121 +492,85 @@ async fn burn_subtitles_canvas(
 
     emit_progress(&app, "burning", "Compositing subtitle frames...");
 
-    // ── Two-pass approach: build sub video first, then overlay ─────────────
-    // Pass 1: render subtitle PNGs into a transparent video using concat demuxer
-    //         at a fixed 30fps with correct timestamps via setpts.
-    // Pass 2: overlay that video onto the source.
-    //
-    // The key fix for timing: we use `-vsync vfr` and explicit `duration` in
-    // the concat script so each frame has exactly the right presentation time,
-    // then use `setpts=PTS` to preserve those timestamps through the overlay.
+    // ── filter_complex_script approach ──────────────────────────────────────
+    // Write the overlay filtergraph to a file to avoid Windows arg-length limits.
+    // Each PNG input gets an `overlay` with `enable='between(t,s,e)'` — the same
+    // approach as before but the long string goes in a file, not on the command line.
 
-    // Generate a blank transparent PNG for gap periods
-    let blank_path = temp_dir.join("blank.png");
-    {
-        let mut blank = tiny_skia::Pixmap::new(vid_w, vid_h)
-            .ok_or("Failed to create blank pixmap")?;
-        blank.save_png(&blank_path)
-            .map_err(|e| format!("Failed to save blank PNG: {e}"))?;
-    }
-    let blank_str = blank_path.to_string_lossy().replace('\\', "/");
+    let mut sorted = frames.clone();
+    sorted.sort_by_key(|f| f.start_ms);
 
-    // Get video duration from frames
-    let video_end_ms = frames.iter().map(|f| f.end_ms).max().unwrap_or(0);
+    // Build filtergraph string — same logic as the old batch approach but written to file
+    let mut filter = String::new();
+    let total = sorted.len();
 
-    let concat_path = temp_dir.join("subs.txt");
-    {
-        let mut script = String::new();
-        let mut sorted = frames.clone();
-        sorted.sort_by_key(|f| f.start_ms);
+    const BATCH: usize = 60;
+    let num_batches = (total + BATCH - 1) / BATCH;
 
-        // Start with blank if first subtitle doesn't start at 0
-        let first_start = sorted.first().map(|f| f.start_ms).unwrap_or(0);
-        if first_start > 0 {
-            script.push_str(&format!(
-                "file '{blank_str}'
-duration {:.6}
-",
-                first_start as f64 / 1000.0
-            ));
-        }
+    for batch_idx in 0..num_batches {
+        let start = batch_idx * BATCH;
+        let end   = (start + BATCH).min(total);
+        let batch = &sorted[start..end];
 
-        let mut prev_end: i64 = first_start;
-        for frame in &sorted {
-            if frame.start_ms > prev_end {
-                let gap_s = (frame.start_ms - prev_end) as f64 / 1000.0;
-                if gap_s > 0.001 {
-                    script.push_str(&format!(
-                        "file '{blank_str}'
-duration {gap_s:.6}
+        for (j, frame) in batch.iter().enumerate() {
+            let global_i = start + j;
+            let start_s = frame.start_ms as f64 / 1000.0;
+            let end_s   = frame.end_ms   as f64 / 1000.0;
+            let png_ref = format!("[{}:v]", global_i + 1);
+
+            let base = if j == 0 {
+                if batch_idx == 0 { "[0:v]".to_string() }
+                else { format!("[batch{}]", batch_idx) }
+            } else {
+                format!("[b{}f{}]", batch_idx, j)
+            };
+
+            let out = if j == batch.len() - 1 {
+                if batch_idx == num_batches - 1 { "[outv]".to_string() }
+                else { format!("[batch{}]", batch_idx + 1) }
+            } else {
+                format!("[b{}f{}]", batch_idx, j + 1)
+            };
+
+            filter.push_str(&format!(
+                "{base}{png_ref}overlay=x=0:y=0:enable='between(t,{start_s:.3},{end_s:.3})'{out};
 "
-                    ));
-                }
-            }
-            let dur_s = ((frame.end_ms - frame.start_ms) as f64 / 1000.0).max(0.001);
-            script.push_str(&format!(
-                "file '{}'
-duration {dur_s:.6}
-",
-                frame.path.to_string_lossy().replace('\\', "/")
             ));
-            prev_end = frame.end_ms;
         }
-        // Required trailing entry without duration
-        script.push_str(&format!("file '{blank_str}'
-"));
-
-        std::fs::write(&concat_path, &script)
-            .map_err(|e| format!("Failed to write concat script: {e}"))?;
     }
+    if filter.ends_with(";
+") { filter.truncate(filter.len() - 2); }
 
-    // Pass 1: concat PNGs → transparent subtitle video (sub.mkv)
-    let sub_video_path = temp_dir.join("sub.mkv");
-    {
-        let pass1_args: Vec<String> = vec![
-            "-f".to_string(),        "concat".to_string(),
-            "-safe".to_string(),     "0".to_string(),
-            "-i".to_string(),        concat_path.to_string_lossy().to_string(),
-            "-vsync".to_string(),    "vfr".to_string(),
-            "-c:v".to_string(),      "png".to_string(),  // lossless, keeps alpha
-            "-y".to_string(),
-            sub_video_path.to_string_lossy().to_string(),
-        ];
-        let pass1_out = {
-            #[cfg_attr(not(target_os = "windows"), allow(unused_mut))]
-            let mut cmd = Command::new(&ffmpeg_path);
-            cmd.args(&pass1_args);
-            #[cfg(target_os = "windows")]
-            cmd.creation_flags(CREATE_NO_WINDOW);
-            cmd.output().map_err(|e| format!("FFmpeg pass1 failed: {e}"))?
-        };
-        if !pass1_out.status.success() {
-            let stderr = String::from_utf8_lossy(&pass1_out.stderr);
-            log!("Pass1 stderr: {}", &stderr[stderr.len().saturating_sub(400)..]);
-            return Err(format!("Canvas pass1 failed: {}", &stderr[stderr.len().saturating_sub(200)..]));
-        }
-        log!("Pass1 done: sub video created");
-    }
-
-    // Pass 2: overlay sub video onto source
+    // Apply yuv420p conversion at end
     let ratio_str  = crop_ratio.as_deref().unwrap_or("original");
     let offset_val = crop_offset.unwrap_or(50);
 
-    let vf = match crop_filter(ratio_str, offset_val) {
-        Some(crop) => format!(
-            "[0:v]{crop}[base];[1:v]setpts=PTS-STARTPTS[sub];[base][sub]overlay=x=0:y=0:format=auto,format=yuv420p[outv]"
-        ),
-        None => format!(
-            "[1:v]setpts=PTS-STARTPTS[sub];[0:v][sub]overlay=x=0:y=0:format=auto[pre];[pre]scale={}:{},format=yuv420p[outv]",
-            vid_w, vid_h
-        ),
+    let final_filter = if let Some(crop) = crop_filter(ratio_str, offset_val) {
+        // Insert crop on [0:v] before the overlay chain
+        filter.replacen("[0:v]", "[0:v_raw]", 1)
+            + &format!("
+[0:v_raw]{crop}[0:v]")
+            + "
+[outv]format=yuv420p[outv_final]"
+    } else {
+        filter + &format!("
+[outv]scale={}:{},format=yuv420p[outv_final]", vid_w, vid_h)
     };
 
-    let args: Vec<String> = vec![
-        "-i".to_string(),      video_path.clone(),
-        "-i".to_string(),      sub_video_path.to_string_lossy().to_string(),
-        "-filter_complex".to_string(), vf,
-        "-map".to_string(),    "[outv]".to_string(),
+    // Write filtergraph to file
+    let filter_script_path = temp_dir.join("filter.txt");
+    std::fs::write(&filter_script_path, &final_filter)
+        .map_err(|e| format!("Failed to write filter script: {e}"))?;
+
+    // Build FFmpeg command: -i video, then all PNG inputs, then -filter_complex_script
+    let mut args: Vec<String> = vec!["-i".to_string(), video_path.clone()];
+    for frame in &sorted {
+        args.push("-i".to_string());
+        args.push(frame.path.to_string_lossy().to_string());
+    }
+    args.extend([
+        "-filter_complex_script".to_string(), filter_script_path.to_string_lossy().to_string(),
+        "-map".to_string(),    "[outv_final]".to_string(),
         "-map".to_string(),    "0:a?".to_string(),
         "-c:v".to_string(),    "libx264".to_string(),
         "-crf".to_string(),    "18".to_string(),
@@ -614,9 +578,9 @@ duration {dur_s:.6}
         "-c:a".to_string(),    "copy".to_string(),
         "-y".to_string(),
         output_path.clone(),
-    ];
+    ]);
 
-    log!("FFmpeg concat args count: {}", args.len());
+        log!("FFmpeg concat args count: {}", args.len());
     log!("output path: {}", output_path);
 
     let output = {
