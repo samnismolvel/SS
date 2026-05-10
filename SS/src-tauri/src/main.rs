@@ -545,16 +545,15 @@ async fn burn_subtitles_canvas(
     let ratio_str  = crop_ratio.as_deref().unwrap_or("original");
     let offset_val = crop_offset.unwrap_or(50);
 
+    // Replace [outv] with the final output label inline — no trailing newline
+    // before scale/format or FFmpeg treats it as a separate filterchain.
     let final_filter = if let Some(crop) = crop_filter(ratio_str, offset_val) {
-        // Insert crop on [0:v] before the overlay chain
         filter.replacen("[0:v]", "[0:v_raw]", 1)
-            + &format!("
-[0:v_raw]{crop}[0:v]")
-            + "
-[outv]format=yuv420p[outv_final]"
+            .replace("[outv]", "[outv_pre]")
+            + &format!(";[0:v_raw]{crop}[0:v_c];[outv_pre]format=yuv420p[outv_final]")
     } else {
-        filter + &format!("
-[outv]scale={}:{},format=yuv420p[outv_final]", vid_w, vid_h)
+        filter.replace("[outv]", "[outv_pre]")
+            + &format!(";[outv_pre]scale={}:{},format=yuv420p[outv_final]", vid_w, vid_h)
     };
 
     // Write filtergraph to file
@@ -569,7 +568,7 @@ async fn burn_subtitles_canvas(
         args.push(frame.path.to_string_lossy().to_string());
     }
     args.extend([
-        "-filter_complex_script".to_string(), filter_script_path.to_string_lossy().to_string(),
+        "-/filter_complex".to_string(), filter_script_path.to_string_lossy().to_string(),
         "-map".to_string(),    "[outv_final]".to_string(),
         "-map".to_string(),    "0:a?".to_string(),
         "-c:v".to_string(),    "libx264".to_string(),
