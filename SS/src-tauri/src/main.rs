@@ -533,27 +533,24 @@ async fn burn_subtitles_canvas(
             };
 
             filter.push_str(&format!(
-                "{base}{png_ref}overlay=x=0:y=0:enable='between(t,{start_s:.3},{end_s:.3})'{out};
-"
+                "{base}{png_ref}overlay=x=0:y=0:enable='between(t,{start_s:.3},{end_s:.3})'{out};"
             ));
         }
     }
-    if filter.ends_with(";
-") { filter.truncate(filter.len() - 2); }
+    if filter.ends_with(";") { filter.truncate(filter.len() - 1); }
 
     // Apply yuv420p conversion at end
     let ratio_str  = crop_ratio.as_deref().unwrap_or("original");
     let offset_val = crop_offset.unwrap_or(50);
 
-    // Replace [outv] with the final output label inline — no trailing newline
-    // before scale/format or FFmpeg treats it as a separate filterchain.
-    let final_filter = if let Some(crop) = crop_filter(ratio_str, offset_val) {
-        filter.replacen("[0:v]", "[0:v_raw]", 1)
-            .replace("[outv]", "[outv_pre]")
-            + &format!(";[0:v_raw]{crop}[0:v_c];[outv_pre]format=yuv420p[outv_final]")
-    } else {
-        filter.replace("[outv]", "[outv_pre]")
-            + &format!(";[outv_pre]scale={}:{},format=yuv420p[outv_final]", vid_w, vid_h)
+    let final_filter = match crop_filter(ratio_str, offset_val) {
+        Some(crop) => {
+            filter.replacen("[0:v]", "[0:v_raw]", 1)
+                + &format!(";[0:v_raw]{crop}[0:v_c];[outv]format=yuv420p[outv_final]")
+        }
+        None => {
+            filter + &format!(";[outv]scale={}:{},format=yuv420p[outv_final]", vid_w, vid_h)
+        }
     };
 
     // Write filtergraph to file
@@ -569,7 +566,7 @@ async fn burn_subtitles_canvas(
     }
     args.extend([
         "-/filter_complex".to_string(), filter_script_path.to_string_lossy().to_string(),
-        "-map".to_string(),    "[outv_final]".to_string(),
+        "-map".to_string(),    "[outv_final]".to_string(),  // matches filter output
         "-map".to_string(),    "0:a?".to_string(),
         "-c:v".to_string(),    "libx264".to_string(),
         "-crf".to_string(),    "18".to_string(),
@@ -597,12 +594,10 @@ async fn burn_subtitles_canvas(
 
     log!("FFmpeg exit code: {:?}", output.status.code());
 
-    // Always log stderr — critical for diagnosing silent failures
-    let stderr_str = String::from_utf8_lossy(&output.stderr).to_string();
-    if !stderr_str.is_empty() {
-        log!("FFmpeg stderr (last 800):\n{}", &stderr_str[stderr_str.len().saturating_sub(800)..]);
+    let stderr_s = String::from_utf8_lossy(&output.stderr).to_string();
+    if !stderr_s.is_empty() {
+        log!("FFmpeg stderr (last 600):\n{}", &stderr_s[stderr_s.len().saturating_sub(600)..]);
     }
-
     let out_size = std::fs::metadata(&output_path).map(|m| m.len()).unwrap_or(0);
     log!("output file size: {} bytes", out_size);
 
@@ -610,12 +605,11 @@ async fn burn_subtitles_canvas(
     let _ = std::fs::remove_dir_all(&temp_dir);
 
     if !output.status.success() {
-        let tail = &stderr_str[stderr_str.len().saturating_sub(400)..];
+        let tail = &stderr_s[stderr_s.len().saturating_sub(400)..];
         return Err(format!("Canvas burn failed: {tail}"));
     }
-
     if out_size == 0 {
-        return Err("Canvas burn produced empty output — filter_complex_script may not be supported. Check ss_burn_log.txt.".to_string());
+        return Err("Canvas burn produced empty output. Check ss_burn_log.txt.".to_string());
     }
 
     emit_progress(&app, "done", "Done!");
