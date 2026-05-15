@@ -74,7 +74,6 @@ fn default_padding_y() -> f32 { 0.2 }
 
 /// One rendered PNG slot: a file on disk + the time window it covers.
 #[derive(Debug)]
-#[derive(Clone)]
 pub struct RenderedFrame {
     pub path: PathBuf,
     pub start_ms: i64,
@@ -271,7 +270,7 @@ pub fn render_segments(
             let seg_tokens: Vec<&WordToken> = word_tokens.iter()
                 .filter(|t| {
                     let t_start = srt_to_ms(&t.start);
-                    let _t_end  = srt_to_ms(&t.end);
+                    let t_end   = srt_to_ms(&t.end);
                     t_start >= start_ms - 100 && t_start <= end_ms + 100
                 })
                 .collect();
@@ -299,30 +298,51 @@ pub fn render_segments(
                 let word_w: f32 = word.chars()
                     .map(|c| scaled.h_advance(scaled.glyph_id(c))).sum();
 
-                // Background box for this word only
+                // Background box sized exactly to this word
                 let wbox_x = text_x + prefix_w - pad_x;
                 let wbox_w = word_w  + pad_x * 2.0;
                 let radius = (0.4 * px_size).min(box_h / 2.0).min(wbox_w / 2.0);
 
+                // word_x: left edge of this word's glyphs
+                let word_x = text_x + prefix_w;
+
                 let mut pixmap = Pixmap::new(video_w, video_h)
                     .ok_or("Failed to create pixmap")?;
 
+                // Draw background box
                 let mut paint = Paint::default();
                 paint.set_color_rgba8(br, bg_g, bb, 255);
                 paint.anti_alias = true;
-
                 if let Some(path) = rounded_rect_path(wbox_x, box_y, wbox_w, box_h, radius) {
                     pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
                 }
 
-                // Draw full line text over the background
-                if tmpl.outline > 0.0 {
-                    let outline_px = tmpl.outline * scale_factor;
-                    let (or, og, ob) = parse_color(&tmpl.outline_color);
-                    draw_text_stroked(&mut pixmap, &font, scale, &text, text_x, text_y, or, og, ob, outline_px);
-                }
+                // 1. Draw all words EXCEPT the active one (no background)
                 let (tr, tg, tb) = parse_color(&tmpl.primary_color);
-                draw_text_filled(&mut pixmap, &font, scale, &text, text_x, text_y, tr, tg, tb);
+                let outline_px = tmpl.outline * scale_factor;
+                let (or, og, ob) = parse_color(&tmpl.outline_color);
+
+                for (oi, other_word) in words.iter().enumerate() {
+                    if oi == wi { continue; } // skip active word
+                    let other_prefix: String = words[..oi].join(" ");
+                    let other_prefix_w: f32 = if other_prefix.is_empty() { 0.0 } else {
+                        other_prefix.chars().map(|c| scaled.h_advance(scaled.glyph_id(c))).sum::<f32>()
+                        + scaled.h_advance(scaled.glyph_id(' '))
+                    };
+                    let other_x = text_x + other_prefix_w;
+                    let other_str = other_word.to_string();
+                    if tmpl.outline > 0.0 {
+                        draw_text_stroked(&mut pixmap, &font, scale, &other_str, other_x, text_y, or, og, ob, outline_px);
+                    }
+                    draw_text_filled(&mut pixmap, &font, scale, &other_str, other_x, text_y, tr, tg, tb);
+                }
+
+                // 2. Draw the active word on top of its colored background
+                let active_word_str = word.to_string();
+                if tmpl.outline > 0.0 {
+                    draw_text_stroked(&mut pixmap, &font, scale, &active_word_str, word_x, text_y, or, og, ob, outline_px);
+                }
+                draw_text_filled(&mut pixmap, &font, scale, &active_word_str, word_x, text_y, tr, tg, tb);
 
                 let fname = format!("sub_{:04}_{:04}.png", seg.index, wi);
                 let fpath = out_dir.join(&fname);
