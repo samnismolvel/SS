@@ -79,7 +79,8 @@
 
   // Active word index — which rawSub token is active at currentTime
   let activeWordIndexDerived = $derived((() => {
-    if (templateVal?.activeWordColor === templateVal?.primaryColor) return -1
+    const needsBg = (templateVal as any)?.activeBgEnabled
+    if (!needsBg && templateVal?.activeWordColor === templateVal?.primaryColor) return -1
     const raw: any[] = sessionVal?.rawSubs ?? []
     const tMs = currentTime * 1000
     return raw.findIndex((sub: any) => {
@@ -721,6 +722,7 @@
 
                 <!-- Subtitle text -->
                 <span class="sub-text" style="
+                display:block;
                 font-family:{ef?.fontName??'Arial'};
                 font-size:{(ef?.fontSize??24)*previewFontScale}px;
                 font-weight:{ef?.bold?'bold':'normal'};
@@ -728,6 +730,7 @@
                 color:{ef?.primaryColor??'#fff'};
                 line-height:{1.35 + (ef?.lineSpacing ?? 0)}em;
                 word-spacing:{ef?.wordSpacing ?? 0}px;
+                word-break:normal;overflow-wrap:normal;
                 text-shadow:-{ef?.outline??2}px -{ef?.outline??2}px 0 {ef?.outlineColor??'#000'},
                 {ef?.outline??2}px -{ef?.outline??2}px 0 {ef?.outlineColor??'#000'},
                 -{ef?.outline??2}px {ef?.outline??2}px 0 {ef?.outlineColor??'#000'},
@@ -741,9 +744,9 @@
                   
                     {#if activeSubWords}
                       {#each activeSubWords as {word, isActive}, wi}
-                        {#if wi > 0}&nbsp;{/if}{#if isActive}<span class="aw-active-word" style="
-                          color:{(templateVal as any).activeBgEnabled ? (templateVal?.primaryColor ?? '#fff') : (templateVal?.activeWordColor ?? '#fff')};
-                          {(templateVal as any).activeBgEnabled ? 'background:' + ((templateVal as any).activeBgColor ?? '#FFCC00') + ';padding:' + ((templateVal as any).lineBgPaddingY ?? 0.2) + 'em ' + ((templateVal as any).lineBgPaddingX ?? 0.5) + 'em;border-radius:0.35em;' : ''}
+                        {#if wi > 0} {/if}{#if isActive}<span class="aw-active-word" style="
+                          color:{(templateVal as any).activeBgEnabled ? (templateVal?.primaryColor ?? '#fff') : ((templateVal as any)?.activeWordColor ?? '#fff')};
+                          {(templateVal as any).activeBgEnabled ? 'background:' + ((templateVal as any).activeBgColor ?? '#FFCC00') + ';padding:.15em .4em;border-radius:0.35em;display:inline;' : ''}
                         ">{word}</span>{:else}{word}{/if}
                       {/each}
                     {:else}
@@ -1159,7 +1162,7 @@
                   {(templateVal as any).lineBgEnabled
                     ? 'background:' + ((templateVal as any).lineBgColor ?? '#000') + ';padding:' + ((templateVal as any).lineBgPaddingY ?? 0.2) + 'em ' + ((templateVal as any).lineBgPaddingX ?? 0.5) + 'em;border-radius:0.35em;'
                     : 'outline:1px dashed var(--color-border);padding:.35em .6em;'}
-                ">subtitle line</div>
+                ">subtitle{#if (templateVal as any).activeBgEnabled}&nbsp;<span style="background:{(templateVal as any).activeBgColor ?? '#FFCC00'};color:{templateVal.primaryColor};padding:.15em .4em;border-radius:0.35em;">{(templateVal as any).lineBgEnabled ? 'word' : 'line'}</span>&nbsp;bg{:else} line{/if}</div>
 
                 <!-- Enable toggle -->
                 <label class="toggle-row" style="margin-top:.4rem">
