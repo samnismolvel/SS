@@ -73,7 +73,7 @@ fn default_padding_x() -> f32 { 0.5 }
 fn default_padding_y() -> f32 { 0.2 }
 
 /// One rendered PNG slot: a file on disk + the time window it covers.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RenderedFrame {
     pub path: PathBuf,
     pub start_ms: i64,
@@ -270,7 +270,7 @@ pub fn render_segments(
             let seg_tokens: Vec<&WordToken> = word_tokens.iter()
                 .filter(|t| {
                     let t_start = srt_to_ms(&t.start);
-                    let t_end   = srt_to_ms(&t.end);
+                    let _t_end  = srt_to_ms(&t.end);
                     t_start >= start_ms - 100 && t_start <= end_ms + 100
                 })
                 .collect();
