@@ -179,17 +179,17 @@ impl Default for FrameInfo {
     fn default() -> Self { Self { offset_x: 0.0, offset_y: 0.0, scale_x: 1.0, scale_y: 1.0 } }
 }
 
-fn word_wrap<F: Font + ScaleFont<F>>(
+fn word_wrap(
     text: &str,
-    scaled: &F,
+    char_w: &dyn Fn(char) -> f32,
     max_w: f32,
 ) -> Vec<(String, f32)> {
-    let space_w: f32 = scaled.h_advance(scaled.glyph_id(' '));
+    let space_w = char_w(' ');
     let mut lines: Vec<(String, f32)> = Vec::new();
     let mut cur_line = String::new();
     let mut cur_w = 0.0f32;
     for word in text.split_whitespace() {
-        let word_w: f32 = word.chars().map(|c| scaled.h_advance(scaled.glyph_id(c))).sum();
+        let word_w: f32 = word.chars().map(|c| char_w(c)).sum();
         if cur_line.is_empty() {
             cur_line = word.to_string();
             cur_w = word_w;
@@ -251,12 +251,12 @@ pub fn render_segments(
 
         // Word-wrap into lines fitting max_text_width_px
         let line_height = scaled.height() + scaled.line_gap();
-        let wrapped_lines = word_wrap(&text, &scaled, max_text_width_px);
+        let cw = |c| scaled.h_advance(scaled.glyph_id(c));
+        let wrapped_lines = word_wrap(&text, &cw, max_text_width_px);
         let num_lines = wrapped_lines.len() as f32;
         let text_w: f32 = wrapped_lines.iter().map(|(_, w)| *w).fold(0.0f32, f32::max);
         let text_h = line_height * num_lines;
 
-        // Box dimensions
         let (box_w, box_h) = if tmpl.line_bg_enabled || tmpl.active_bg_enabled {
             (text_w + pad_x * 2.0, text_h + pad_y * 2.0)
         } else {
