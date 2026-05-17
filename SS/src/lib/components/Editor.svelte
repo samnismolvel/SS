@@ -1,3 +1,4 @@
+
 <script lang="ts">
   import { session, isDirty, findAndReplace, selectSegment, updateSubtitleText, updateSubtitleOverrides, clearSubtitleOverrides, setDensityRatio, mergeWithNext, insertAfter, densityRatio as densityRatioStore } from '$lib/stores/editor'
   import { activeTemplate, updateActiveTemplate, allTemplates, setActiveTemplate, saveActiveAsTemplate } from '$lib/stores/templates'
@@ -322,7 +323,17 @@
           videoNativeW:  videoEl?.videoWidth  ?? 0,
           videoNativeH:  videoEl?.videoHeight ?? 0,
           rawSubsJson,
-          overlayWidthPct: (templateVal as any)?.overlayWidthPct ?? 80,
+          // Send sub-box width in font-size units (em) rather than frame %.
+          // This is resolution-independent: the Rust renderer multiplies back by
+          // the video font size to get the correct pixel threshold for word-wrap.
+          // Formula: em = (overlayWidthPct/100 * frameWidthPx) / (fontSize * previewFontScale)
+          overlayWidthEm: (() => {
+            const frame = getFrameRect()
+            const fwPx  = frame?.width ?? 0
+            const pct   = ((templateVal as any)?.overlayWidthPct ?? 80) / 100
+            const fontPx = (templateVal?.fontSize ?? 24) * (frame ? frame.height / 288 : 1)
+            return fontPx > 0 ? (pct * fwPx) / fontPx : 30
+          })(),
         }).catch((e: any) => console.error('[canvas burn]', e))
         return
       } else {
