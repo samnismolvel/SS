@@ -499,7 +499,7 @@ async fn burn_subtitles_canvas(
         let em = overlay_width_em.unwrap_or(30.0).max(1.0);
         (em * video_font_px).max(50.0)
     };
-    log!("max_text_width_px={:.1f} (overlayWidthEm={:.2f}, video_font_px={:.1f})",
+    log!("max_text_width_px={:.1} (overlayWidthEm={:.2}, video_font_px={:.1}",
          max_text_width_px,
          overlay_width_em.unwrap_or(30.0),
          tmpl.font_size * vid_h as f32 / 288.0);
