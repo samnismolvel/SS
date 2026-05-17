@@ -179,6 +179,43 @@ impl Default for FrameInfo {
     fn default() -> Self { Self { offset_x: 0.0, offset_y: 0.0, scale_x: 1.0, scale_y: 1.0 } }
 }
 
+// ── word_wrap ────────────────────────────────────────────────────────────────
+// Splits `text` into lines that fit within `max_w` pixels using the given font.
+// Returns a Vec of (line_text, line_width) tuples.
+fn word_wrap(
+    text: &str,
+    scaled: &ab_glyph::PxScaleFontRef<'_>,
+    max_w: f32,
+) -> Vec<(String, f32)> {
+    let space_w: f32 = scaled.h_advance(scaled.glyph_id(' '));
+    let mut lines: Vec<(String, f32)> = Vec::new();
+    let mut cur_line = String::new();
+    let mut cur_w = 0.0f32;
+
+    for word in text.split_whitespace() {
+        let word_w: f32 = word.chars().map(|c| scaled.h_advance(scaled.glyph_id(c))).sum();
+        if cur_line.is_empty() {
+            cur_line = word.to_string();
+            cur_w = word_w;
+        } else if cur_w + space_w + word_w <= max_w {
+            cur_line.push(' ');
+            cur_line.push_str(word);
+            cur_w += space_w + word_w;
+        } else {
+            lines.push((cur_line.clone(), cur_w));
+            cur_line = word.to_string();
+            cur_w = word_w;
+        }
+    }
+    if !cur_line.is_empty() {
+        lines.push((cur_line, cur_w));
+    }
+    if lines.is_empty() {
+        lines.push((String::new(), 0.0));
+    }
+    lines
+}
+
 pub fn render_segments(
     segments: &[SubtitleSegment],
     tmpl: &RenderTemplate,
@@ -188,6 +225,7 @@ pub fn render_segments(
     out_dir: &Path,
     frame_info: FrameInfo,
     word_tokens: &[WordToken],
+    max_text_width_px: f32,
 ) -> Result<Vec<RenderedFrame>, String> {
     let font = FontRef::try_from_slice(font_data)
         .map_err(|e| format!("Failed to load font: {e}"))?;
@@ -219,12 +257,14 @@ pub fn render_segments(
         let start_ms = srt_to_ms(&seg.start);
         let end_ms   = srt_to_ms(&seg.end);
 
-        // Measure full line
+        // Word-wrap the text into lines that fit max_text_width_px
         let line_height = scaled.height() + scaled.line_gap();
-        let text_w: f32 = text.chars().map(|c| scaled.h_advance(scaled.glyph_id(c))).sum();
-        let text_h = line_height;
+        let wrapped_lines = word_wrap(&text, &scaled, max_text_width_px);
+        let num_lines = wrapped_lines.len() as f32;
+        let text_w: f32 = wrapped_lines.iter().map(|(_, w)| *w).fold(0.0f32, f32::max);
+        let text_h = line_height * num_lines;
 
-        // Box dimensions for the full line
+        // Box dimensions — width is the widest line, height accounts for all lines
         let (box_w, box_h) = if tmpl.line_bg_enabled || tmpl.active_bg_enabled {
             (text_w + pad_x * 2.0, text_h + pad_y * 2.0)
         } else {
@@ -376,7 +416,7 @@ pub fn render_segments(
             continue; // skip the normal rendering below
         }
 
-        // ── Normal rendering (line_bg or plain) ───────────────────────────────
+        // ── Normal rendering (line_bg or plain) — multi-line ──────────────────
         let mut pixmap = Pixmap::new(video_w, video_h)
             .ok_or("Failed to create pixmap")?;
 
@@ -386,20 +426,40 @@ pub fn render_segments(
             let mut paint = Paint::default();
             paint.set_color_rgba8(br, bg_c, bb, 255);
             paint.anti_alias = true;
-            let radius = (0.4 * px_size).min(box_h / 2.0).min(box_w / 2.0);
-            if let Some(path) = rounded_rect_path(box_x, box_y, box_w, box_h, radius) {
-                pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+            // Draw one background rect per line (each line may have different width)
+            for (li, (line_text, line_w)) in wrapped_lines.iter().enumerate() {
+                let ly = box_y + li as f32 * line_height;
+                let lx = match h_anchor {
+                    0 => text_x - pad_x,
+                    2 => text_x + text_w - line_w - pad_x,
+                    _ => text_x + (text_w - line_w) / 2.0 - pad_x,
+                };
+                let lbox_w = line_w + pad_x * 2.0;
+                let lbox_h = line_height + pad_y * 2.0;
+                let radius = (0.4 * px_size).min(lbox_h / 2.0).min(lbox_w / 2.0);
+                if let Some(path) = rounded_rect_path(lx, ly, lbox_w, lbox_h, radius) {
+                    pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+                }
+                let _ = line_text; // suppress unused warning
             }
         }
 
-        if tmpl.outline > 0.0 && !tmpl.line_bg_enabled {
-            let outline_px = tmpl.outline * scale_factor;
-            let (or, og, ob) = parse_color(&tmpl.outline_color);
-            draw_text_stroked(&mut pixmap, &font, scale, &text, text_x, text_y, or, og, ob, outline_px);
-        }
-
+        // Draw each line of text with correct horizontal alignment offset
         let (tr, tg, tb) = parse_color(&tmpl.primary_color);
-        draw_text_filled(&mut pixmap, &font, scale, &text, text_x, text_y, tr, tg, tb);
+        let outline_px = tmpl.outline * scale_factor;
+        let (or, og, ob) = parse_color(&tmpl.outline_color);
+        for (li, (line_text, line_w)) in wrapped_lines.iter().enumerate() {
+            let ly = text_y + li as f32 * line_height;
+            let lx = match h_anchor {
+                0 => text_x,                           // left
+                2 => text_x + text_w - line_w,        // right
+                _ => text_x + (text_w - line_w) / 2.0, // center
+            };
+            if tmpl.outline > 0.0 && !tmpl.line_bg_enabled {
+                draw_text_stroked(&mut pixmap, &font, scale, line_text, lx, ly, or, og, ob, outline_px);
+            }
+            draw_text_filled(&mut pixmap, &font, scale, line_text, lx, ly, tr, tg, tb);
+        }
 
         let fname = format!("sub_{:04}.png", seg.index);
         let fpath = out_dir.join(&fname);

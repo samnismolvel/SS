@@ -411,6 +411,7 @@ async fn burn_subtitles_canvas(
     video_native_w: Option<u32>,
     video_native_h: Option<u32>,
     raw_subs_json: Option<String>,
+    overlay_width_pct: Option<f32>,  // % del frame visible que ocupa el sub-box
 ) -> Result<(), String> {
     // ── Debug log — escribe en cada etapa ────────────────────────────────────
     let log_path = std::env::temp_dir().join("ss_burn_log.txt");
@@ -481,7 +482,18 @@ async fn burn_subtitles_canvas(
         .map_err(|e| { log!("FAIL create temp dir: {e}"); format!("Cannot create temp dir: {e}") })?;
     log!("temp dir created: {:?}", temp_dir);
 
-    let frames = render_segments(&segments, &tmpl, &font_bytes, vid_w, vid_h, &temp_dir, frame_info, &word_tokens)
+    // Ancho máximo del texto en píxeles del video, basado en overlayWidthPct del preview.
+    // Si no se provee, usa el 80% del área visible (comportamiento anterior).
+    let max_text_width_px: f32 = {
+        let pct = overlay_width_pct.unwrap_or(80.0).clamp(10.0, 100.0) / 100.0;
+        let content_w = frame_info.scale_x * vid_w as f32;
+        // Descontar el padding del bg si está activo
+        let pad_x = tmpl.line_bg_padding_x * (vid_h as f32 / 288.0) * tmpl.font_size;
+        let inner = pct * content_w - pad_x * 2.0;
+        inner.max(50.0)
+    };
+
+    let frames = render_segments(&segments, &tmpl, &font_bytes, vid_w, vid_h, &temp_dir, frame_info, &word_tokens, max_text_width_px)
         .map_err(|e| { log!("FAIL render_segments: {e}"); format!("Render error: {e}") })?;
     log!("frames rendered: {}", frames.len());
 
