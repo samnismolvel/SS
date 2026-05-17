@@ -730,7 +730,7 @@
                 color:{ef?.primaryColor??'#fff'};
                 line-height:{1.35 + (ef?.lineSpacing ?? 0)}em;
                 word-spacing:{ef?.wordSpacing ?? 0}px;
-                word-break:keep-all;overflow-wrap:normal;white-space:normal;
+                word-break:normal;overflow-wrap:normal;
                 text-shadow:-{ef?.outline??2}px -{ef?.outline??2}px 0 {ef?.outlineColor??'#000'},
                 {ef?.outline??2}px -{ef?.outline??2}px 0 {ef?.outlineColor??'#000'},
                 -{ef?.outline??2}px {ef?.outline??2}px 0 {ef?.outlineColor??'#000'},
@@ -742,13 +742,15 @@
                 {getAnimationStyle(templateVal?.animation)}">
   <!-- active word rendering — ver cambio 2 -->
                   
-                    {#if activeSubWords}<!--
-                      -->{#each activeSubWords as {word, isActive}, wi}<!--
-                        -->{#if wi > 0}<span class="aw-space"> </span>{/if}<!--
-                        -->{#if isActive}<span class="aw-active-word" style="color:{(templateVal as any).activeBgEnabled ? (templateVal?.primaryColor ?? '#fff') : ((templateVal as any)?.activeWordColor ?? '#fff')};{(templateVal as any).activeBgEnabled ? 'background:' + ((templateVal as any).activeBgColor ?? '#FFCC00') + ';padding:.1em .35em;border-radius:0.35em;' : ''}">{word}</span><!--
-                        -->{:else}<span class="aw-word">{word}</span>{/if}<!--
-                      -->{/each}<!--
-                    -->{:else}{previewText}{/if}
+                    {#if activeSubWords}
+                      <span class="aw-words-wrap">
+                        {#each activeSubWords as {word, isActive}}
+                          {#if isActive}<span class="aw-active-word" style="color:{(templateVal as any).activeBgEnabled ? (templateVal?.primaryColor ?? '#fff') : ((templateVal as any)?.activeWordColor ?? '#fff')};{(templateVal as any).activeBgEnabled ? 'background:' + ((templateVal as any).activeBgColor ?? '#FFCC00') + ';padding:.1em .35em;border-radius:0.35em;' : ''}">{word}</span>{:else}<span class="aw-word">{word}</span>{/if}
+                        {/each}
+                      </span>
+                    {:else}
+                      {previewText}
+                    {/if}
 
                 </span>
 
@@ -1510,9 +1512,9 @@
   .canvas-note{font-size:.68rem;color:var(--color-text-muted);margin-top:.5rem;line-height:1.4;}
   .burn-error{font-size:.7rem;padding:2px 7px;border-radius:20px;background:var(--color-danger-subtle,#3d1a1a);color:var(--color-danger,#f87171);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:160px;}
   .aw-prev-word{font-size:1.3rem;font-weight:700;line-height:1.3;white-space:nowrap}
-  .aw-active-word{display:inline;line-height:inherit;white-space:nowrap}
-  .aw-word{display:inline;white-space:nowrap}
-  .aw-space{display:inline;white-space:pre}
+  .aw-words-wrap{display:flex;flex-wrap:wrap;gap:.28em;align-items:center;justify-content:inherit}
+  .aw-active-word{white-space:nowrap;line-height:inherit}
+  .aw-word{white-space:nowrap}
   /* Remove old sub-tabs now replaced by sub-sidebar rail */
   @keyframes sub-fade{from{opacity:0}to{opacity:1}}
   @keyframes sub-pop{from{transform:scale(0.5);opacity:0}to{transform:scale(1);opacity:1}}
