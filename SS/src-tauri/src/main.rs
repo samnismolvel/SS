@@ -503,6 +503,17 @@ async fn burn_subtitles_canvas(
         .map_err(|e| { log!("FAIL create temp dir: {e}"); format!("Cannot create temp dir: {e}") })?;
     log!("temp dir created: {:?}", temp_dir);
 
+
+    // Ancho máximo del texto en píxeles — basado en overlayWidthPct del preview
+    let max_text_width_px: f32 = {
+        let pct = overlay_width_pct.unwrap_or(80.0).clamp(5.0, 100.0) / 100.0;
+        let content_w = frame_info.scale_x * vid_w as f32;
+        let scale_factor = vid_h as f32 / 288.0;
+        let pad_x = tmpl.line_bg_padding_x * tmpl.font_size * scale_factor;
+        (pct * content_w - pad_x * 2.0).max(50.0)
+    };
+    log!("max_text_width_px: {:.1}", max_text_width_px);
+
     let frames = render_segments(&segments, &tmpl, &font_bytes, vid_w, vid_h, &temp_dir, frame_info, &word_tokens, max_text_width_px)
         .map_err(|e| { log!("FAIL render_segments: {e}"); format!("Render error: {e}") })?;
     log!("frames rendered: {}", frames.len());
