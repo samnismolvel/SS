@@ -503,7 +503,7 @@ async fn burn_subtitles_canvas(
         .map_err(|e| { log!("FAIL create temp dir: {e}"); format!("Cannot create temp dir: {e}") })?;
     log!("temp dir created: {:?}", temp_dir);
 
-    let frames = render_segments(&segments, &tmpl, &font_bytes, vid_w, vid_h, &temp_dir, frame_info, &word_tokens)
+    let frames = render_segments(&segments, &tmpl, &font_bytes, vid_w, vid_h, &temp_dir, frame_info, &word_tokens, max_text_width_px)
         .map_err(|e| { log!("FAIL render_segments: {e}"); format!("Render error: {e}") })?;
     log!("frames rendered: {}", frames.len());
 
