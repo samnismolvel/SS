@@ -424,10 +424,25 @@ function buildPosTag(template: Template): string {
   const px = (template as any).posX as number | undefined
   const py = (template as any).posY as number | undefined
   if (px == null || py == null) return ''
+
+  // posX/posY are the CENTER of the text box (preview uses transform:translate(-50%,-50%)).
+  // ASS WrapStyle:2 wraps at (PlayResX - MarginL - MarginR).
+  // To preserve wrap width while positioning freely, we:
+  //   1. Keep the style alignment (so wrap uses MarginL/R from overlayWidthPct)
+  //   2. Use \pos with coordinates adjusted for the alignment anchor.
+  //
+  // For alignment 2 (bottom-center, the default), the \pos x is the horizontal
+  // centre of the text → same as posX%. For Y, bottom-anchored text: \pos y is
+  // the BOTTOM edge of the text, so we use posY% directly (libass anchors bottom).
+  // For \an5 we'd need centre; instead we keep the style alignment and just shift
+  // the MarginV to match posY, and use \pos only for horizontal if needed.
+  //
+  // Simplest correct approach: emit \pos(x,y) WITHOUT changing \an.
+  // libass will position the anchor point of the current alignment at (x,y),
+  // and still wrap using MarginL/R. This is what we want.
   const x = Math.round((px / 100) * SCRIPT_W)
   const y = Math.round((py / 100) * SCRIPT_H)
-  // \an5 = centre-anchor so the subtitle centres on the given point
-  return `{\\an5\\pos(${x},${y})}`
+  return `{\\pos(${x},${y})}`
 }
 
 // ─── Plain events ────────────────────────────────────────────────────────────

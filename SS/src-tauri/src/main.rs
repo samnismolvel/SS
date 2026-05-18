@@ -411,7 +411,7 @@ async fn burn_subtitles_canvas(
     video_native_w: Option<u32>,
     video_native_h: Option<u32>,
     raw_subs_json: Option<String>,
-    overlay_width_em: Option<f32>,   // sub-box width in font-size units (resolution-independent)
+    overlay_width_pct: Option<f32>,
 ) -> Result<(), String> {
     // ── Debug log — escribe en cada etapa ────────────────────────────────────
     let log_path = std::env::temp_dir().join("ss_burn_log.txt");
@@ -482,42 +482,15 @@ async fn burn_subtitles_canvas(
         .map_err(|e| { log!("FAIL create temp dir: {e}"); format!("Cannot create temp dir: {e}") })?;
     log!("temp dir created: {:?}", temp_dir);
 
-    // max_text_width_px: convert the em-based width to video pixels.
-    //
-    // overlayWidthEm = sub-box width measured in font-size units (em).
-    // This is resolution-independent — computed in the frontend as:
-    //   em = (overlayWidthPct/100 * previewFrameWidthPx) / (fontSize * previewFontScale)
-    //
-    // To get the pixel width in the final video:
-    //   video_font_px = fontSize * (vid_h / 288)
-    //   max_text_width_px = overlayWidthEm * video_font_px
-    //
-    // Fallback: if not provided, use 30em (reasonable default for most fonts).
-    // Reconstruct max_text_width_px from the em count sent by the frontend.
-    // The frontend measured em = subBoxPx / measureText('M').width in the preview.
-    // We invert that here using h_advance('M') at video font size.
-    // This guarantees the word-wrap threshold uses the exact same glyph metric
-    // as the word_wrap() function in subtitle_renderer (which also uses h_advance).
+    // Ancho máximo del texto en píxeles — basado en overlayWidthPct del preview
     let max_text_width_px: f32 = {
-        let scale_factor   = vid_h as f32 / 288.0;
-        let video_font_px  = tmpl.font_size * scale_factor;
-        let em             = overlay_width_em.unwrap_or(30.0).max(1.0);
-        // Use h_advance of 'M' as the em reference — same as canvas measureText('M').
-        // Fall back to font_size * 0.7 if font load fails.
-        let m_advance: f32 = {
-            let scale  = ab_glyph::PxScale::from(video_font_px);
-            if let Ok(font) = ab_glyph::FontRef::try_from_slice(&font_bytes) {
-                let sf  = ab_glyph::Font::as_scaled(&font, scale);
-                let gid = ab_glyph::ScaleFont::glyph_id(&sf, 'M');
-                ab_glyph::ScaleFont::h_advance(&sf, gid)
-            } else {
-                video_font_px * 0.7
-            }
-        };
-        let result = (em * m_advance).max(50.0);
-        log!("max_text_width_px={:.1} em={:.2} M_advance={:.1}", result, em, m_advance);
-        result
+        let pct = overlay_width_pct.unwrap_or(80.0).clamp(5.0, 100.0) / 100.0;
+        let content_w = frame_info.scale_x * vid_w as f32;
+        let scale_factor = vid_h as f32 / 288.0;
+        let pad_x = tmpl.line_bg_padding_x * tmpl.font_size * scale_factor;
+        (pct * content_w - pad_x * 2.0).max(50.0)
     };
+    log!("max_text_width_px: {:.1}", max_text_width_px);
 
     let frames = render_segments(&segments, &tmpl, &font_bytes, vid_w, vid_h, &temp_dir, frame_info, &word_tokens, max_text_width_px)
         .map_err(|e| { log!("FAIL render_segments: {e}"); format!("Render error: {e}") })?;
