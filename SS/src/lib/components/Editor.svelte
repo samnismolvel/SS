@@ -1,4 +1,3 @@
-
 <script lang="ts">
   import { session, isDirty, findAndReplace, selectSegment, updateSubtitleText, updateSubtitleOverrides, clearSubtitleOverrides, setDensityRatio, mergeWithNext, insertAfter, densityRatio as densityRatioStore } from '$lib/stores/editor'
   import { activeTemplate, updateActiveTemplate, allTemplates, setActiveTemplate, saveActiveAsTemplate } from '$lib/stores/templates'
@@ -323,16 +322,33 @@
           videoNativeW:  videoEl?.videoWidth  ?? 0,
           videoNativeH:  videoEl?.videoHeight ?? 0,
           rawSubsJson,
-          // Send sub-box width in font-size units (em) rather than frame %.
-          // This is resolution-independent: the Rust renderer multiplies back by
-          // the video font size to get the correct pixel threshold for word-wrap.
-          // Formula: em = (overlayWidthPct/100 * frameWidthPx) / (fontSize * previewFontScale)
+          // overlayWidthEm: sub-box width measured in font-size units.
+          // We measure it using the actual preview canvas to get exact metrics.
+          // This is resolution-independent: Rust multiplies by the video font size.
+          // Steps:
+          //   1. Get the sub-box pixel width in the preview (pct * frame.width)
+          //   2. Measure one em in the preview using a hidden canvas + the real font
+          //   3. em_count = sub_box_px / one_em_px
+          //   4. Rust: max_text_width_px = em_count * (fontSize * vid_h/288)
           overlayWidthEm: (() => {
-            const frame = getFrameRect()
-            const fwPx  = frame?.width ?? 0
-            const pct   = ((templateVal as any)?.overlayWidthPct ?? 80) / 100
-            const fontPx = (templateVal?.fontSize ?? 24) * (frame ? frame.height / 288 : 1)
-            return fontPx > 0 ? (pct * fwPx) / fontPx : 30
+            const fr     = getFrameRect()
+            if (!fr || fr.width === 0 || fr.height === 0) return 30
+            const pct    = ((templateVal as any)?.overlayWidthPct ?? 80) / 100
+            const subBoxPx = pct * fr.width
+
+            // Measure 1em in preview coords using a hidden canvas
+            const cvs  = document.createElement('canvas')
+            const ctx  = cvs.getContext('2d')!
+            // Preview font size = fontSize * (frameHeight / ASS_SCRIPT_H)
+            const previewFontPx = (templateVal?.fontSize ?? 24) * (fr.height / 288)
+            const weight = templateVal?.bold ? 'bold' : 'normal'
+            const style  = templateVal?.italic ? 'italic' : 'normal'
+            ctx.font = `${style} ${weight} ${previewFontPx}px "${templateVal?.fontName ?? 'Arial'}"`
+            // Measure 'M' as the reference em width (cap height proxy)
+            const oneEmPx = ctx.measureText('M').width
+
+            if (oneEmPx <= 0) return 30
+            return subBoxPx / oneEmPx
           })(),
         }).catch((e: any) => console.error('[canvas burn]', e))
         return
