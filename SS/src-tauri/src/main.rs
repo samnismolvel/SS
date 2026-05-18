@@ -240,6 +240,28 @@ async fn burn_subtitles(
     std::fs::write(&ass_path, &ass_content)
         .map_err(|_| "Could not save subtitle file.".to_string())?;
 
+    // Debug log — write ASS content summary to ss_burn_log.txt
+    {
+        let log_path = std::env::temp_dir().join("ss_burn_log.txt");
+        let prev = std::fs::read_to_string(&log_path).unwrap_or_default();
+        let ass_lines: Vec<&str> = ass_content.lines().collect();
+        let style_line = ass_lines.iter().find(|l| l.starts_with("Style:")).copied().unwrap_or("(no style line)");
+        let first_event = ass_lines.iter().find(|l| l.starts_with("Dialogue:")).copied().unwrap_or("(no dialogue)");
+        let _ = std::fs::write(&log_path, format!(
+            "{}=== burn_subtitles (ASS path) ===
+ass len: {} bytes
+style: {}
+first event: {}
+",
+            prev,
+            ass_content.len(),
+            style_line,
+            &first_event[..first_event.len().min(300)]
+        ));
+        // Also save full ASS to temp for inspection
+        let _ = std::fs::write(std::env::temp_dir().join("debug_subtitles.ass"), &ass_content);
+    }
+
     emit_progress(&app, "burning", "Burning subtitles into video...");
 
     // ── Escape the ASS path for FFmpeg -vf ───────────────────────────────────
@@ -411,7 +433,6 @@ async fn burn_subtitles_canvas(
     video_native_w: Option<u32>,
     video_native_h: Option<u32>,
     raw_subs_json: Option<String>,
-    overlay_width_pct: Option<f32>,
 ) -> Result<(), String> {
     // ── Debug log — escribe en cada etapa ────────────────────────────────────
     let log_path = std::env::temp_dir().join("ss_burn_log.txt");
@@ -482,17 +503,7 @@ async fn burn_subtitles_canvas(
         .map_err(|e| { log!("FAIL create temp dir: {e}"); format!("Cannot create temp dir: {e}") })?;
     log!("temp dir created: {:?}", temp_dir);
 
-    // Ancho máximo del texto en píxeles — basado en overlayWidthPct del preview
-    let max_text_width_px: f32 = {
-        let pct = overlay_width_pct.unwrap_or(80.0).clamp(5.0, 100.0) / 100.0;
-        let content_w = frame_info.scale_x * vid_w as f32;
-        let scale_factor = vid_h as f32 / 288.0;
-        let pad_x = tmpl.line_bg_padding_x * tmpl.font_size * scale_factor;
-        (pct * content_w - pad_x * 2.0).max(50.0)
-    };
-    log!("max_text_width_px: {:.1}", max_text_width_px);
-
-    let frames = render_segments(&segments, &tmpl, &font_bytes, vid_w, vid_h, &temp_dir, frame_info, &word_tokens, max_text_width_px)
+    let frames = render_segments(&segments, &tmpl, &font_bytes, vid_w, vid_h, &temp_dir, frame_info, &word_tokens)
         .map_err(|e| { log!("FAIL render_segments: {e}"); format!("Render error: {e}") })?;
     log!("frames rendered: {}", frames.len());
 
