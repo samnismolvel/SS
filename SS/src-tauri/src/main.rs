@@ -433,6 +433,7 @@ async fn burn_subtitles_canvas(
     video_native_w: Option<u32>,
     video_native_h: Option<u32>,
     raw_subs_json: Option<String>,
+    overlay_width_pct: Option<f32>,
 ) -> Result<(), String> {
     // ── Debug log — escribe en cada etapa ────────────────────────────────────
     let log_path = std::env::temp_dir().join("ss_burn_log.txt");
