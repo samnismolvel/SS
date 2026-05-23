@@ -77,6 +77,7 @@ export interface Subtitle {
   end: string
   text: string
   originalText: string
+  wrappedText?: string ////
   overrides?: Partial<Omit<Template, 'id' | 'name'>>
 }
 

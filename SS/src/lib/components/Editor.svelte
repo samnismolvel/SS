@@ -242,6 +242,61 @@
     }
     input.click()
   }
+  // ── computeWrappedText ────────────────────────────────────────────────────
+  // For each subtitle, measures the text width using canvas.measureText() with
+  // the actual preview font, then inserts \n at word boundaries to match what
+  // the user sees in the preview sub-box. The result becomes wrappedText on
+  // each Subtitle, which ass.ts converts to ASS \N hard line breaks.
+  function computeWrappedText(
+    subs: typeof sessionVal.subtitles,
+    tmpl: typeof templateVal,
+    overlayPct: number,
+    frameW: number,
+    frameH: number,
+  ): typeof sessionVal.subtitles {
+    // Set up a hidden canvas with the preview font metrics
+    const cvs = document.createElement('canvas')
+    const ctx = cvs.getContext('2d')!
+    const previewFontPx = (tmpl?.fontSize ?? 24) * (frameH / 288)
+    const weight = tmpl?.bold ? 'bold' : 'normal'
+    const style  = tmpl?.italic ? 'italic' : 'normal'
+    ctx.font = `${style} ${weight} ${previewFontPx}px "${tmpl?.fontName ?? 'Arial'}"`
+
+    // Sub-box pixel width in preview coords
+    const subBoxPx = (overlayPct / 100) * frameW
+    const spaceW   = ctx.measureText(' ').width
+
+    return subs.map(sub => {
+      const words = sub.text.trim().split(/\s+/)
+      if (words.length <= 1) return { ...sub, wrappedText: sub.text.trim() }
+
+      const resultLines: string[] = []
+      let current = ''
+      let currentW = 0
+
+      for (const word of words) {
+        const wordW = ctx.measureText(word).width
+        if (current === '') {
+          current  = word
+          currentW = wordW
+        } else {
+          const withSpace = currentW + spaceW + wordW
+          if (withSpace <= subBoxPx) {
+            current  += ' ' + word
+            currentW  = withSpace
+          } else {
+            resultLines.push(current)
+            current  = word
+            currentW = wordW
+          }
+        }
+      }
+      if (current) resultLines.push(current)
+
+      return { ...sub, wrappedText: resultLines.join('\n') } as any
+    })
+  }
+
   async function handleBurn() {
     if (!sessionVal || !templateVal || isBurning) return
     burnError = null
@@ -327,7 +382,16 @@
         return
       } else {
         // ── ASS path (default) ───────────────────────────────────────────────
-        const assContent = buildAss(sessionVal.subtitles, templateVal, sessionVal.rawSubs ?? [])
+        // Compute wrapped text just before burn so it uses the current template.
+        const fr  = getFrameRect()
+        const subs = computeWrappedText(
+          sessionVal.subtitles,
+          templateVal,
+          (templateVal as any)?.overlayWidthPct ?? 80,
+          fr?.width  ?? 384,
+          fr?.height ?? 288,
+        )
+        const assContent = buildAss(subs, templateVal, sessionVal.rawSubs ?? [])
         onburn({ videoPath: sessionVal.videoPath, outputPath: sessionVal.outputPath, assContent })
         return // onburn handles progress events; don't set isBurning=false here
       }

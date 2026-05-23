@@ -255,13 +255,7 @@ export function buildAss(subtitles: Subtitle[], template: Template, rawSubs: Sub
   lines.push('Title: Subtitles')
   lines.push('ScriptType: v4.00+')
   lines.push('Collisions: Normal')
-  // WrapStyle 2: smart wrap — libass wraps text when it would exceed
-  // (PlayResX - MarginL - MarginR). This is the only way to get multi-line
-  // subtitles from a single Dialogue event without manual line breaks.
-  lines.push('WrapStyle: 2')
-  // Standard ASS script space. libass scales all coordinates by vid_h/288.
-  lines.push('PlayResX: ' + SCRIPT_W)
-  lines.push('PlayResY: ' + SCRIPT_H)
+  lines.push('WrapStyle: 0')
   lines.push('')
   lines.push('[V4+ Styles]')
   lines.push(
@@ -270,27 +264,11 @@ export function buildAss(subtitles: Subtitle[], template: Template, rawSubs: Sub
     'ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, ' +
     'Alignment, MarginL, MarginR, MarginV, Encoding'
   )
-  // Compute effective marginL/R from overlayWidthPct.
-  // When the user constrains the sub-box width, we encode that as ASS margins
-  // so libass wraps text at the same width as the preview sub-box.
-  // overlayWidthPct is stored in template; convert to script-space pixels:
-  //   usable = overlayWidthPct/100 * SCRIPT_W
-  //   each_margin = (SCRIPT_W - usable) / 2
-  const overlayPct   = ((template as any).overlayWidthPct as number | undefined) ?? 80
-  const usableW      = (overlayPct / 100) * SCRIPT_W
-  const autoMarginLR = Math.round((SCRIPT_W - usableW) / 2)
-  // The style-level marginL/R are used as the baseline; per-event fields override them.
-  // We bake them into the style so they apply even without per-event override.
-  const effectiveTemplate = {
-    ...template,
-    marginL: autoMarginLR,
-    marginR: autoMarginLR,
-  }
-  lines.push(buildStyleLine('Default', effectiveTemplate))
+  lines.push(buildStyleLine('Default', template))
   lines.push('')
   lines.push('[Events]')
   lines.push('Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text')
-  lines.push(...buildPlainEvents(subtitles, effectiveTemplate, rawSubs))
+  lines.push(...buildPlainEvents(subtitles, template, rawSubs))
   return lines.join('\n')
 }
 
@@ -424,25 +402,10 @@ function buildPosTag(template: Template): string {
   const px = (template as any).posX as number | undefined
   const py = (template as any).posY as number | undefined
   if (px == null || py == null) return ''
-
-  // posX/posY are the CENTER of the text box (preview uses transform:translate(-50%,-50%)).
-  // ASS WrapStyle:2 wraps at (PlayResX - MarginL - MarginR).
-  // To preserve wrap width while positioning freely, we:
-  //   1. Keep the style alignment (so wrap uses MarginL/R from overlayWidthPct)
-  //   2. Use \pos with coordinates adjusted for the alignment anchor.
-  //
-  // For alignment 2 (bottom-center, the default), the \pos x is the horizontal
-  // centre of the text → same as posX%. For Y, bottom-anchored text: \pos y is
-  // the BOTTOM edge of the text, so we use posY% directly (libass anchors bottom).
-  // For \an5 we'd need centre; instead we keep the style alignment and just shift
-  // the MarginV to match posY, and use \pos only for horizontal if needed.
-  //
-  // Simplest correct approach: emit \pos(x,y) WITHOUT changing \an.
-  // libass will position the anchor point of the current alignment at (x,y),
-  // and still wrap using MarginL/R. This is what we want.
   const x = Math.round((px / 100) * SCRIPT_W)
   const y = Math.round((py / 100) * SCRIPT_H)
-  return `{\\pos(${x},${y})}`
+  // \an5 = centre-anchor so the subtitle centres on the given point
+  return `{\\an5\\pos(${x},${y})}`
 }
 
 // ─── Plain events ────────────────────────────────────────────────────────────
@@ -470,7 +433,7 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template, rawSubs: Su
   const lines: Line[] = subtitles
     .filter(sub => sub.text.trim().length > 0)
     .map(sub => ({
-      text:     sub.text.trim(),
+      text:     ((sub as any).wrappedText?.trim() ?? sub.text.trim()),
       startSrt: sub.start,
       endSrt:   sub.end,
       startMs:  srtToMs(sub.start),
@@ -509,7 +472,8 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template, rawSubs: Su
     const start      = srtTimeToAss(line.startSrt)
     const end        = srtTimeToAss(line.endSrt)
     const transformed = applyTextTransforms(line.text, style)
-    const text        = transformed.replace(/\{/g, '\\{').replace(/\}/g, '\\}')
+    const text        = transformed
+      .replace(/\{/g, '\\{').replace(/\}/g, '\\}').replace(/\n/g, '\\N')  // JS newline → ASS \N hard line break
     const durationMs  = line.endMs - line.startMs
     const posTag      = buildPosTag(template)
     const durationMs_ = durationMs  // alias for clarity
