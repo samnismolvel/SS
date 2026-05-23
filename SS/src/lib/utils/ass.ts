@@ -426,14 +426,15 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template, rawSubs: Su
   const events: string[] = []
   const syncOffset = template.syncOffset ?? 50
 
-  const needsWordHighlight = (template.activeWordColor !== template.primaryColor)
+  const needsWordHighlight = !!(template as any).activeWordEnabled
+    && (template.activeWordColor !== template.primaryColor)
   const lineBgEnabled      = (template as any).lineBgEnabled as boolean | undefined
 
   // Convert each display subtitle into a Line for timing correction.
   const lines: Line[] = subtitles
     .filter(sub => sub.text.trim().length > 0)
     .map(sub => ({
-      text:     ((sub as any).wrappedText?.trim() ?? sub.text.trim()),
+      text:     sub.text.trim(),
       startSrt: sub.start,
       endSrt:   sub.end,
       startMs:  srtToMs(sub.start),
@@ -472,8 +473,7 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template, rawSubs: Su
     const start      = srtTimeToAss(line.startSrt)
     const end        = srtTimeToAss(line.endSrt)
     const transformed = applyTextTransforms(line.text, style)
-    const text        = transformed
-      .replace(/\{/g, '\\{').replace(/\}/g, '\\}').replace(/\n/g, '\\N')  // JS newline → ASS \N hard line break
+    const text        = transformed.replace(/\{/g, '\\{').replace(/\}/g, '\\}')
     const durationMs  = line.endMs - line.startMs
     const posTag      = buildPosTag(template)
     const durationMs_ = durationMs  // alias for clarity
@@ -587,7 +587,8 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template, rawSubs: Su
         }
       }
 
-      events.push('Dialogue: 1,' + wStart + ',' + wEnd + ',Default,,0,0,0,,' + lineBgPad + alignPosTag + tagsNoAn + lineText)
+      // Layer 1 gets the same animTag as Layer 0 so animations apply to both layers
+      events.push('Dialogue: 1,' + wStart + ',' + wEnd + ',Default,,0,0,0,,' + animTag + lineBgPad + alignPosTag + tagsNoAn + lineText)
     }
   }
 

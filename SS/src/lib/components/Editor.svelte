@@ -79,6 +79,7 @@
 
   // Active word index — which rawSub token is active at currentTime
   let activeWordIndexDerived = $derived((() => {
+    if (!(templateVal as any)?.activeWordEnabled) return -1
     const needsBg = (templateVal as any)?.activeBgEnabled
     if (!needsBg && templateVal?.activeWordColor === templateVal?.primaryColor) return -1
     const raw: any[] = sessionVal?.rawSubs ?? []
@@ -93,8 +94,9 @@
   // Words of the active sub, with indices into rawSubs to check active state
   let activeSubWords = $derived((() => {
     const needsHighlight =
-      (templateVal?.activeWordColor && templateVal.activeWordColor !== templateVal.primaryColor)
-      || (templateVal as any).activeBgEnabled
+      (templateVal as any)?.activeWordEnabled &&
+      ((templateVal?.activeWordColor && templateVal.activeWordColor !== templateVal.primaryColor)
+       || (templateVal as any).activeBgEnabled)
     if (!activeSub || !sessionVal?.rawSubs || !needsHighlight) return null
     // Find which rawSubs fall within this display sub's time range
     const subStartMs = srtToSeconds(activeSub.start) * 1000
@@ -105,7 +107,7 @@
       return sMs >= subStartMs - 50 && sMs <= subEndMs + 50
     })
     // Build display words from previewText aligned to tokens
-    const words = previewText.split(' ')
+    const words = previewText.split(/\s+/).filter(w => w.length > 0)
     return words.map((w: string, i: number) => ({
       word: w,
       isActive: tokens[i] ? (() => {
@@ -242,61 +244,6 @@
     }
     input.click()
   }
-  // ── computeWrappedText ────────────────────────────────────────────────────
-  // For each subtitle, measures the text width using canvas.measureText() with
-  // the actual preview font, then inserts \n at word boundaries to match what
-  // the user sees in the preview sub-box. The result becomes wrappedText on
-  // each Subtitle, which ass.ts converts to ASS \N hard line breaks.
-  function computeWrappedText(
-    subs: typeof sessionVal.subtitles,
-    tmpl: typeof templateVal,
-    overlayPct: number,
-    frameW: number,
-    frameH: number,
-  ): typeof sessionVal.subtitles {
-    // Set up a hidden canvas with the preview font metrics
-    const cvs = document.createElement('canvas')
-    const ctx = cvs.getContext('2d')!
-    const previewFontPx = (tmpl?.fontSize ?? 24) * (frameH / 288)
-    const weight = tmpl?.bold ? 'bold' : 'normal'
-    const style  = tmpl?.italic ? 'italic' : 'normal'
-    ctx.font = `${style} ${weight} ${previewFontPx}px "${tmpl?.fontName ?? 'Arial'}"`
-
-    // Sub-box pixel width in preview coords
-    const subBoxPx = (overlayPct / 100) * frameW
-    const spaceW   = ctx.measureText(' ').width
-
-    return subs.map(sub => {
-      const words = sub.text.trim().split(/\s+/)
-      if (words.length <= 1) return { ...sub, wrappedText: sub.text.trim() }
-
-      const resultLines: string[] = []
-      let current = ''
-      let currentW = 0
-
-      for (const word of words) {
-        const wordW = ctx.measureText(word).width
-        if (current === '') {
-          current  = word
-          currentW = wordW
-        } else {
-          const withSpace = currentW + spaceW + wordW
-          if (withSpace <= subBoxPx) {
-            current  += ' ' + word
-            currentW  = withSpace
-          } else {
-            resultLines.push(current)
-            current  = word
-            currentW = wordW
-          }
-        }
-      }
-      if (current) resultLines.push(current)
-
-      return { ...sub, wrappedText: resultLines.join('\n') } as any
-    })
-  }
-
   async function handleBurn() {
     if (!sessionVal || !templateVal || isBurning) return
     burnError = null
@@ -382,16 +329,7 @@
         return
       } else {
         // ── ASS path (default) ───────────────────────────────────────────────
-        // Compute wrapped text just before burn so it uses the current template.
-        const fr  = getFrameRect()
-        const subs = computeWrappedText(
-          sessionVal.subtitles,
-          templateVal,
-          (templateVal as any)?.overlayWidthPct ?? 80,
-          fr?.width  ?? 384,
-          fr?.height ?? 288,
-        )
-        const assContent = buildAss(subs, templateVal, sessionVal.rawSubs ?? [])
+        const assContent = buildAss(sessionVal.subtitles, templateVal, sessionVal.rawSubs ?? [])
         onburn({ videoPath: sessionVal.videoPath, outputPath: sessionVal.outputPath, assContent })
         return // onburn handles progress events; don't set isBurning=false here
       }
@@ -1201,14 +1139,25 @@
                   "> VOICE</span>
                 </div>
 
-                <!-- Active word text color -->
-                <div class="s-lbl">Active Word Color</div>
+                <!-- Active Word toggle + color -->
+                <label class="toggle-row">
+                  <span class="toggle-lbl">Active Word</span>
+                  <button class="toggle-switch"
+                    class:on={(templateVal as any).activeWordEnabled}
+                    onclick={()=>updateActiveTemplate({activeWordEnabled:!(templateVal as any).activeWordEnabled} as any)}>
+                    <span class="toggle-thumb"></span>
+                  </button>
+                </label>
+
+                {#if (templateVal as any).activeWordEnabled}
+                <div class="s-lbl">Color</div>
                 <div class="color-row">
                   <input type="color"
                     value={(templateVal as any).activeWordColor ?? templateVal.primaryColor}
                     oninput={(e)=>updateActiveTemplate({activeWordColor:e.currentTarget.value} as any)} />
                   <span class="color-value">{(templateVal as any).activeWordColor ?? templateVal.primaryColor} / 100%</span>
                 </div>
+                {/if}
 
               </div>
             {/if}

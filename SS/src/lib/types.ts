@@ -35,6 +35,8 @@ export interface Template {
   wordSpacing: number      // extra word spacing (em units)
   textTransform: 'none' | 'uppercase' | 'lowercase'
   hidePunctuation: boolean
+
+  activeWordEnabled:boolean
   // Active word highlight (color only — no background)
   activeWordColor: string
   // Line background — opaque box behind each subtitle line
@@ -50,8 +52,13 @@ export interface Template {
   posY: number | null
 
   // Active word background — highlights only the currently-spoken word
-  activeBgEnabled: boolean
-  activeBgColor: string
+  activeWordBgEnabled: boolean
+  activeWordBgColor: string
+
+  activeWordBgPaddingX: number
+  activeWordBgPaddingY: number
+  activeWordBgRounded: boolean
+
 }
 
 // ─── Enums / Literals ────────────────────────────────────────────────────────
