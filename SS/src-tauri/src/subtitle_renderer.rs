@@ -23,6 +23,10 @@ pub struct SubtitleSegment {
     pub start: String, // SRT format: "00:00:01,000"
     pub end: String,
     pub text: String,
+    // Pre-computed line breaks from the frontend (canvas.measureText).
+    // When present, used directly instead of the internal word_wrap fallback.
+    #[serde(default, rename = "wrappedText")]
+    pub wrapped_text: Option<String>,
 }
 
 /// Subset of the Template fields relevant to canvas rendering.
@@ -249,22 +253,40 @@ pub fn render_segments(
         let start_ms = srt_to_ms(&seg.start);
         let end_ms   = srt_to_ms(&seg.end);
 
-        // Word-wrap: split text into lines fitting max_text_width_px
         let line_height = scaled.height() + scaled.line_gap();
-        let cw = |c: char| -> f32 { scaled.h_advance(scaled.glyph_id(c)) };
-        let wrapped_lines = word_wrap(&text, &cw, max_text_width_px);
+        let cw = |c| scaled.h_advance(scaled.glyph_id(c));
+
+        // Use pre-computed line breaks from the frontend when available.
+        // The frontend splits on \n (from wrappedText); we measure each line.
+        // Fall back to internal word_wrap when wrappedText is absent.
+        let wrapped_lines: Vec<(String, f32)> = match &seg.wrapped_text {
+            Some(wt) if !wt.trim().is_empty() => {
+                wt.lines()
+                  .map(|line| {
+                      let line = line.trim().to_string();
+                      let w: f32 = line.chars().map(|c| cw(c)).sum();
+                      (line, w)
+                  })
+                  .filter(|(line, _)| !line.is_empty())
+                  .collect()
+            }
+            _ => word_wrap(&text, &cw, max_text_width_px),
+        };
+        // Guard: ensure at least one line
+        let wrapped_lines = if wrapped_lines.is_empty() {
+            vec![(text.clone(), text.chars().map(|c| cw(c)).sum())]
+        } else {
+            wrapped_lines
+        };
         let num_lines = wrapped_lines.len() as f32;
-        // text_w = width of the widest line (used for positioning the box)
         let text_w: f32 = wrapped_lines.iter().map(|(_, w)| *w).fold(0.0f32, f32::max);
         let text_h = line_height * num_lines;
 
-        // box_w uses max_text_width_px as the container width for alignment
-        let container_w = text_w.min(max_text_width_px);
         let (box_w, box_h) = if tmpl.line_bg_enabled || tmpl.active_bg_enabled {
-            (container_w + pad_x * 2.0, text_h + pad_y * 2.0)
+            (text_w + pad_x * 2.0, text_h + pad_y * 2.0)
         } else {
             let o = tmpl.outline * scale_factor;
-            (container_w + o * 2.0, text_h + o * 2.0)
+            (text_w + o * 2.0, text_h + o * 2.0)
         };
 
         // ── Position ─────────────────────────────────────────────────────────
@@ -415,39 +437,42 @@ pub fn render_segments(
         let mut pixmap = Pixmap::new(video_w, video_h)
             .ok_or("Failed to create pixmap")?;
 
+        if tmpl.line_bg_enabled {
+            let bg_hex = tmpl.line_bg_color.as_deref().unwrap_or("#000000");
+            let (br, bg_c, bb) = parse_color(bg_hex);
+            let mut paint = Paint::default();
+            paint.set_color_rgba8(br, bg_c, bb, 255);
+            paint.anti_alias = true;
+            for (li, (_line_text, line_w)) in wrapped_lines.iter().enumerate() {
+                let ly = box_y + li as f32 * line_height;
+                let lx = match h_anchor {
+                    0 => text_x - pad_x,
+                    2 => text_x + text_w - line_w - pad_x,
+                    _ => text_x + (text_w - line_w) / 2.0 - pad_x,
+                };
+                let lbox_w = line_w + pad_x * 2.0;
+                let lbox_h = line_height + pad_y * 2.0;
+                let radius = (0.4 * px_size).min(lbox_h / 2.0).min(lbox_w / 2.0);
+                if let Some(path) = rounded_rect_path(lx, ly, lbox_w, lbox_h, radius) {
+                    pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+                }
+            }
+        }
+
         let (tr, tg, tb) = parse_color(&tmpl.primary_color);
         let outline_px = tmpl.outline * scale_factor;
         let (or, og, ob) = parse_color(&tmpl.outline_color);
-
         for (li, (line_text, line_w)) in wrapped_lines.iter().enumerate() {
-            let ly_box  = box_y  + li as f32 * line_height;
-            let ly_text = text_y + li as f32 * line_height;
-
-            // Horizontal offset of this line within the container
-            let line_offset = match h_anchor {
-                0 => 0.0,                              // left
-                2 => container_w - line_w,             // right
-                _ => (container_w - line_w) / 2.0,    // center
+            let ly = text_y + li as f32 * line_height;
+            let lx = match h_anchor {
+                0 => text_x,
+                2 => text_x + text_w - line_w,
+                _ => text_x + (text_w - line_w) / 2.0,
             };
-            let lx_text = text_x + line_offset;
-
-            if tmpl.line_bg_enabled {
-                let bg_hex = tmpl.line_bg_color.as_deref().unwrap_or("#000000");
-                let (br, bg_c, bb) = parse_color(bg_hex);
-                let mut paint = Paint::default();
-                paint.set_color_rgba8(br, bg_c, bb, 255);
-                paint.anti_alias = true;
-                let lbox_x = lx_text - pad_x;
-                let lbox_w = line_w + pad_x * 2.0;
-                let lbox_h = line_height + pad_y * 2.0;
-                let radius  = (0.4 * px_size).min(lbox_h / 2.0).min(lbox_w / 2.0);
-                if let Some(path) = rounded_rect_path(lbox_x, ly_box, lbox_w, lbox_h, radius) {
-                    pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
-                }
-            } else if tmpl.outline > 0.0 {
-                draw_text_stroked(&mut pixmap, &font, scale, line_text, lx_text, ly_text, or, og, ob, outline_px);
+            if tmpl.outline > 0.0 && !tmpl.line_bg_enabled {
+                draw_text_stroked(&mut pixmap, &font, scale, line_text, lx, ly, or, og, ob, outline_px);
             }
-            draw_text_filled(&mut pixmap, &font, scale, line_text, lx_text, ly_text, tr, tg, tb);
+            draw_text_filled(&mut pixmap, &font, scale, line_text, lx, ly, tr, tg, tb);
         }
 
         let fname = format!("sub_{:04}.png", seg.index);
