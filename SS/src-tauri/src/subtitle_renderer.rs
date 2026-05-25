@@ -424,13 +424,15 @@ pub fn render_segments(
                 frames.push(RenderedFrame { path: fpath, start_ms: word_start_ms, end_ms: word_end_ms });
             }
 
-            // Base frame: full segment duration, line_bg but no active-word rect
+            // Base frame: full segment duration, line_bg + text, no active-word rect.
+            // start_ms - 1 ensures this sorts before all word frames (same start_ms)
+            // so the base overlay is applied first and word frames paint on top of it.
             let mut base = Pixmap::new(video_w, video_h).ok_or("Failed to create pixmap")?;
             paint_line_bg(&mut base);
             paint_text(&mut base);
             let base_path = out_dir.join(format!("sub_{:04}_base.png", seg.index));
             base.save_png(&base_path).map_err(|e| format!("PNG save failed: {e}"))?;
-            frames.push(RenderedFrame { path: base_path, start_ms, end_ms });
+            frames.push(RenderedFrame { path: base_path, start_ms: start_ms - 1, end_ms });
 
             continue;
         }
