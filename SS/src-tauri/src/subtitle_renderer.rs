@@ -302,28 +302,38 @@ pub fn render_segments(
         // text remains visible in gaps between word windows. The base frame
         // also includes the line background when enabled.
         if tmpl.active_bg_enabled {
+            // Single-composite mode: one PNG per word window containing ALL layers.
+            // No separate base frame during active windows — everything is in one pixmap.
+            // This eliminates animation desync between the base layer and the active
+            // word layer that occurred when two separate overlay streams animated
+            // independently (pop, slide-up, etc. would offset the two layers).
+            //
+            // Per-word PNG contents (painted in order):
+            //   1. line_bg rect per wrapped line          (if line_bg_enabled)
+            //   2. active-word rect for word wi only
+            //   3. full text — non-active words in primary_color,
+            //                  active word in active_word_color (or primary_color)
+            //
+            // A plain base PNG is only emitted for gaps between word windows so the
+            // segment text remains visible when no word is currently active.
+
             let active_bg_hex = tmpl.active_bg_color.as_deref().unwrap_or("#FFCC00");
             let (abr, abg, abb) = parse_color(active_bg_hex);
+            let (tr, tg, tb)    = parse_color(&tmpl.primary_color);
+            let (or2, og2, ob2) = parse_color(&tmpl.outline_color);
+            let outline_px      = tmpl.outline * scale_factor;
+            let space_w         = scaled.h_advance(scaled.glyph_id(' '));
 
-            let (tr, tg, tb) = parse_color(&tmpl.primary_color);
-            let (or, og, ob) = parse_color(&tmpl.outline_color);
-            let outline_px   = tmpl.outline * scale_factor;
-            let space_w      = scaled.h_advance(scaled.glyph_id(' '));
-
-            // Build word_layout: for each word in the flat word list, record
-            // which wrapped line it sits on, its left X, and its pixel width.
-            // This correctly handles multi-line segments — words on line N
-            // have their X offset measured only within that line.
-            // Structure: (line_idx, line_top_y, word_left_x, word_px_w)
+            // Build word_layout: (line_idx, line_top_y, word_left_x, word_px_w)
             let mut word_layout: Vec<(usize, f32, f32, f32)> = Vec::new();
             for (li, (line_text, line_w)) in wrapped_lines.iter().enumerate() {
                 let line_top_y = text_y + li as f32 * line_height;
-                let line_left_x = match h_anchor {
-                    0 => text_x,                             // left-aligned
-                    2 => text_x + text_w - line_w,          // right-aligned
-                    _ => text_x + (text_w - line_w) / 2.0,  // center
+                let lx = match h_anchor {
+                    0 => text_x,
+                    2 => text_x + text_w - line_w,
+                    _ => text_x + (text_w - line_w) / 2.0,
                 };
-                let mut cur_x = line_left_x;
+                let mut cur_x = lx;
                 for lword in line_text.split_whitespace() {
                     let ww: f32 = lword.chars().map(|c| scaled.h_advance(scaled.glyph_id(c))).sum();
                     word_layout.push((li, line_top_y, cur_x, ww));
@@ -331,31 +341,33 @@ pub fn render_segments(
                 }
             }
 
-            // Helper: paint line background — one rounded rect per wrapped line
-            let paint_line_bg = |pixmap: &mut Pixmap| {
+            // Helper: draw line_bg rects (one per wrapped line)
+            let draw_line_bg = |pixmap: &mut Pixmap| {
                 if !tmpl.line_bg_enabled { return; }
                 let (br, bg_c, bb) = parse_color(tmpl.line_bg_color.as_deref().unwrap_or("#000000"));
                 let mut p = Paint::default();
                 p.set_color_rgba8(br, bg_c, bb, 255);
                 p.anti_alias = true;
                 for (li, (_, lw)) in wrapped_lines.iter().enumerate() {
-                    let ly      = box_y + li as f32 * line_height;
-                    let lh      = line_height + pad_y * 2.0;
-                    let lx      = match h_anchor {
+                    let ly     = box_y + li as f32 * line_height;
+                    let lh     = line_height + pad_y * 2.0;
+                    let lx     = match h_anchor {
                         0 => text_x - pad_x,
                         2 => text_x + text_w - lw - pad_x,
                         _ => text_x + (text_w - lw) / 2.0 - pad_x,
                     };
-                    let lw_box  = lw + pad_x * 2.0;
-                    let radius  = (0.4 * px_size).min(lh / 2.0).min(lw_box / 2.0);
+                    let lw_box = lw + pad_x * 2.0;
+                    let radius = (0.4 * px_size).min(lh / 2.0).min(lw_box / 2.0);
                     if let Some(path) = rounded_rect_path(lx, ly, lw_box, lh, radius) {
                         pixmap.fill_path(&path, &p, FillRule::Winding, Transform::identity(), None);
                     }
                 }
             };
 
-            // Helper: paint all text lines (outline + fill)
-            let paint_text = |pixmap: &mut Pixmap| {
+            // Helper: draw all text lines with per-word color control.
+            // active_wi: Some(wi) = highlight that word; None = all in primary color.
+            let draw_text_lines = |pixmap: &mut Pixmap, active_wi: Option<usize>| {
+                let mut global_wi = 0usize;
                 for (li, (line_text, line_w)) in wrapped_lines.iter().enumerate() {
                     let ly = text_y + li as f32 * line_height;
                     let lx = match h_anchor {
@@ -363,21 +375,34 @@ pub fn render_segments(
                         2 => text_x + text_w - line_w,
                         _ => text_x + (text_w - line_w) / 2.0,
                     };
-                    if tmpl.outline > 0.0 {
-                        draw_text_stroked(pixmap, &font, scale, line_text, lx, ly, or, og, ob, outline_px);
+                    let mut cx = lx;
+                    for lword in line_text.split_whitespace() {
+                        let ww: f32 = lword.chars().map(|c| scaled.h_advance(scaled.glyph_id(c))).sum();
+                        let is_active = active_wi == Some(global_wi);
+                        // Color: active word uses active_word_color if set, else primary
+                        let (wr, wg, wb) = if is_active {
+                            parse_color(tmpl.active_word_color.as_deref().unwrap_or(&tmpl.primary_color))
+                        } else {
+                            (tr, tg, tb)
+                        };
+                        if tmpl.outline > 0.0 {
+                            draw_text_stroked(pixmap, &font, scale, lword, cx, ly, or2, og2, ob2, outline_px);
+                        }
+                        draw_text_filled(pixmap, &font, scale, lword, cx, ly, wr, wg, wb);
+                        cx += ww + space_w;
+                        global_wi += 1;
                     }
-                    draw_text_filled(pixmap, &font, scale, line_text, lx, ly, tr, tg, tb);
                 }
             };
 
-            // Collect word tokens for this segment
+            // Collect tokens for this segment
             let seg_tokens: Vec<&WordToken> = word_tokens.iter()
-                .filter(|t| {
-                    let t_start = srt_to_ms(&t.start);
-                    t_start >= start_ms - 100 && t_start <= end_ms + 100
-                })
+                .filter(|t| srt_to_ms(&t.start) >= start_ms - 100
+                         && srt_to_ms(&t.start) <= end_ms + 100)
                 .collect();
 
+            // Emit one composite PNG per word window
+            let mut prev_word_end = start_ms;
             for (wi, layout) in word_layout.iter().enumerate() {
                 let token = match seg_tokens.get(wi) {
                     Some(t) => t,
@@ -390,22 +415,30 @@ pub fn render_segments(
                 let word_end_ms = next_start.min(end_ms);
                 if word_start_ms >= word_end_ms { continue; }
 
-                let (_li, line_top_y, word_left_x, word_px_w) = *layout;
+                // If there is a gap before this word, emit a plain base frame for it
+                if word_start_ms > prev_word_end {
+                    let mut gap_px = Pixmap::new(video_w, video_h).ok_or("Failed to create pixmap")?;
+                    draw_line_bg(&mut gap_px);
+                    draw_text_lines(&mut gap_px, None);
+                    let gap_path = out_dir.join(format!("sub_{:04}_{:04}_gap.png", seg.index, wi));
+                    gap_px.save_png(&gap_path).map_err(|e| format!("PNG save failed: {e}"))?;
+                    frames.push(RenderedFrame { path: gap_path, start_ms: prev_word_end, end_ms: word_start_ms });
+                }
+                prev_word_end = word_end_ms;
 
-                // Active-word box: one line height, only as wide as this word
+                let (_li, line_top_y, word_left_x, word_px_w) = *layout;
                 let wbox_x  = word_left_x - pad_x;
                 let wbox_y  = line_top_y  - pad_y;
                 let wbox_w  = word_px_w   + pad_x * 2.0;
                 let wbox_h  = line_height  + pad_y * 2.0;
                 let wradius = (0.4 * px_size).min(wbox_h / 2.0).min(wbox_w / 2.0);
 
-                let mut pixmap = Pixmap::new(video_w, video_h)
-                    .ok_or("Failed to create pixmap")?;
+                let mut pixmap = Pixmap::new(video_w, video_h).ok_or("Failed to create pixmap")?;
 
-                // Layer 1: line background (full block, behind everything)
-                paint_line_bg(&mut pixmap);
+                // Layer 1: line background
+                draw_line_bg(&mut pixmap);
 
-                // Layer 2: active-word background (only this word's row)
+                // Layer 2: active-word rect
                 {
                     let mut p = Paint::default();
                     p.set_color_rgba8(abr, abg, abb, 255);
@@ -415,24 +448,23 @@ pub fn render_segments(
                     }
                 }
 
-                // Layer 3: all text lines on top
-                paint_text(&mut pixmap);
+                // Layer 3: all text, active word highlighted
+                draw_text_lines(&mut pixmap, Some(wi));
 
-                let fname = format!("sub_{:04}_{:04}.png", seg.index, wi);
-                let fpath = out_dir.join(&fname);
+                let fpath = out_dir.join(format!("sub_{:04}_{:04}.png", seg.index, wi));
                 pixmap.save_png(&fpath).map_err(|e| format!("PNG save failed: {e}"))?;
                 frames.push(RenderedFrame { path: fpath, start_ms: word_start_ms, end_ms: word_end_ms });
             }
 
-            // Base frame: full segment duration, line_bg + text, no active-word rect.
-            // start_ms - 1 ensures this sorts before all word frames (same start_ms)
-            // so the base overlay is applied first and word frames paint on top of it.
-            let mut base = Pixmap::new(video_w, video_h).ok_or("Failed to create pixmap")?;
-            paint_line_bg(&mut base);
-            paint_text(&mut base);
-            let base_path = out_dir.join(format!("sub_{:04}_base.png", seg.index));
-            base.save_png(&base_path).map_err(|e| format!("PNG save failed: {e}"))?;
-            frames.push(RenderedFrame { path: base_path, start_ms: start_ms - 1, end_ms });
+            // Trailing gap: after last word window until segment end
+            if prev_word_end < end_ms {
+                let mut tail_px = Pixmap::new(video_w, video_h).ok_or("Failed to create pixmap")?;
+                draw_line_bg(&mut tail_px);
+                draw_text_lines(&mut tail_px, None);
+                let tail_path = out_dir.join(format!("sub_{:04}_tail.png", seg.index));
+                tail_px.save_png(&tail_path).map_err(|e| format!("PNG save failed: {e}"))?;
+                frames.push(RenderedFrame { path: tail_path, start_ms: prev_word_end, end_ms });
+            }
 
             continue;
         }
