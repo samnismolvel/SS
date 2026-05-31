@@ -526,14 +526,10 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template, rawSubs: Su
     // Layer 1: per-word-window events with inline \c highlight.
     //
     // Each Layer 1 event covers only the word's time window so words appear
-    // exclusively one at a time. The animTag on Layer 1 is adapted so the
-    // animation appears to have started at segStart, not wordStart:
-    //   remaining_fade = max(0, fadeInMs - (wordStartMs - segStartMs))
-    // For words starting after the fade completes, remaining=0 → no fade on L1,
-    // but L0 is already fully opaque underneath so the composite looks correct.
-    //
-    // This avoids \t() (broken for zero-duration in libass) and avoids the
-    // desync of two independent animation timelines.
+    // exclusively one at a time. Layer 1 carries no animTag — Layer 0 handles
+    // the segment-level animation (fade, pop, slide-up). Layer 1 only switches
+    // the active word color and appears/disappears instantly, which is correct:
+    // the segment has already entered; only the color highlight moves.
 
     const baseColor   = hexToAss(template.primaryColor)
     const activeColor = hexToAss(template.activeWordColor ?? template.primaryColor)
@@ -543,12 +539,6 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template, rawSubs: Su
       r.startMs >= segStartMs - 50 && r.startMs <= segEndMs + 50
     )
     const words = text.split(/\s+/).filter((w: string) => w.length > 0)
-
-    // Extract fade-in duration from animTag if present (e.g. \fad(300,0) → 300)
-    const fadeInMs = (() => {
-      const m = animTag.match(/\\fad\((\d+)/)
-      return m ? parseInt(m[1]) : 0
-    })()
 
     // Layer 0: base line with animation
     events.push('Dialogue: 0,' + start + ',' + end + ',Default,,0,0,0,,' + animTag + lineBgPad + tags + text)
@@ -566,16 +556,9 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template, rawSubs: Su
       const wStart = msToAssTime(wordStartMs)
       const wEnd   = msToAssTime(wordEndMs)
 
-      // Adapt the animation: how much of the fade-in remains at wordStart?
-      const elapsed   = wordStartMs - segStartMs
-      const remaining = Math.max(0, fadeInMs - elapsed)
-      // Rebuild the animTag with remaining fade (other animations like pop/slide
-      // are relative to event start — for simplicity keep them as-is for L1)
-      const wordAnimTag = remaining > 0
-        ? animTag.replace(/\\fad\(\d+/, '\\fad(' + remaining)
-        : animTag.replace(/\\fad\(\d+,\d+\)/, '')
-
-      // Build inline color text: active word in activeColor, rest in baseColor
+      // Layer 1 carries NO animTag — Layer 0 owns the segment animation.
+      // Layer 1 only switches the active word color; it appears/disappears
+      // instantly within its time window without its own entrance animation.
       let lineText = ''
       for (let wj = 0; wj < words.length; wj++) {
         if (wj > 0) lineText += ' '
@@ -586,7 +569,7 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template, rawSubs: Su
         }
       }
 
-      events.push('Dialogue: 1,' + wStart + ',' + wEnd + ',Default,,0,0,0,,' + wordAnimTag + lineBgPad + tags + lineText)
+      events.push('Dialogue: 1,' + wStart + ',' + wEnd + ',Default,,0,0,0,,' + lineBgPad + tags + lineText)
     }
   }
 
