@@ -426,8 +426,7 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template, rawSubs: Su
   const events: string[] = []
   const syncOffset = template.syncOffset ?? 50
 
-  const needsWordHighlight = !!(template as any).activeWordEnabled
-    && (template.activeWordColor !== template.primaryColor)
+  const needsWordHighlight = (template.activeWordColor !== template.primaryColor)
   const lineBgEnabled      = (template as any).lineBgEnabled as boolean | undefined
 
   // Convert each display subtitle into a Line for timing correction.
@@ -522,74 +521,40 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template, rawSubs: Su
       continue
     }
 
-    // ── Active word color highlight ───────────────────────────────────────────
-    // Layer 0: full line, base color, anchored with \pos.
-    // Layer 1: per-word-window events with identical \pos, full line text,
-    //   non-active words invisible (\alpha&HFF&), active word in activeWordColor.
-    //
-    // Both layers use the same \pos so libass overlays them without collision.
+    // ── Active word color highlight via \t() color switches in a single event ──
+    // All words live in one Dialogue event so the animation tag applies once,
+    // to the whole line — no desync between base text and active word.
+    // \t(t0,t0,\c<active>) is an instantaneous color switch at centisecond t0
+    // relative to the event start; \t(t1,t1,\c<base>) reverts it at t1.
 
-    const al  = style.alignment ?? template.alignment
-    const mV  = style.marginV   ?? template.marginV
-    const mL  = style.marginL   ?? template.marginL
-    const mR  = style.marginR   ?? template.marginR
-    const apX = [1,4,7].includes(al) ? mL
-              : [3,6,9].includes(al) ? SCRIPT_W - mR
-              : SCRIPT_W / 2
-    const apY = al <= 3 ? SCRIPT_H - mV
-              : al <= 6 ? SCRIPT_H / 2
-              : mV
-    // String concatenation — template literals drop \a, \p backslashes.
-    const alignPosTag = posTag !== ''
-      ? posTag
-      : '{\\an' + al + '\\pos(' + Math.round(apX) + ',' + Math.round(apY) + ')}'
-    // Strip \an from inlineTags — alignPosTag already sets it.
-    const tagsNoAn = inlineTags.replace(/\{([^}]*)\\an\d([^}]*)\}/g, (_, pre, post) => {
-      const inner = (pre + post).trim(); return inner ? '{' + inner + '}' : ''
-    })
-
-    // Layer 0: base line
-    events.push('Dialogue: 0,' + start + ',' + end + ',Default,,0,0,0,,' + animTag + lineBgPad + alignPosTag + tagsNoAn + text)
-
-    const segStartMs = line.startMs
-    const segEndMs   = line.endMs
-    const wordTokens = correctedRaw.filter(r =>
+    const baseColor   = hexToAss(template.primaryColor)
+    const activeColor = hexToAss(template.activeWordColor ?? template.primaryColor)
+    const segStartMs  = line.startMs
+    const segEndMs    = line.endMs
+    const wordTokens  = correctedRaw.filter(r =>
       r.startMs >= segStartMs - 50 && r.startMs <= segEndMs + 50
     )
-    const words       = text.split(' ')
-    const activeColor = hexToAss(template.activeWordColor ?? template.primaryColor)
-    const INVIS       = '{\\alpha&HFF&\\3a&HFF&}'
+    const words = text.split(/\s+/).filter((w: string) => w.length > 0)
 
+    let taggedText = ''
     for (let wi = 0; wi < words.length; wi++) {
+      if (wi > 0) taggedText += ' '
       const token = wordTokens[wi]
-      if (!token) continue
-
+      if (!token) {
+        taggedText += '{\\c' + baseColor + '}' + words[wi]
+        continue
+      }
       const wordStartMs = Math.max(token.startMs, segStartMs)
       const nextStart   = wordTokens[wi + 1]?.startMs ?? segEndMs
       const wordEndMs   = Math.min(nextStart, segEndMs)
-      if (wordStartMs >= wordEndMs) continue
-
-      const wStart = msToAssTime(wordStartMs)
-      const wEnd   = msToAssTime(wordEndMs)
-
-      // Full line with non-active words invisible, active word in activeWordColor.
-      let lineText = ''
-      let inInvis  = false
-      for (let wj = 0; wj < words.length; wj++) {
-        if (wj > 0) lineText += ' '
-        if (wj === wi) {
-          lineText += '{\\c' + activeColor + '\\alpha&H00&\\1a&H00&\\3a&H00&}' + words[wj]
-          inInvis = false
-          if (wj < words.length - 1) { lineText += '{\\alpha&HFF&\\3a&HFF&}'; inInvis = true }
-        } else {
-          if (!inInvis) { lineText += INVIS; inInvis = true }
-          lineText += words[wj]
-        }
-      }
-
-      // Layer 1 gets the same animTag as Layer 0 so animations apply to both layers
-      events.push('Dialogue: 1,' + wStart + ',' + wEnd + ',Default,,0,0,0,,' + animTag + lineBgPad + alignPosTag + tagsNoAn + lineText)
+      const t0 = Math.max(0, Math.round((wordStartMs - segStartMs) / 10))
+      const t1 = Math.max(t0 + 1, Math.round((wordEndMs - segStartMs) / 10))
+      taggedText +=
+        '{\\t(' + t0 + ',' + t0 + ',\\c' + activeColor + ')'
+        + '\\t(' + t1 + ',' + t1 + ',\\c' + baseColor + ')}' + words[wi]
     }
+
+    events.push('Dialogue: 0,' + start + ',' + end + ',Default,,0,0,0,,' + animTag + lineBgPad + tags + taggedText)
   }
 
   return events
