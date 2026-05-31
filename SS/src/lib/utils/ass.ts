@@ -521,11 +521,19 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template, rawSubs: Su
       continue
     }
 
-    // ── Active word color highlight via \t() color switches in a single event ──
-    // All words live in one Dialogue event so the animation tag applies once,
-    // to the whole line — no desync between base text and active word.
-    // \t(t0,t0,\c<active>) is an instantaneous color switch at centisecond t0
-    // relative to the event start; \t(t1,t1,\c<base>) reverts it at t1.
+    // ── Active word color highlight ──────────────────────────────────────────────
+    // Layer 0: full segment, base color, with animTag. Always visible.
+    // Layer 1: per-word-window events with inline \c highlight.
+    //
+    // Each Layer 1 event covers only the word's time window so words appear
+    // exclusively one at a time. The animTag on Layer 1 is adapted so the
+    // animation appears to have started at segStart, not wordStart:
+    //   remaining_fade = max(0, fadeInMs - (wordStartMs - segStartMs))
+    // For words starting after the fade completes, remaining=0 → no fade on L1,
+    // but L0 is already fully opaque underneath so the composite looks correct.
+    //
+    // This avoids \t() (broken for zero-duration in libass) and avoids the
+    // desync of two independent animation timelines.
 
     const baseColor   = hexToAss(template.primaryColor)
     const activeColor = hexToAss(template.activeWordColor ?? template.primaryColor)
@@ -536,25 +544,50 @@ function buildPlainEvents(subtitles: Subtitle[], template: Template, rawSubs: Su
     )
     const words = text.split(/\s+/).filter((w: string) => w.length > 0)
 
-    let taggedText = ''
+    // Extract fade-in duration from animTag if present (e.g. \fad(300,0) → 300)
+    const fadeInMs = (() => {
+      const m = animTag.match(/\\fad\((\d+)/)
+      return m ? parseInt(m[1]) : 0
+    })()
+
+    // Layer 0: base line with animation
+    events.push('Dialogue: 0,' + start + ',' + end + ',Default,,0,0,0,,' + animTag + lineBgPad + tags + text)
+
+    // Layer 1: one event per word window
     for (let wi = 0; wi < words.length; wi++) {
-      if (wi > 0) taggedText += ' '
       const token = wordTokens[wi]
-      if (!token) {
-        taggedText += '{\\c' + baseColor + '}' + words[wi]
-        continue
-      }
+      if (!token) continue
+
       const wordStartMs = Math.max(token.startMs, segStartMs)
       const nextStart   = wordTokens[wi + 1]?.startMs ?? segEndMs
       const wordEndMs   = Math.min(nextStart, segEndMs)
-      const t0 = Math.max(0, Math.round((wordStartMs - segStartMs) / 10))
-      const t1 = Math.max(t0 + 1, Math.round((wordEndMs - segStartMs) / 10))
-      taggedText +=
-        '{\\t(' + t0 + ',' + t0 + ',\\c' + activeColor + ')'
-        + '\\t(' + t1 + ',' + t1 + ',\\c' + baseColor + ')}' + words[wi]
-    }
+      if (wordStartMs >= wordEndMs) continue
 
-    events.push('Dialogue: 0,' + start + ',' + end + ',Default,,0,0,0,,' + animTag + lineBgPad + tags + taggedText)
+      const wStart = msToAssTime(wordStartMs)
+      const wEnd   = msToAssTime(wordEndMs)
+
+      // Adapt the animation: how much of the fade-in remains at wordStart?
+      const elapsed   = wordStartMs - segStartMs
+      const remaining = Math.max(0, fadeInMs - elapsed)
+      // Rebuild the animTag with remaining fade (other animations like pop/slide
+      // are relative to event start — for simplicity keep them as-is for L1)
+      const wordAnimTag = remaining > 0
+        ? animTag.replace(/\\fad\(\d+/, '\\fad(' + remaining)
+        : animTag.replace(/\\fad\(\d+,\d+\)/, '')
+
+      // Build inline color text: active word in activeColor, rest in baseColor
+      let lineText = ''
+      for (let wj = 0; wj < words.length; wj++) {
+        if (wj > 0) lineText += ' '
+        if (wj === wi) {
+          lineText += '{\\c' + activeColor + '}' + words[wj] + '{\\c' + baseColor + '}'
+        } else {
+          lineText += words[wj]
+        }
+      }
+
+      events.push('Dialogue: 1,' + wStart + ',' + wEnd + ',Default,,0,0,0,,' + wordAnimTag + lineBgPad + tags + lineText)
+    }
   }
 
   return events
