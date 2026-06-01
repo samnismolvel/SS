@@ -1,3 +1,21 @@
+// ─── Animation ───────────────────────────────────────────────────────────────
+
+export type EasingType            = 'linear' | 'easeIn' | 'easeOut' | 'easeInOut'
+export type SegmentAnimationType  = 'none' | 'fade' | 'slideUp' | 'pop'
+export type WordRevealType        = 'none' | 'fade' | 'pop' | 'slideUp'
+
+export interface SegmentAnimation {
+  type:       SegmentAnimationType
+  durationMs: number
+  easing:     EasingType
+}
+
+export interface WordRevealAnimation {
+  type:       WordRevealType
+  durationMs: number
+  easing:     EasingType
+}
+
 // ─── Template ────────────────────────────────────────────────────────────────
 // A full style definition. All fields required at the template level,
 // but Partial<Template> is used for per-segment overrides.
@@ -59,6 +77,9 @@ export interface Template {
   activeWordBgPaddingY: number
   activeWordBgRounded: boolean
 
+  // Animation system (phase 1)
+  segmentAnimation:    SegmentAnimation
+  wordRevealAnimation: WordRevealAnimation
 }
 
 // ─── Enums / Literals ────────────────────────────────────────────────────────

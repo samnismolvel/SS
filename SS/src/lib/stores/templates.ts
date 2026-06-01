@@ -1,5 +1,5 @@
 import { writable, derived } from 'svelte/store'
-import type { Template, AnimationMode } from '../types'
+import type { Template, AnimationMode, SegmentAnimationType, WordRevealType, EasingType } from '../types'
 import { PRESET_IDS } from '../types'
 
 // ─── Built-in presets ─────────────────────────────────────────────────────────
@@ -47,6 +47,16 @@ export const PRESETS: Template[] = [
 
     posX: null,
     posY: null,
+    segmentAnimation: {
+      type:       'none' as SegmentAnimationType,
+      durationMs: 200,
+      easing:     'easeOut' as EasingType,
+    },
+    wordRevealAnimation: {
+      type:       'none' as WordRevealType,
+      durationMs: 120,
+      easing:     'easeOut' as EasingType,
+    },
   },
   {
     id: PRESET_IDS.TIKTOK,
@@ -90,6 +100,16 @@ export const PRESETS: Template[] = [
 
     posX: null,
     posY: null,
+    segmentAnimation: {
+      type:       'none' as SegmentAnimationType,
+      durationMs: 200,
+      easing:     'easeOut' as EasingType,
+    },
+    wordRevealAnimation: {
+      type:       'none' as WordRevealType,
+      durationMs: 120,
+      easing:     'easeOut' as EasingType,
+    },
   },
   {
     id: PRESET_IDS.CINEMATIC,
@@ -133,6 +153,16 @@ export const PRESETS: Template[] = [
 
     posX: null,
     posY: null,
+    segmentAnimation: {
+      type:       'none' as SegmentAnimationType,
+      durationMs: 200,
+      easing:     'easeOut' as EasingType,
+    },
+    wordRevealAnimation: {
+      type:       'none' as WordRevealType,
+      durationMs: 120,
+      easing:     'easeOut' as EasingType,
+    },
   },
   {
     id: PRESET_IDS.MINIMAL,
@@ -176,6 +206,16 @@ export const PRESETS: Template[] = [
 
     posX: null,
     posY: null,
+    segmentAnimation: {
+      type:       'none' as SegmentAnimationType,
+      durationMs: 200,
+      easing:     'easeOut' as EasingType,
+    },
+    wordRevealAnimation: {
+      type:       'none' as WordRevealType,
+      durationMs: 120,
+      easing:     'easeOut' as EasingType,
+    },
   },
   {
     id: PRESET_IDS.KARAOKE,
@@ -219,6 +259,16 @@ export const PRESETS: Template[] = [
 
     posX: null,
     posY: null,
+    segmentAnimation: {
+      type:       'none' as SegmentAnimationType,
+      durationMs: 200,
+      easing:     'easeOut' as EasingType,
+    },
+    wordRevealAnimation: {
+      type:       'none' as WordRevealType,
+      durationMs: 120,
+      easing:     'easeOut' as EasingType,
+    },
   },
 ]
 
