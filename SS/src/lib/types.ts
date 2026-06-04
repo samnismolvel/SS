@@ -99,13 +99,27 @@ export type SubtitleStatus = 'pending' | 'processing' | 'done' | 'failed'
 // One SRT block. overrides is a sparse partial — only fields the user
 // has explicitly changed from the active template are stored here.
 
+// One word within a wrapped layout line, with its timing from rawSubs.
+export interface WrappedWord {
+  word:    string
+  startMs: number   // from rawSubs — used for word reveal & active bg
+  endMs:   number
+}
+
+// One visual line within a segment's wrapped layout.
+export type WrappedLine = WrappedWord[]
+
 export interface Subtitle {
   index: number
   start: string           // SRT format: "00:00:01,000"
   end: string
   text: string
   originalText: string
-  wrappedText?: string ////
+  // Populated at burn time from DOM layout (computeLayout in Editor.svelte).
+  // wrappedText is the \N-joined version for ASS; lines is the structured form
+  // used by canvas rendering and word reveal animations.
+  wrappedText?: string
+  lines?:       WrappedLine[]
   overrides?: Partial<Omit<Template, 'id' | 'name'>>
 }
 

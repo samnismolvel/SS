@@ -244,6 +244,123 @@
     }
     input.click()
   }
+  // ── computeLayout ──────────────────────────────────────────────────────────
+  // Reads the DOM at burn time to capture the exact visual layout:
+  //   - wrappedText: \N-joined string for ASS hard line breaks
+  //   - lines:       structured array of words with timestamps for canvas/animations
+  //
+  // Word timestamps come from rawSubs (one-word-per-block whisper output).
+  // Line breaks are detected by comparing the top position of each word span.
+  function computeLayout(
+    subtitles: typeof sessionVal.subtitles,
+    rawSubs:   typeof sessionVal.rawSubs
+  ): typeof sessionVal.subtitles {
+    if (!subtitles?.length) return subtitles
+
+    // Build a fast lookup: word text → timing from rawSubs
+    // Multiple words may have the same text — track position to avoid reuse
+    type RawEntry = { startMs: number; endMs: number; used: boolean }
+    const rawByWord = new Map<string, RawEntry[]>()
+    for (const r of (rawSubs ?? [])) {
+      const w = r.text.trim().toLowerCase()
+      if (!rawByWord.has(w)) rawByWord.set(w, [])
+      const ms = (s: string) => {
+        const [time, ms] = s.split(',')
+        const [h, m, sec] = time.split(':').map(Number)
+        return (h * 3600 + m * 60 + sec) * 1000 + parseInt(ms)
+      }
+      rawByWord.get(w)!.push({ startMs: ms(r.start), endMs: ms(r.end), used: false })
+    }
+
+    // Reset used flags between subtitles
+    const resetUsed = () => rawByWord.forEach(arr => arr.forEach(e => e.used = false))
+
+    const spans = Array.from(document.querySelectorAll<HTMLElement>('.sub-text'))
+
+    return subtitles.map((sub, i) => {
+      const span = spans[i]
+      if (!span) return sub
+
+      resetUsed()
+
+      // Collect all word-level elements in this span
+      // These are .aw-word and .aw-active-word spans when active bg is on,
+      // otherwise we fall back to measuring word positions via Range
+      const wordEls = Array.from(span.querySelectorAll<HTMLElement>('.aw-word, .aw-active-word'))
+      const words = sub.text.trim().split(/\s+/)
+
+      // Group words into lines by their top offset
+      const lines: { word: string; top: number }[][] = []
+      let currentLineTop: number | null = null
+      let currentLine: { word: string; top: number }[] = []
+
+      const processWord = (word: string, top: number) => {
+        if (currentLineTop === null) {
+          currentLineTop = top
+          currentLine = [{ word, top }]
+        } else if (Math.abs(top - currentLineTop) > 3) {
+          lines.push(currentLine)
+          currentLine = [{ word, top }]
+          currentLineTop = top
+        } else {
+          currentLine.push({ word, top })
+        }
+      }
+
+      if (wordEls.length === words.length) {
+        // Active bg mode — word spans exist
+        wordEls.forEach((el, wi) => {
+          const top = el.getBoundingClientRect().top
+          processWord(words[wi] ?? el.textContent?.trim() ?? '', top)
+        })
+      } else {
+        // Plain text mode — use Range to measure each word's top
+        const range = document.createRange()
+        const textNode = span.childNodes[0]
+        let offset = 0
+        const fullText = span.textContent ?? ''
+        for (const word of words) {
+          const idx = fullText.indexOf(word, offset)
+          if (idx < 0 || !textNode) {
+            processWord(word, currentLineTop ?? 0)
+            offset += word.length + 1
+            continue
+          }
+          range.setStart(textNode, idx)
+          range.setEnd(textNode, idx + word.length)
+          const top = range.getBoundingClientRect().top
+          processWord(word, top)
+          offset = idx + word.length
+        }
+      }
+      if (currentLine.length > 0) lines.push(currentLine)
+
+      // Build WrappedLine[] by associating each word with its rawSub timing
+      const segStartMs = (() => {
+        const [time, ms] = sub.start.split(',')
+        const [h, m, s] = time.split(':').map(Number)
+        return (h * 3600 + m * 60 + s) * 1000 + parseInt(ms)
+      })()
+      const segEndMs = (() => {
+        const [time, ms] = sub.end.split(',')
+        const [h, m, s] = time.split(':').map(Number)
+        return (h * 3600 + m * 60 + s) * 1000 + parseInt(ms)
+      })()
+
+      const wrappedLines = lines.map(line => line.map(({ word }) => {
+        const key = word.toLowerCase()
+        const entries = rawByWord.get(key) ?? []
+        const entry = entries.find(e => !e.used) ?? { startMs: segStartMs, endMs: segEndMs, used: false }
+        entry.used = true
+        return { word, startMs: entry.startMs, endMs: entry.endMs }
+      }))
+
+      const wrappedText = lines.map(line => line.map(w => w.word).join(' ')).join('\N')
+
+      return { ...sub, wrappedText, lines: wrappedLines }
+    })
+  }
+
   async function handleBurn() {
     if (!sessionVal || !templateVal || isBurning) return
     burnError = null
@@ -254,7 +371,8 @@
         // Render backgrounds via tiny-skia in Rust, then overlay with FFmpeg.
         // Font is loaded from the system font stack via a hidden canvas measurement.
         // We send the template + segments as JSON; Rust handles the rest.
-        const segmentsJson = JSON.stringify(sessionVal.subtitles)
+        const laidOut    = computeLayout(sessionVal.subtitles, sessionVal.rawSubs ?? [])
+        const segmentsJson = JSON.stringify(laidOut)
         
         // posX/posY ya viven en templateVal via updateActiveTemplate.
         // Serializar con replacer para que null se preserve (undefined se omitiría).
@@ -329,7 +447,8 @@
         return
       } else {
         // ── ASS path (default) ───────────────────────────────────────────────
-        const assContent = buildAss(sessionVal.subtitles, templateVal, sessionVal.rawSubs ?? [])
+        const laidOut   = computeLayout(sessionVal.subtitles, sessionVal.rawSubs ?? [])
+        const assContent = buildAss(laidOut, templateVal, sessionVal.rawSubs ?? [])
         onburn({ videoPath: sessionVal.videoPath, outputPath: sessionVal.outputPath, assContent })
         return // onburn handles progress events; don't set isBurning=false here
       }
