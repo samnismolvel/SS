@@ -119,6 +119,32 @@
     }))
   })())
 
+  // Word reveal — which words are visible at currentTime based on wordRevealAnimation
+  let revealedWords = $derived((() => {
+    const wra = templateVal?.wordRevealAnimation
+    if (!wra || wra.type === 'none') return null
+    if (!activeSub || !sessionVal?.rawSubs) return null
+    const subStartMs = srtToSeconds(activeSub.start) * 1000
+    const subEndMs   = srtToSeconds(activeSub.end)   * 1000
+    const raw: any[] = sessionVal.rawSubs
+    const tokens = raw.filter((s: any) => {
+      const sMs = srtToSeconds(s.start) * 1000
+      return sMs >= subStartMs - 50 && sMs <= subEndMs + 50
+    })
+    const words = previewText.split(/\s+/).filter((w: string) => w.length > 0)
+    const tMs = currentTime * 1000
+    return words.map((word: string, i: number) => {
+      const tok = tokens[i]
+      const startMs = tok ? srtToSeconds(tok.start) * 1000 : subStartMs
+      const visible = tMs >= startMs
+      // progress 0→1 over durationMs for animation
+      const progress = visible
+        ? Math.min(1, (tMs - startMs) / (wra.durationMs || 120))
+        : 0
+      return { word, visible, progress, startMs }
+    })
+  })())
+
   // CSS filter for shadow preview
   let previewShadowStyle = $derived((() => {
     if (!templateVal) return ''
@@ -131,6 +157,31 @@
     if (a==='fade')     return 'animation:sub-fade 300ms ease-in-out forwards;'
     if (a==='pop')      return 'animation:sub-pop 350ms cubic-bezier(0.34,1.56,0.64,1) forwards;'
     if (a==='slide-up') return 'animation:sub-slide-up 350ms ease-out forwards;'
+    return ''
+  }
+
+  function getSegmentAnimationStyle(): string {
+    const sa = templateVal?.segmentAnimation
+    if (!sa || sa.type === 'none') return ''
+    const dur = sa.durationMs ?? 200
+    const ease = sa.easing === 'linear' ? 'linear'
+               : sa.easing === 'easeIn' ? 'ease-in'
+               : sa.easing === 'easeOut' ? 'ease-out'
+               : 'ease-in-out'
+    if (sa.type === 'fade')    return `animation:sub-fade ${dur}ms ${ease} forwards;`
+    if (sa.type === 'slideUp') return `animation:sub-slide-up ${dur}ms ${ease} forwards;`
+    if (sa.type === 'pop')     return `animation:sub-pop ${dur}ms cubic-bezier(0.34,1.56,0.64,1) forwards;`
+    return ''
+  }
+
+  function getWordRevealStyle(progress: number, type: string, easing: string): string {
+    const ease = easing === 'linear' ? 'linear'
+               : easing === 'easeIn' ? 'ease-in'
+               : easing === 'easeOut' ? 'ease-out'
+               : 'ease-in-out'
+    if (type === 'fade')    return `opacity:${progress};transition:opacity 0ms ${ease};`
+    if (type === 'pop')     return `opacity:${progress};transform:scale(${0.5 + progress * 0.5});display:inline-block;transition:opacity 0ms,transform 0ms;`
+    if (type === 'slideUp') return `opacity:${progress};transform:translateY(${(1-progress)*8}px);display:inline-block;transition:opacity 0ms,transform 0ms;`
     return ''
   }
 
@@ -244,123 +295,6 @@
     }
     input.click()
   }
-  // ── computeLayout ──────────────────────────────────────────────────────────
-  // Reads the DOM at burn time to capture the exact visual layout:
-  //   - wrappedText: \N-joined string for ASS hard line breaks
-  //   - lines:       structured array of words with timestamps for canvas/animations
-  //
-  // Word timestamps come from rawSubs (one-word-per-block whisper output).
-  // Line breaks are detected by comparing the top position of each word span.
-  function computeLayout(
-    subtitles: typeof sessionVal.subtitles,
-    rawSubs:   typeof sessionVal.rawSubs
-  ): typeof sessionVal.subtitles {
-    if (!subtitles?.length) return subtitles
-
-    // Build a fast lookup: word text → timing from rawSubs
-    // Multiple words may have the same text — track position to avoid reuse
-    type RawEntry = { startMs: number; endMs: number; used: boolean }
-    const rawByWord = new Map<string, RawEntry[]>()
-    for (const r of (rawSubs ?? [])) {
-      const w = r.text.trim().toLowerCase()
-      if (!rawByWord.has(w)) rawByWord.set(w, [])
-      const ms = (s: string) => {
-        const [time, ms] = s.split(',')
-        const [h, m, sec] = time.split(':').map(Number)
-        return (h * 3600 + m * 60 + sec) * 1000 + parseInt(ms)
-      }
-      rawByWord.get(w)!.push({ startMs: ms(r.start), endMs: ms(r.end), used: false })
-    }
-
-    // Reset used flags between subtitles
-    const resetUsed = () => rawByWord.forEach(arr => arr.forEach(e => e.used = false))
-
-    const spans = Array.from(document.querySelectorAll<HTMLElement>('.sub-text'))
-
-    return subtitles.map((sub, i) => {
-      const span = spans[i]
-      if (!span) return sub
-
-      resetUsed()
-
-      // Collect all word-level elements in this span
-      // These are .aw-word and .aw-active-word spans when active bg is on,
-      // otherwise we fall back to measuring word positions via Range
-      const wordEls = Array.from(span.querySelectorAll<HTMLElement>('.aw-word, .aw-active-word'))
-      const words = sub.text.trim().split(/\s+/)
-
-      // Group words into lines by their top offset
-      const lines: { word: string; top: number }[][] = []
-      let currentLineTop: number | null = null
-      let currentLine: { word: string; top: number }[] = []
-
-      const processWord = (word: string, top: number) => {
-        if (currentLineTop === null) {
-          currentLineTop = top
-          currentLine = [{ word, top }]
-        } else if (Math.abs(top - currentLineTop) > 3) {
-          lines.push(currentLine)
-          currentLine = [{ word, top }]
-          currentLineTop = top
-        } else {
-          currentLine.push({ word, top })
-        }
-      }
-
-      if (wordEls.length === words.length) {
-        // Active bg mode — word spans exist
-        wordEls.forEach((el, wi) => {
-          const top = el.getBoundingClientRect().top
-          processWord(words[wi] ?? el.textContent?.trim() ?? '', top)
-        })
-      } else {
-        // Plain text mode — use Range to measure each word's top
-        const range = document.createRange()
-        const textNode = span.childNodes[0]
-        let offset = 0
-        const fullText = span.textContent ?? ''
-        for (const word of words) {
-          const idx = fullText.indexOf(word, offset)
-          if (idx < 0 || !textNode) {
-            processWord(word, currentLineTop ?? 0)
-            offset += word.length + 1
-            continue
-          }
-          range.setStart(textNode, idx)
-          range.setEnd(textNode, idx + word.length)
-          const top = range.getBoundingClientRect().top
-          processWord(word, top)
-          offset = idx + word.length
-        }
-      }
-      if (currentLine.length > 0) lines.push(currentLine)
-
-      // Build WrappedLine[] by associating each word with its rawSub timing
-      const segStartMs = (() => {
-        const [time, ms] = sub.start.split(',')
-        const [h, m, s] = time.split(':').map(Number)
-        return (h * 3600 + m * 60 + s) * 1000 + parseInt(ms)
-      })()
-      const segEndMs = (() => {
-        const [time, ms] = sub.end.split(',')
-        const [h, m, s] = time.split(':').map(Number)
-        return (h * 3600 + m * 60 + s) * 1000 + parseInt(ms)
-      })()
-
-      const wrappedLines = lines.map(line => line.map(({ word }) => {
-        const key = word.toLowerCase()
-        const entries = rawByWord.get(key) ?? []
-        const entry = entries.find(e => !e.used) ?? { startMs: segStartMs, endMs: segEndMs, used: false }
-        entry.used = true
-        return { word, startMs: entry.startMs, endMs: entry.endMs }
-      }))
-
-      const wrappedText = lines.map(line => line.map(w => w.word).join(' ')).join('\N')
-
-      return { ...sub, wrappedText, lines: wrappedLines }
-    })
-  }
-
   async function handleBurn() {
     if (!sessionVal || !templateVal || isBurning) return
     burnError = null
@@ -371,8 +305,7 @@
         // Render backgrounds via tiny-skia in Rust, then overlay with FFmpeg.
         // Font is loaded from the system font stack via a hidden canvas measurement.
         // We send the template + segments as JSON; Rust handles the rest.
-        const laidOut    = computeLayout(sessionVal.subtitles, sessionVal.rawSubs ?? [])
-        const segmentsJson = JSON.stringify(laidOut)
+        const segmentsJson = JSON.stringify(sessionVal.subtitles)
         
         // posX/posY ya viven en templateVal via updateActiveTemplate.
         // Serializar con replacer para que null se preserve (undefined se omitiría).
@@ -447,8 +380,7 @@
         return
       } else {
         // ── ASS path (default) ───────────────────────────────────────────────
-        const laidOut   = computeLayout(sessionVal.subtitles, sessionVal.rawSubs ?? [])
-        const assContent = buildAss(laidOut, templateVal, sessionVal.rawSubs ?? [])
+        const assContent = buildAss(sessionVal.subtitles, templateVal, sessionVal.rawSubs ?? [])
         onburn({ videoPath: sessionVal.videoPath, outputPath: sessionVal.outputPath, assContent })
         return // onburn handles progress events; don't set isBurning=false here
       }
@@ -861,16 +793,26 @@
                   ? 'background:' + ((ef as any)?.lineBgColor ?? '#000') + ';padding:' + ((ef as any)?.lineBgPaddingY ?? 0.2) + 'em ' + ((ef as any)?.lineBgPaddingX ?? 0.5) + 'em;border-radius:0.35em;'
                   : ''}
                 {previewShadowStyle}
-                {getAnimationStyle(templateVal?.animation)}">
+                {getSegmentAnimationStyle()}">
   <!-- active word rendering — ver cambio 2 -->
                   
-                    {#if activeSubWords}
-                      {#each activeSubWords as {word, isActive}, wi}
-                        {#if wi > 0} {/if}{#if isActive}<span class="aw-active-word" style="
-                          color:{(templateVal as any).activeBgEnabled ? (templateVal?.primaryColor ?? '#fff') : ((templateVal as any)?.activeWordColor ?? '#fff')};
-                          {(templateVal as any).activeBgEnabled ? 'background:' + ((templateVal as any).activeBgColor ?? '#FFCC00') + ';padding:.15em .4em;border-radius:0.35em;display:inline;' : ''}
-                        ">{word}</span>{:else}{word}{/if}
+                    {#if revealedWords}
+                      <!-- Word reveal mode: words appear progressively with animation -->
+                      <!-- Invisible words take space (visibility:hidden) to preserve layout -->
+                      {#each revealedWords as {word, visible, progress}, wi}
+                        {#if wi > 0}<span class="aw-word"> </span>{/if}<span
+                          class="aw-word"
+                          style="{visible
+                            ? getWordRevealStyle(progress, templateVal?.wordRevealAnimation?.type ?? 'fade', templateVal?.wordRevealAnimation?.easing ?? 'easeOut')
+                            : 'visibility:hidden;'}"
+                        >{word}</span>
                       {/each}
+                    {:else if activeSubWords}
+                      <span class="aw-words-wrap" style="justify-content:{getTextAlign(effectiveAlignment)==='left'?'flex-start':getTextAlign(effectiveAlignment)==='right'?'flex-end':'center'};">
+                        {#each activeSubWords as {word, isActive}}
+                          {#if isActive}<span class="aw-active-word" style="color:{(templateVal as any).activeWordBgEnabled?(templateVal?.primaryColor??'#fff'):((templateVal as any)?.activeWordColor??'#fff')};{(templateVal as any).activeWordBgEnabled?'background:'+((templateVal as any).activeWordBgColor??'#FFCC00')+';padding:.1em .35em;border-radius:0.35em;':''}">{word}</span>{:else}<span class="aw-word">{word}</span>{/if}
+                        {/each}
+                      </span>
                     {:else}
                       {previewText}
                     {/if}
