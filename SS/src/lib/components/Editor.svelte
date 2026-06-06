@@ -119,7 +119,7 @@
     }))
   })())
 
-  // Word reveal — which words are visible at currentTime based on wordRevealAnimation
+  // Word reveal — which words are visible at currentTime
   let revealedWords = $derived((() => {
     const wra = templateVal?.wordRevealAnimation
     if (!wra || wra.type === 'none') return null
@@ -131,17 +131,16 @@
       const sMs = srtToSeconds(s.start) * 1000
       return sMs >= subStartMs - 50 && sMs <= subEndMs + 50
     })
-    const words = previewText.split(/\s+/).filter((w: string) => w.length > 0)
+    const words = previewText.split(' ').filter((w: string) => w.length > 0)
     const tMs = currentTime * 1000
     return words.map((word: string, i: number) => {
       const tok = tokens[i]
       const startMs = tok ? srtToSeconds(tok.start) * 1000 : subStartMs
-      const visible = tMs >= startMs
-      // progress 0→1 over durationMs for animation
+      const visible  = tMs >= startMs
       const progress = visible
-        ? Math.min(1, (tMs - startMs) / (wra.durationMs || 120))
+        ? Math.min(1, (tMs - startMs) / Math.max(1, wra.durationMs ?? 120))
         : 0
-      return { word, visible, progress, startMs }
+      return { word, visible, progress }
     })
   })())
 
@@ -175,13 +174,13 @@
   }
 
   function getWordRevealStyle(progress: number, type: string, easing: string): string {
-    const ease = easing === 'linear' ? 'linear'
-               : easing === 'easeIn' ? 'ease-in'
-               : easing === 'easeOut' ? 'ease-out'
-               : 'ease-in-out'
-    if (type === 'fade')    return `opacity:${progress};transition:opacity 0ms ${ease};`
-    if (type === 'pop')     return `opacity:${progress};transform:scale(${0.5 + progress * 0.5});display:inline-block;transition:opacity 0ms,transform 0ms;`
-    if (type === 'slideUp') return `opacity:${progress};transform:translateY(${(1-progress)*8}px);display:inline-block;transition:opacity 0ms,transform 0ms;`
+    const e = easing === 'linear' ? 'linear'
+            : easing === 'easeIn' ? 'ease-in'
+            : easing === 'easeOut' ? 'ease-out'
+            : 'ease-in-out'
+    if (type === 'fade')    return `opacity:${progress.toFixed(3)};`
+    if (type === 'pop')     return `opacity:${progress.toFixed(3)};transform:scale(${(0.5 + progress * 0.5).toFixed(3)});display:inline-block;`
+    if (type === 'slideUp') return `opacity:${progress.toFixed(3)};transform:translateY(${((1-progress)*8).toFixed(1)}px);display:inline-block;`
     return ''
   }
 
@@ -784,7 +783,7 @@
                 color:{ef?.primaryColor??'#fff'};
                 line-height:{1.35 + (ef?.lineSpacing ?? 0)}em;
                 word-spacing:{ef?.wordSpacing ?? 0}px;
-                word-break:normal;overflow-wrap:normal;
+                position:relative;word-break:normal;overflow-wrap:normal;
                 text-shadow:-{ef?.outline??2}px -{ef?.outline??2}px 0 {ef?.outlineColor??'#000'},
                 {ef?.outline??2}px -{ef?.outline??2}px 0 {ef?.outlineColor??'#000'},
                 -{ef?.outline??2}px {ef?.outline??2}px 0 {ef?.outlineColor??'#000'},
@@ -797,16 +796,23 @@
   <!-- active word rendering — ver cambio 2 -->
                   
                     {#if revealedWords}
-                      <!-- Word reveal mode: words appear progressively with animation -->
-                      <!-- Invisible words take space (visibility:hidden) to preserve layout -->
-                      {#each revealedWords as {word, visible, progress}, wi}
-                        {#if wi > 0}<span class="aw-word"> </span>{/if}<span
-                          class="aw-word"
-                          style="{visible
-                            ? getWordRevealStyle(progress, templateVal?.wordRevealAnimation?.type ?? 'fade', templateVal?.wordRevealAnimation?.easing ?? 'easeOut')
-                            : 'visibility:hidden;'}"
-                        >{word}</span>
-                      {/each}
+                      <!--
+                        Fase 4 — reservar espacio completo:
+                        Un span phantom con el texto completo (opacity:0, aria-hidden)
+                        fuerza al contenedor a tomar las dimensiones finales desde t=0.
+                        Las palabras animadas se superponen encima con position:absolute.
+                      -->
+                      <span class="aw-phantom" aria-hidden="true">{previewText}</span>
+                      <span class="aw-reveal-layer">
+                        {#each revealedWords as {word, visible, progress}, wi}
+                          {#if wi > 0}<span class="aw-word"> </span>{/if}<span
+                            class="aw-word"
+                            style="{visible
+                              ? getWordRevealStyle(progress, templateVal?.wordRevealAnimation?.type ?? 'fade', templateVal?.wordRevealAnimation?.easing ?? 'easeOut')
+                              : 'opacity:0;'}"
+                          >{word}</span>
+                        {/each}
+                      </span>
                     {:else if activeSubWords}
                       <span class="aw-words-wrap" style="justify-content:{getTextAlign(effectiveAlignment)==='left'?'flex-start':getTextAlign(effectiveAlignment)==='right'?'flex-end':'center'};">
                         {#each activeSubWords as {word, isActive}}
@@ -1589,6 +1595,12 @@
   .burn-error{font-size:.7rem;padding:2px 7px;border-radius:20px;background:var(--color-danger-subtle,#3d1a1a);color:var(--color-danger,#f87171);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:160px;}
   .aw-prev-word{font-size:1.3rem;font-weight:700;line-height:1.3;white-space:nowrap}
   .aw-active-word{display:inline;line-height:inherit;white-space:nowrap}
+  .aw-words-wrap{display:flex;flex-wrap:wrap;gap:.28em;align-items:center;width:100%}
+  .aw-word{white-space:nowrap}
+  /* Fase 4 — phantom reserva el espacio completo del segmento */
+  .aw-phantom{opacity:0;pointer-events:none;user-select:none;display:block;white-space:pre-wrap}
+  /* Reveal layer se superpone exactamente encima del phantom */
+  .aw-reveal-layer{position:absolute;inset:0;display:block;white-space:pre-wrap}
   /* Remove old sub-tabs now replaced by sub-sidebar rail */
   @keyframes sub-fade{from{opacity:0}to{opacity:1}}
   @keyframes sub-pop{from{transform:scale(0.5);opacity:0}to{transform:scale(1);opacity:1}}
